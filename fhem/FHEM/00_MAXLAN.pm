@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 00_MAXLAN.pm 11307 2016-04-25 08:02:06Z rudolfkoenig $
 # Written by Matthias Gehre, M.Gehre@gmx.de, 2012-2013
 package main;
 
@@ -866,7 +866,6 @@ MAXLAN_RemoveDevice($$)
 <a name="MAXLAN"></a>
 <h3>MAXLAN</h3>
 <ul>
-  <tr><td>
   The MAXLAN is the fhem module for the eQ-3 MAX! Cube LAN Gateway.
   <br><br>
   The fhem module makes the MAX! "bus" accessible to fhem, automatically detecting paired MAX! devices. It also represents properties of the MAX! Cube. The other devices are handled by the <a href="#MAX">MAX</a> module, which uses this module as its backend.<br>

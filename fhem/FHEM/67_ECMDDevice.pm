@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 67_ECMDDevice.pm 12877 2016-12-26 09:15:55Z neubert $
 ##############################################################################
 #
 #     67_ECMDDevice.pm
@@ -48,7 +48,7 @@ ECMDDevice_Initialize($)
   $hash->{ParseFn}   = "ECMDDevice_Parse";
 
   $hash->{AttrFn}    = "ECMDDevice_Attr";
-  $hash->{AttrList}  = "IODev class ".
+  $hash->{AttrList}  = "IODev class noState ".
                         $readingFnAttributes;
 }
 
@@ -141,7 +141,9 @@ ECMDDevice_Changed($$$)
 	  $state.= " $value" if(defined($value) && $value ne "");
           #Debug "cmd= $cmd, setting state to $state (DEFAULT)";
 	}  
-        readingsBulkUpdate($hash, "state", $state) if(defined($state));
+	if(!AttrVal($hash->{NAME}, "noState", 0)) {
+          readingsBulkUpdate($hash, "state", $state) if(defined($state));
+        }
 
         readingsEndUpdate($hash, 1);
         my $name= $hash->{NAME};
@@ -151,17 +153,16 @@ ECMDDevice_Changed($$$)
 
 ###################################
 sub
-ECMDDevice_PostProc($$$)
+ECMDDevice_PostProc($$$%)
 {
-  my ($hash, $postproc, $value)= @_;
+  my ($hash, $postproc, $value, %specials)= @_;
 
   if($postproc) {
-        my %specials= ECMDDevice_GetCachedSpecials($hash);
         my $command= ECMDDevice_ReplaceSpecials($postproc, %specials);
 	$_= $value;
-	Log3 $hash, 5, "Postprocessing \"" . escapeLogLine($value) . "\" with perl command $command.";
+	Log3 $hash, 5, "Postprocessing \"" . dq($value) . "\" with perl command $command.";
 	$value= AnalyzePerlCommand(undef, $command);
-	Log3 $hash, 5, "Postprocessed value is \"" . escapeLogLine($value) . "\".";
+	Log3 $hash, 5, "Postprocessed value is \"" . dq($value) . "\".";
   }
   return $value;
 }
@@ -173,9 +174,9 @@ ECMDDevice_EvalCommand($$$)
 
   if($command) {
 	$_= $value;
-	Log3 $hash, 5, "Postprocessing \"" . escapeLogLine($value) . "\" with perl command $command.";
+	Log3 $hash, 5, "Postprocessing \"" . dq($value) . "\" with perl command $command.";
 	$value= AnalyzePerlCommand(undef, $command);
-	Log3 $hash, 5, "Postprocessed value is \"" . escapeLogLine($value) . "\".";
+	Log3 $hash, 5, "Postprocessed value is \"" . dq($value) . "\".";
   }
   return $value;
 }
@@ -237,12 +238,13 @@ ECMDDevice_Get($@)
                 }
         }
         $ecmd= ECMDDevice_ReplaceSpecials($ecmd, %specials);
+        $expect= ECMDDevice_ReplaceSpecials($expect, %specials);
 
         my $r = ECMDDevice_AnalyzeCommand($hash, $ecmd);
 
         my $v= IOWrite($hash, $r, $expect);
 
-	$v= ECMDDevice_PostProc($hash, $postproc, $v);
+	$v= ECMDDevice_PostProc($hash, $postproc, $v, %specials);
 
         return ECMDDevice_Changed($hash, $cmdname, $v);
 }
@@ -284,12 +286,13 @@ ECMDDevice_Set($@)
                 }
         }
         $ecmd= ECMDDevice_ReplaceSpecials($ecmd, %specials);
+        $expect= ECMDDevice_ReplaceSpecials($expect, %specials);
 
         my $r = ECMDDevice_AnalyzeCommand($hash, $ecmd);
 
         my $v= IOWrite($hash, $r, $expect);
 
-	$v= ECMDDevice_PostProc($hash, $postproc, $v);
+	$v= ECMDDevice_PostProc($hash, $postproc, $v, %specials);
 
         ECMDDevice_Changed($hash, $cmdname, $v); # was: return ECMDDevice_Changed($hash, $cmdname, $v);
         return undef;
@@ -334,21 +337,27 @@ ECMDDevice_Parse($$)
 	  $IOhash->{fhem}{partial}{msg}= "";
 	}
 
+	my $partial= $IOhash->{fhem}{partial}{msg};
+
 	#Debug "$name: partial message \"" . escapeLogLine($IOhash->{fhem}{partial}{msg}) . "\" recorded at $ts";
-	if($IOhash->{fhem}{partial}{msg} ne "") {	
+	if($partial ne "") {	
 	  # clear partial message if expired
 	  my $timeout= AttrVal($name, "partial", 1);
 	  my $t0= $IOhash->{fhem}{partial}{ts};
 	  if($ts-$t0> $timeout) {
-	    $IOhash->{fhem}{partial}{msg}= "";
-	    #Debug "$name: partial message expired.";
+	    Log3 $IOhash, 5, "$name: partial message " . dq($partial) . " expired.";
+	    $partial= "";
+	    $IOhash->{fhem}{partial}{msg}= $partial;
 	  }
 	}
 
 	# prepend to recently received message
 	$IOhash->{fhem}{partial}{ts}= $ts;
-	$message= $IOhash->{fhem}{partial}{msg} . $message;
-	$IOhash->{fhem}{partial}{msg}= "";
+	if($partial ne "") {
+          Log3 $IOhash, 5, "$name: merging partial message " . dq($partial) . " and " . dq($message);
+          $message= $partial . $message;
+   	  $IOhash->{fhem}{partial}{msg}= "";
+        }
 	
   } else {
   
@@ -361,8 +370,15 @@ ECMDDevice_Parse($$)
   #Debug "$name: analyzing \"" . escapeLogLine($message) . "\".";
   
   my @msgs;
-  if(defined(AttrVal($name, "split", undef))) {
-    @msgs= split(AttrVal($name, "split", undef), $message);
+  my $splitter= $IOhash->{fhem}{".split"};
+  if(defined($splitter)) {
+    #Debug "Splitting " . dq($message) . " at " . dq($splitter);
+    @msgs= split(/(?<=$splitter)/, $message); # http://stackoverflow.com/questions/14907772/split-but-keep-delimiter
+    
+    #Debug scalar(@msgs) . " part(s)";
+    Log3 $IOhash, 5, "$name: " . dq($message) . " split into " . scalar(@msgs) . " parts"
+      if(scalar(@msgs)>1);
+    #Debug "Split done.";  
   } else {
     push @msgs, $message;
   }
@@ -373,6 +389,7 @@ ECMDDevice_Parse($$)
   
   foreach my $msg (@msgs) {
     #Debug "$name: trying to find a match for \"" . escapeLogLine($msg) ."\"";
+    Log3 $IOhash, 5, "$name: trying to match message " . dq($msg);
     $msgMatched= 0; 
     # walk over all clients
     foreach my $d (keys %defs) {
@@ -390,7 +407,7 @@ ECMDDevice_Parse($$)
 	  #Debug "      Trying to match reading $r with regular expression \"$regex\" (device $d, classdef $classname, reading $r).";
 	  if($msg =~ m/^$regex$/) {
 	    # we found a match
-	    Log3 $IOhash, 5, "$name: match regex $regex for reading $r of device $d with class $classname";
+	    Log3 $IOhash, 5, "$name: " . dq($msg) . " matches regex $regex for reading $r of device $d with class $classname";
 	    $msgMatched++;
 	    push @matches, $d;
 	    my $command= ECMDDevice_GetCachedReadingsCommand($hash, $classDef, $r);
@@ -413,6 +430,7 @@ ECMDDevice_Parse($$)
       $IOhash->{fhem}{partial}{msg}= "";  
     }
     $IOhash->{fhem}{partial}{msg}.= $lastMsg;  # append unmatched message
+    Log3 $IOhash, 5, "$name: partial message " . dq($lastMsg) . " kept";
     #Debug "$name: partial message \"" . escapeLogLine($IOhash->{fhem}{partial}{msg}) . "\" kept.";
   }  
   
@@ -518,6 +536,9 @@ ECMDDevice_Define($$)
 #############################
 
 =pod
+=item device
+=item summary    user-defined device communicating through ECMD (logical device)
+=item summary_DE benutzerdefiniertes via ECMD kommunizierendes Ger&auml;t (logisches Ger&auml;t)
 =begin html
 
 <a name="ECMDDevice"></a>
@@ -597,6 +618,12 @@ ECMDDevice_Define($$)
     If you omit the &lt;classname&gt; and &lt;parameter&gt; references in the 
     <a href="#ECMDDevicedefine">definition</a> of the device, you have to add them
     separately as an attribute. Example: <code>attr myRelais2 class relais 8</code>.</li>
+    <li>noState<br>
+    Changes of readings do not change the state reading if this attribute is set to a non-zero value.
+    For example, this is desirable if you need to avoid the second event created by changing the state
+    reading. Previously created state readings can be deleted by means of <a href="#deletereading">deletereading</a>. 
+    The user can define the value shown in the state of the device by means
+    of the <a href="#stateFormat">stateFormat</a> attribute.</li>
     <li><a href="#verbose">verbose</a></li>
     <li><a href="#eventMap">eventMap</a></li>
     <li><a href="#IODev">IODev</a></li>
@@ -624,7 +651,7 @@ ECMDDevice_Define($$)
         In the fhem configuration file or on the fhem command line we do the following:<br><br>
         <code>
                 define AVRNETIO ECMD telnet 192.168.0.91:2701        # define the physical device<br>
-                set AVRNETIO classdef ADC /etc/fhem/ADC.classdef       # define the device class ADC<br>
+                attr AVRNETIO classdefs ADC=/etc/fhem/ADC.classdef       # define the device class ADC<br>
                 define myADC ECDMDevice ADC # define the logical device myADC with device class ADC<br>
                 get myADC value 1 # retrieve the value of analog/digital converter number 1<br>
         </code>
@@ -655,8 +682,9 @@ ECMDDevice_Define($$)
         <br>
         In the fhem configuration file or on the fhem command line we do the following:<br><br>
         <code>
-                define AVRNETIO ECMD telnet 192.168.0.91:2701        # define the physical device<br>
-                set AVRNETIO classdef relais /etc/fhem/relais.classdef       # define the device class relais<br>
+                define AVRNETIO ECMD telnet 192.168.0.91:2701 # define the physical device<br>
+                attr AVRNETIO classdefs relais=/etc/fhem/relais.classdef # define the device class relais<br>
+                attr AVRNETIO requestSeparator \000<br>
                 define myRelais ECMDDevice 8 # define the logical device myRelais with pin mask 8<br>
                 set myRelais on # execute the "on" command<br>
         </code>
@@ -674,12 +702,13 @@ ECMDDevice_Define($$)
         </ul>
         </code>
         These lines are sent as a plain ethersex commands to the AVR-NET-IO one by one. After
-        each line the answer from the physical device is read back. They are concatenated with \000 chars and returned
-        for further processing by the <code>postproc</code> command.      
+        each line the answer from the physical device is read back. They are concatenated and returned
+        for further processing by the <code>postproc</code> command. 
 	For any of the four plain ethersex commands, the AVR-NET-IO returns the string <code>OK\n</code>. They are
 	concatenated. The postprocessor takes the result from <code>$_</code>,
 	substitutes it by the string <code>success</code> if it is <code>OK\nOK\nOK\nOK\n</code>, and then either
-	returns the string <code>ok</code> or the string <code>error</code>.
+	returns the string <code>ok</code> or the string <code>error</code>. If the responseSeparator was set to \000,
+        the result string would be <code>OK\n\000OK\n\000OK\n\000OK\n\000</code> instead of <code>OK\nOK\nOK\nOK\n</code>.
 	<br><br>
 
    </ul>

@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 18_CUL_HOERMANN.pm 15510 2017-11-27 16:52:44Z rudolfkoenig $
 package main;
 
 use strict;
@@ -10,11 +10,12 @@ CUL_HOERMANN_Initialize($)
 {
   my ($hash) = @_;
 
-  $hash->{Match}     = "^R..........";
+  $hash->{Match}     = "^R..........\$";
   $hash->{DefFn}     = "CUL_HOERMANN_Define";
   $hash->{ParseFn}   = "CUL_HOERMANN_Parse";
-  $hash->{AttrList}  = "IODev do_not_notify:1,0 ignore:0,1 showtime:1,0";
-
+  $hash->{SetFn}     = "CUL_HOERMANN_Set";
+  $hash->{AttrList}  = "IODev do_not_notify:1,0 ignore:0,1 showtime:1,0 ".
+                       "disable:0,1 disabledForIntervals ";
 }
 
 #############################
@@ -32,6 +33,7 @@ CUL_HOERMANN_Define($$)
 
   $modules{CUL_HOERMANN}{defptr}{$a[2]} = $hash;
   $hash->{STATE} = "Defined";
+  AssignIoPort($hash);
   return undef;
 }
 
@@ -58,9 +60,25 @@ CUL_HOERMANN_Parse($$)
   }
 }
 
+sub
+CUL_HOERMANN_Set($@)
+{
+  my ($hash, @a) = @_;
+
+  return "no set argument specified" if(int(@a) < 2);
+  return "Unknown argument $a[1], choose one of toggle:noArg"
+    if($a[1] ne "toggle");
+
+  return if(IsDisabled($hash->{NAME}));
+
+  IOWrite($hash, "", "hn".$hash->{DEF})
+}
+
 1;
 
 =pod
+=item summary    Hoermann Garage door opener
+=item summary_DE Hoermann Garagenfernbedienung
 =begin html
 
 <a name="CUL_HOERMANN"></a>
@@ -75,13 +93,19 @@ CUL_HOERMANN_Parse($$)
   <a name="CUL_HOERMANNdefine"></a>
   <b>Define</b>
   <ul>
-    <code>define &lt;name&gt; CUL_HOERMANNEM &lt;10-digit-hex-code&gt;</code>
+    <code>define &lt;name&gt; CUL_HOERMANN &lt;10-digit-hex-code&gt;</code>
     <br>
   </ul>
   <br>
 
   <a name="CUL_HOERMANNset"></a>
-  <b>Set</b> <ul>N/A</ul><br>
+  <b>Set</b>
+  <ul>
+    <li>toggle<br>
+        Send a signal, which, depending on the status of the door, opens it,
+        closes it or stops the current movement. NOTE: needs culfw 1.67+
+        </li>
+  </ul><br>
 
   <a name="CUL_HOERMANNget"></a>
   <b>Get</b> <ul>N/A</ul><br>
@@ -91,6 +115,9 @@ CUL_HOERMANN_Parse($$)
   <ul>
     <li><a href="#do_not_notify">do_not_notify</a></li>
     <li><a href="#showtime">showtime</a></li>
+    <li><a href="#IODev">IODev</a></li>
+    <li><a href="#disable">disable</a></li>
+    <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
   </ul>
   <br>
 </ul>

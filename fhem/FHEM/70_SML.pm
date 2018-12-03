@@ -6,7 +6,7 @@
 #
 # written 2012 by Gabriel Bentele <gabriel at bentele.de>>
 #
-# $Id$
+# $Id: 70_SML.pm 10650 2016-01-28 14:47:44Z bentele $
 #
 # Version = 2.7
 #

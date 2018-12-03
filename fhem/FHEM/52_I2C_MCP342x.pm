@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 52_I2C_MCP342x.pm 17863 2018-11-27 23:28:39Z klausw $
 
 package main;
 
@@ -90,22 +90,22 @@ sub I2C_MCP342x_Init($$) {
 	my ( $hash, $args ) = @_;
 	
 	my $name = $hash->{NAME};
-
-	 if (defined $args && int(@$args) > 1)
+	Log3 $hash, 5, "$hash->{NAME}: Init Argumente1: $args";
+	 if (defined $args && int(@$args) < 1)
  	{
-  	return "Define: Wrong syntax. Usage:\n" .
+  	Log3 $hash, 0, "Define: Wrong syntax. Usage:\n" .
          	"define <name> MCP342x [<i2caddress>] [<type>]";
  	}
 	 
  	if (defined (my $address = shift @$args)) {
-   	$hash->{I2C_Address} = $address =~ /^0.*$/ ? oct($address) : $address;
-   	return "$name I2C Address not valid" unless ($address < 128 && $address > 3);
+   	$hash->{I2C_Address} = $address =~ /^0x.*$/ ? oct($address) : $address;
+   	Log3 $hash, 0, "$name: I2C Address not valid" unless ($hash->{I2C_Address} < 128 && $hash->{I2C_Address} > 3);
  	} else {
 		$hash->{I2C_Address} = hex(MCP3422_I2C_ADDRESS);
 	}
 	
 	if (defined (my $channels = shift @$args)) {
-		$hash->{channels} = $channels if $channels == 2 || $channels == 4;
+		$hash->{channels} = ($channels == 4 ? 4 : 2);
 	} else {
 		$hash->{channels} = 2;
 	}
@@ -279,15 +279,19 @@ sub I2C_MCP342x_GetVoltage ($$) {
 			my $rawvolt;
 			if ($resol == 18) {
 				$rawvolt  = ($raw[0] & 0b00000011) << 16 | $raw[1] << 8 | $raw[2];
+			} elsif ($resol == 14) {
+				$rawvolt = ($raw[0] & 0b00111111) << 8 | $raw[1];
+			} elsif ($resol == 12) {
+				$rawvolt = ($raw[0] & 0b00001111) << 8 | $raw[1];
 			} else {
 				$rawvolt = $raw[0] << 8 | $raw[1];
 			}
-			#Log3 $hash, 1, "Kanal: $channel, rawvolt: $rawvolt, Aufloesung: $resol, Gain: $gain, LSB: $resols{$resol}{lsb}";
+			Log3 $hash, 4, "Kanal: $channel, rawvolt: $rawvolt, Aufloesung: $resol, Gain: $gain, LSB: $resols{$resol}{lsb}";
 			$rawvolt -= (1 << $resol) if $rawvolt >= (1 << ($resol - 1));
-			#Log3 $hash, 1, "Kanal: $channel, Unsignedrawvolt: $rawvolt";
+			Log3 $hash, 4, "Kanal: $channel, Signedrawvolt: $rawvolt";
 			
 			my $voltage = ( $rawvolt * $resols{$resol}{lsb} ) / $gain ;
-			#$voltage /= 1000000;
+			$voltage /= 1000000;														# LSB Werte in µV
 			$voltage *= AttrVal($hash->{NAME},("ch" . $channel . "factor"),"1");
 			$voltage = sprintf(
 				'%.' . AttrVal($hash->{NAME}, ('ch' . $channel . 'roundDecimal'), 3) . 'f',
@@ -295,7 +299,6 @@ sub I2C_MCP342x_GetVoltage ($$) {
 			);
 			$voltage .= " overflow" if ( $rawvolt == ( (1<<($resol-1)) - 1) || $rawvolt == (1<<($resol-1)) );
 			readingsSingleUpdate($hash,"Channel$channel", $voltage, 1);
-			#Log3 $hash, 1, "Kanal: $channel, Fertig: $voltage";
 		} else {
 			Log3  $hash, 3, $hash->{NAME} . " error, output conversion not finished";
 		}
@@ -334,6 +337,9 @@ sub I2C_MCP342x_readvoltage($@) {
 1;
 
 =pod
+=item device
+=item summary reads the analog inputs from an via I2C connected MCP342x
+=item summary_DE lesen der Analogeing&aumlnge eines &uuml;ber I2C angeschlossenen MCP342x
 =begin html
 
 <a name="I2C_MCP342x"></a>
@@ -349,7 +355,9 @@ sub I2C_MCP342x_readvoltage($@) {
 	<b>Define</b>
 	<ul>
     	<code>define &lt;name&gt; I2C_MCP342x [[&lt;I2C Address&gt;] &lt;n channels&gt;]</code><br>
-			where &lt;I2C Address&gt; is without direction bit and &lt;n channels&gt; is the number of A/D channels<br><br>
+		<code>&lt;I2C Address&gt;</code> may be an 2 digit hexadecimal value (0xnn) or an decimal value<br>
+		For example 0x40 (hexadecimal) = 64 (decimal). An I2C address are 7 MSB, the LSB is the R/W bit.<br>
+		<code>&lt;n channels&gt;</code> is the number of A/D channels<br><br>
 	</ul>
 	<a name="I2C_MCP342xSet"></a>
 	<b>Get</b>
@@ -361,26 +369,26 @@ sub I2C_MCP342x_readvoltage($@) {
 	<a name="I2C_MCP342xAttr"></a>
 	<b>Attributes</b>
 	<ul>
-		<li>poll_interval<br>
+		<li><a name="poll_interval">poll_interval</a><br>
 			Set the polling interval in minutes to query data from sensor<br>
 			Default: 5, valid values: 1,2,5,10,20,30<br><br>
 		</li>
 		Following attributes are separate for all channels.<br><br>
-    <li>ch1resolution<br>
+		<li><a name="ch1resolution">ch1resolution</a><br>
 			resolution settings<br>
 			the bigger the resolution the longer the conversion time.<br>
 			Default: 12, valid values: 12,14,16,18<br><br>
 		</li>
-    <li>ch1gain<br>
+		<li><a name="ch1gain">ch1gain</a><br>
 			gain setting<br>
 			Important: the gain setting will reduce the measurement range an may produce an overflow. In this case "overflow" will be added to reading<br>
 			Default: 1, valid values: 1,2,4,8<br><br>
 		</li>
-		<li>ch1factor<br>
+		<li><a name="ch1factor">ch1factor</a><br>
 			correction factor (will be mutiplied to channel value)<br>
 			Default: 1, valid values: number<br><br>
 		</li>
-		<li>ch1roundDecimal<br>
+		<li><a name="ch1roundDecimal">ch1roundDecimal</a><br>
 			Number of decimal places for value<br>
 			Default: 3, valid values: 0,1,2,3<br><br>
 		</li>
@@ -407,7 +415,9 @@ sub I2C_MCP342x_readvoltage($@) {
 	<b>Define</b>
 	<ul>
 		<code>define &lt;name&gt; I2C_MCP342x [[&lt;I2C Address&gt;] &lt;n channels&gt;]</code><br>
-		Der Wert <code>&lt;I2C Address&gt;</code> ist die I2C Adresse ohne Richtungsbit und &lt;n channels&gt; die Anzahl der A/D Kanäle.<br>
+		<code>&lt;I2C Address&gt;</code> kann ein zweistelliger Hex-Wert (0xnn) oder ein Dezimalwert sein<br>
+		Beispielsweise 0x40 (hexadezimal) = 64 (dezimal). Als I2C Adresse verstehen sich die 7 MSB, das LSB ist das R/W Bit.<br>
+		<code>&lt;n channels&gt;</code> ist die Anzahl der A/D Kanäle.<br>
 	</ul>
 	<a name="I2C_MCP342xGet"></a>
 	<b>Get</b>
@@ -418,26 +428,26 @@ sub I2C_MCP342x_readvoltage($@) {
 	<a name="I2C_MCP342xAttr"></a>
 	<b>Attribute</b>
 	<ul>
-		<li>poll_interval<br>
+		<li><a name="poll_interval">poll_interval</a><br>
 			Aktualisierungsintervall aller Werte in Minuten.<br>
 			Standard: 5, g&uuml;ltige Werte: 1,2,5,10,20,30<br><br>
 		</li>
 		Folgende Attribute existieren separat f&uuml;r alle Kan&auml;le.<br><br>
-    <li>ch1resolution<br>
+		<li><a name="ch1resolution">ch1resolution</a><br>
 			Aufl&ouml;sung des Kanals<br>
 			Je gr&ouml;&szlig;er die Aufl&ouml;sung desto l&auml;nger die Lesezeit.<br>
 			Standard: 12, g&uuml;ltige Werte: 12,14,16,18<br><br>
 		</li>
-    <li>ch1gain<br>
+		<li><a name="ch1gain">ch1gain</a><br>
 			Verst&auml;rkungsfaktor<br>
 			Wichtig: Der Verst&auml;rkungsfaktor verringert den Messbereich entsprechend und kann zu einem &Uuml;berlauf f&uuml;hren. In diesem Fall wird "overflow" an das reading angeh&auml;ngt.<br>
 			Standard: 1, g&uuml;ltige Werte: 1,2,4,8<br><br>
 		</li>
-		<li>ch1factor<br>
+		<li><a name="ch1factor">ch1factor</a><br>
 			Korrekturfaktor (Wird zum Kanalwert multipliziert.)<br>
 			Standard: 1, g&uuml;ltige Werte: Zahl<br><br>
 		</li>
-		<li>ch1roundDecimal<br>
+		<li><a name="ch1roundDecimal">ch1roundDecimal</a><br>
 			Anzahl Dezimalstellen f&uuml;r den Messwert<br>
 			Standard: 3, g&uuml;ltige Werte: 0,1,2,3<br><br>
 		</li>

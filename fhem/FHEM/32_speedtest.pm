@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 32_speedtest.pm 12056 2016-08-22 19:30:31Z justme1968 $
 
 package main;
 
@@ -160,6 +160,10 @@ speedtest_SpeedtestDone($)
     return;
   }
 
+  $a[1] =~ s/\s.*// if( defined($a[1]) );
+  $a[2] =~ s/\s.*// if( defined($a[2]) );
+  $a[3] =~ s/\s.*// if( defined($a[3]) );
+
   readingsBeginUpdate($hash);
 
   readingsBulkUpdate($hash,"ping",$a[1]);
@@ -181,6 +185,8 @@ speedtest_SpeedtestAborted($)
 
 =pod
 =item device
+=item summary    internet speedtest data
+=item summary_DE Internet Speedtest &uuml;berwachung
 =begin html
 
 <a name="speedtest"></a>

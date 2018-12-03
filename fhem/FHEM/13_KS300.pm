@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 13_KS300.pm 15627 2017-12-17 11:00:46Z rudolfkoenig $
 #
 # modified: 2014-02-16 - betateilchen
 #           - added new reading for windIndex (bft)
@@ -157,21 +157,21 @@ KS300_Parse($$)
       # The code also handles counter resets after battery replacement
 
       my $rain_raw_delta = $rain_raw - $rain_raw_prev;
-      if($tsecs != $tsecs_prev) { # avoids a rare but relevant condition
-        my $thours_delta = ($tsecs - $tsecs_prev)/3600.0; # in hours
-        my $rain_raw_per_hour = $rain_raw_delta/$thours_delta;
-        if(($rain_raw_delta<0) || ($rain_raw_per_hour> 200.0)) {
-          $rain_raw_ofs = $rain_raw_ofs_prev-$rain_raw_delta;
+      my $deltatsecs= ($tsecs - $tsecs_prev); # we have observed two datagrams at the same second
+      $deltatsecs= 1 if($deltatsecs< 1); 
+      my $thours_delta = $deltatsecs/3600.0; # in hours
+      my $rain_raw_per_hour = $rain_raw_delta/$thours_delta;
+      if(($rain_raw_delta<0) || ($rain_raw_per_hour> 200.0)) {
+            $rain_raw_ofs = $rain_raw_ofs_prev-$rain_raw_delta;
 
-          # If the switch in the tick count occurs simultaneously with an
-          # increase due to rain, the tick is lost. We therefore assume that
-          # offsets between -5 and 0 are indeed rain.
+            # If the switch in the tick count occurs simultaneously with an
+            # increase due to rain, the tick is lost. We therefore assume that
+            # offsets between -5 and 0 are indeed rain.
 
-          if(($rain_raw_ofs>=-5) && ($rain_raw_ofs<0)) {
+            if(($rain_raw_ofs>=-5) && ($rain_raw_ofs<0)) {
             $rain_raw_ofs= 0;
-          }
-          readingsBulkUpdate($def, 'rain_raw_ofs', $rain_raw_ofs, 0);
-        }
+            }
+            readingsBulkUpdate($def, 'rain_raw_ofs', $rain_raw_ofs, 0);
       }
       $rain_raw_adj = $rain_raw + $rain_raw_ofs;
 
@@ -191,9 +191,10 @@ KS300_Parse($$)
     $haverain = 1 if($rain_raw_adj != $rain_raw_adj_prev);
 
     $v[1] = sprintf("%0.1f", $rain_raw_adj * $def->{RAINUNIT} / 1000);
-    $v[2] = sprintf("%0.1f", ("$a[25]$a[24].$a[23]"+0) * $def->{WINDUNIT});
+    $v[2] = sprintf("%0.1f", ("$a[25]$a[24].$a[23]"+(hex($a[17])&0x4?100:0)) *
+                              $def->{WINDUNIT});
     $v[3] = "$a[22]$a[21]" + 0;
-    $v[4] = "$a[20]$a[19].$a[18]" + 0; $v[4] = "-$v[4]" if($a[17] eq "7");
+    $v[4] = "$a[20]$a[19].$a[18]" + 0;
     $v[4] = sprintf("%0.1f", $v[4]);
     $v[5] = ((hex($a[17]) & 0x2) || $haverain) ? "yes" : "no";
     $v[6] = $a[29];
@@ -322,6 +323,8 @@ KS300_windIndex($)
 1;
 
 =pod
+=item summary    module for the ELV KS300 weather station
+=item summary_DE Anbindung der ELV KS300 Wetterstation
 =begin html
 
 <a name="KS300"></a>

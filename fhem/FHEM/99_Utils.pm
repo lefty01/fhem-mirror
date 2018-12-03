@@ -1,10 +1,9 @@
 ##############################################
-# $Id$
+# $Id: 99_Utils.pm 15713 2017-12-28 11:01:02Z rudolfkoenig $
 package main;
 
 use strict;
 use warnings;
-use POSIX;
 
 sub
 Utils_Initialize($$)
@@ -92,6 +91,7 @@ defInfo($;$)
   my @etDev = devspec2array($search);
   foreach my $d (@etDev) {
     next unless $d;
+    next if($d eq $search && !$defs{$d});
     push @ret, $defs{$d}{$internal};
   }
   return @ret;
@@ -248,6 +248,8 @@ round($$)
 
 =pod
 =item helper
+=item summary    FHEM utility functions
+=item summary_DE FHEM Hilfsfunktionen
 =begin html
 
 <a name="Utils"></a>

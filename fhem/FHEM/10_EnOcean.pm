@@ -1,24 +1,14 @@
-
 ##############################################
-# $Id$
-# 2016-02-17
-
-# EEP changed:
-# EnOcean_Notify():
-# EnOcean_Attr():
-# Remote Management (incomplete, experimental)
-# commandref: further explanations added
-
-# PID V1.0.0.9
-# EnOcean Security in Perl, teach-in, VAES, MAC and message handling
-# Copyright: Jan Schneider (timberwolf at tec-observer dot de)
-# License: GPL (v2) see http://www.gnu.org/licenses/gpl-2.0.html
+# $Id: 10_EnOcean.pm 17796 2018-11-20 05:31:33Z klaus.schauer $
 
 package main;
 
 use strict;
 use warnings;
 my $cryptFunc;
+my $xmlFunc;
+my $xml;
+
 eval "use Crypt::Rijndael";
 if ($@) {
   $cryptFunc = 0;
@@ -30,6 +20,21 @@ if ($@) {
   $cryptFunc = 0;
 } else {
   $cryptFunc = $cryptFunc == 1 ? 1 : 0;
+}
+
+eval "use XML::Simple";
+if ($@) {
+  $xmlFunc = 0;
+} else {
+  $xmlFunc = 1;
+  $xml = new XML::Simple;
+}
+
+eval "use Data::Dumper";
+if ($@) {
+  $xmlFunc = 0;
+} else {
+  $xmlFunc = $xmlFunc == 1 ? 1 : 0;
 }
 
 use SetExtensions;
@@ -48,23 +53,27 @@ sub EnOcean_TimerSet($);
 sub EnOcean_Undef($$);
 
 my %EnO_rorgname = (
-  "F6" => "switch",  # RPS, org 05
-  "D5" => "contact", # 1BS, org 06
-  "A5" => "4BS",     # 4BS, org 07
-  "A6" => "ADT",     # adressing destination telegram
-  "C5" => "SYSEX",   # remote management
-  "D1" => "MSC",     # MSC
-  "D2" => "VLD",     # VLD
-  "D4" => "UTE",     # UTE
-  "30" => "SEC",     # secure telegram
-  "31" => "ENC",     # secure telegram with encapsulation
-  "32" => "SECD",    # decrypted secure telegram
-  "35" => "STE",     # secure Teach-In
-  "40" => "CDM",     # chained data message
-  "B0" => "GPTI",    # GP teach-in request
-  "B1" => "GPTR",    # GP teach-in response
-  "B2" => "GPCD",    # GP complete data
-  "B3" => "GPSD",    # GP selective data
+  "A5" => "4BS",      # 4BS, org 07
+  "A6" => "ADT",      # adressing destination telegram
+  "A7" => "SMREC",    # Smart Ack Relaim
+  "B0" => "GPTI",     # GP teach-in request
+  "B1" => "GPTR",     # GP teach-in response
+  "B2" => "GPCD",     # GP complete data
+  "B3" => "GPSD",     # GP selective data
+  "C5" => "SYSEX",    # remote management >> packet type 7 used
+  "C6" => "SMLRNREQ", # Smart Ack Learn Request
+  "C7" => "SMLRNANS", # Smart Ack Learn Answer
+  "D0" => "SIGNAL",   # Smart Ack Mail Box Functions
+  "D1" => "MSC",      # MSC
+  "D2" => "VLD",      # VLD
+  "D4" => "UTE",      # UTE
+  "D5" => "contact",  # 1BS, org 06
+  "F6" => "switch",   # RPS, org 05
+  "30" => "SEC",      # secure telegram
+  "31" => "ENC",      # secure telegram with encapsulation
+  "32" => "SECD",     # decrypted secure telegram
+  "35" => "STE",      # secure Teach-In
+  "40" => "CDM",      # chained data message
 );
 
 # switch commands
@@ -164,7 +173,9 @@ my %EnO_manuf = (
   "03F" => "Sensortec",
   "040" => "Jaeger Direkt",
   "041" => "Air System Components Inc",
+  "043" => "SODA GmbH",
   "045" => "Holter",
+  "046" => "ID-RF",
   "049" => "Micropelt GmbH",
   "7FF" => "Multi user Manufacturer ID",
 );
@@ -203,6 +214,7 @@ my %EnO_eepConfig = (
   "A5.06.02" => {attr => {subType => "lightSensor.02"}, GPLOT => "EnO_brightness4:Brightness,EnO_voltage4:Voltage,"},
   "A5.06.03" => {attr => {subType => "lightSensor.03"}, GPLOT => "EnO_brightness4:Brightness,"},
   "A5.06.04" => {attr => {subType => "lightSensor.04"}, GPLOT => "EnO_temp4brightness4:Temp/Brightness,"},
+  "A5.06.05" => {attr => {subType => "lightSensor.05"}, GPLOT => "EnO_brightness4:Brightness,EnO_voltage4:Voltage,"},
   "A5.07.01" => {attr => {subType => "occupSensor.01"}, GPLOT => "EnO_motion:Motion,EnO_voltage4current4:Voltage/Current,"},
   "A5.07.02" => {attr => {subType => "occupSensor.02"}, GPLOT => "EnO_motion:Motion4brightness4:Motion/Brightness,EnO_voltage4:Voltage,"},
   "A5.07.03" => {attr => {subType => "occupSensor.03"}, GPLOT => "EnO_motion:Motion4brightness4:Motion/Brightness,EnO_voltage4:Voltage,"},
@@ -219,6 +231,7 @@ my %EnO_eepConfig = (
   "A5.09.09" => {attr => {subType => "CO2Sensor.01"}, GPLOT => "EnO_CO2:CO2,"},
   "A5.09.0A" => {attr => {subType => "HSensor.01"}, GPLOT => "EnO_A5-09-0A:H/Temp,EnO_voltage4:Voltage,"},
   "A5.09.0B" => {attr => {subType => "radiationSensor.01"}, GPLOT => "EnO_radioactivity4/Radioactivity,EnO_voltage4:Voltage,"},
+  "A5.09.0C" => {attr => {subType => "vocSensor.01"}, GPLOT => "EnO_A5-09-05:Concentration,"},
   "A5.10.01" => {attr => {subType => "roomSensorControl.05"}, GPLOT => "EnO_temp4:Temp,"},
   "A5.10.02" => {attr => {subType => "roomSensorControl.05"}, GPLOT => "EnO_temp4:Temp,"},
   "A5.10.03" => {attr => {subType => "roomSensorControl.05", comMode => "confirm", subDef => "getNextID"}, GPLOT => "EnO_temp4:Temp,"},
@@ -270,6 +283,8 @@ my %EnO_eepConfig = (
   "A5.13.04" => {attr => {subType => "environmentApp"}},
   "A5.13.05" => {attr => {subType => "environmentApp"}},
   "A5.13.06" => {attr => {subType => "environmentApp"}},
+  "A5.13.07" => {attr => {subType => "windSensor.01"}, GPLOT => "EnO_A5-13-07:WindSpeed,"},
+  "A5.13.08" => {attr => {subType => "rainSensor.01"}, GPLOT => "EnO_A5-13-08:Raining,"},
   "A5.13.10" => {attr => {subType => "environmentApp"}, GPLOT => "EnO_solarRadiation4:SolarRadiation,"},
   "A5.14.01" => {attr => {subType => "multiFuncSensor"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
   "A5.14.02" => {attr => {subType => "multiFuncSensor"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
@@ -277,6 +292,10 @@ my %EnO_eepConfig = (
   "A5.14.04" => {attr => {subType => "multiFuncSensor"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
   "A5.14.05" => {attr => {subType => "multiFuncSensor"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
   "A5.14.06" => {attr => {subType => "multiFuncSensor"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
+  "A5.14.07" => {attr => {subType => "doorContact"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
+  "A5.14.08" => {attr => {subType => "doorContact"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
+  "A5.14.09" => {attr => {subType => "windowContact"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
+  "A5.14.0A" => {attr => {subType => "windowContact"}, GPLOT => "EnO_A5-14-xx:Voltage/Brightness,EnO_A5-14-xx_2:Contact/Vibration,"},
   "A5.20.01" => {attr => {subType => "hvac.01", webCmd => "setpointTemp"}, GPLOT => "EnO_A5-20-01:Temp/SetpointTemp/Setpoint,EnO_A5-20-01_2:PID,"},
  #"A5.20.02" => {attr => {subType => "hvac.02"}},
  #"A5.20.03" => {attr => {subType => "hvac.03"}},
@@ -294,6 +313,8 @@ my %EnO_eepConfig = (
   "A5.38.09" => {attr => {subType => "lightCtrl.01"}, GPLOT => "EnO_dimFFRGB:DimRGB,"},
   "A5.3F.00" => {attr => {subType => "radioLinkTest", comMode => "biDir", destinationID => "unicast", subDef => "getNextID"}},
   "A5.3F.7F" => {attr => {subType => "manufProfile"}},
+  "B0.00.00" => {attr => {subType => "genericProfile"}},
+  "C5.00.00" => {attr => {subType => "remote", manufID => "7FF"}},
   "D2.01.00" => {attr => {subType => "actuator.01", defaultChannel => 0}, GPLOT => "EnO_power4energy4:Power/Energie,"},
   "D2.01.01" => {attr => {subType => "actuator.01", defaultChannel => 0}},
   "D2.01.02" => {attr => {subType => "actuator.01", defaultChannel => 0, webCmd => "on:off:dim"}, GPLOT => "EnO_dim4:Dim,EnO_power4energy4:Power/Energie,"},
@@ -313,13 +334,27 @@ my %EnO_eepConfig = (
   "D2.01.10" => {attr => {subType => "actuator.01", defaultChannel => 0}, GPLOT => "EnO_power4energy4:Power/Energie,"},
   "D2.01.11" => {attr => {subType => "actuator.01", defaultChannel => 0}},
   "D2.01.12" => {attr => {subType => "actuator.01", defaultChannel => 0}},
+  "D2.01.13" => {attr => {subType => "actuator.01", defaultChannel => 0}},
+  "D2.01.14" => {attr => {subType => "actuator.01", defaultChannel => 0}},
   "D2.03.00" => {attr => {subType => "switch.00"}},
+  "D2.03.0A" => {attr => {subType => "switch.0A"}},
   "D2.03.10" => {attr => {subType => "windowHandle.10"}, GPLOT => "EnO_windowHandle:WindowHandle,"},
   "D2.05.00" => {attr => {subType => "blindsCtrl.00", webCmd => "opens:stop:closes:position"}, GPLOT => "EnO_position4angle4:Position/AnglePos,"},
+  "D2.05.01" => {attr => {subType => "blindsCtrl.01", webCmd => "opens:stop:closes:position"}},
+  "D2.05.02" => {attr => {subType => "blindsCtrl.00", webCmd => "opens:stop:closes:position"}, GPLOT => "EnO_position4angle4:Position/AnglePos,"},
   "D2.06.01" => {attr => {subType => "multisensor.01"}, GPLOT => "EnO_temp4humi4:Temp/Humi,EnO_brightness4:Brightness,"},
   "D2.10.00" => {attr => {subType => "roomCtrlPanel.00", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
   "D2.10.01" => {attr => {subType => "roomCtrlPanel.00", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
   "D2.10.02" => {attr => {subType => "roomCtrlPanel.00", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.11.01" => {attr => {subType => "roomCtrlPanel.01", comMode => "biDir", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.11.02" => {attr => {subType => "roomCtrlPanel.01", comMode => "biDir", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.11.03" => {attr => {subType => "roomCtrlPanel.01", comMode => "biDir", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.11.04" => {attr => {subType => "roomCtrlPanel.01", comMode => "biDir", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.11.05" => {attr => {subType => "roomCtrlPanel.01", comMode => "biDir", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.11.06" => {attr => {subType => "roomCtrlPanel.01", comMode => "biDir", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.11.07" => {attr => {subType => "roomCtrlPanel.01", comMode => "biDir", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.11.08" => {attr => {subType => "roomCtrlPanel.01", comMode => "biDir", webCmd => "setpointTemp"}, GPLOT => "EnO_D2-10-xx:Temp/SPT/Humi,"},
+  "D2.14.30" => {attr => {subType => "multiFuncSensor.30"}, GPLOT => "EnO_temp4humi4:Temp/Humi,"},
   "D2.20.00" => {attr => {subType => "fanCtrl.00", webCmd => "fanSpeed"}, GPLOT => "EnO_fanSpeed4humi4:FanSpeed/Humi,"},
   "D2.32.00" => {attr => {subType => "currentClamp.00"}, GPLOT => "EnO_D2-32-xx:Current,"},
   "D2.32.01" => {attr => {subType => "currentClamp.01"}, GPLOT => "EnO_D2-32-xx:Current,"},
@@ -331,7 +366,9 @@ my %EnO_eepConfig = (
   "D2.50.10" => {attr => {subType => "heatRecovery.00", webCmd => "ventilation"}, GPLOT => "EnO_D2-50-xx:Temp/AirQuality,EnO_D2-50-xx_2:AirFlow/FanSpeed,"},
   "D2.50.11" => {attr => {subType => "heatRecovery.00", webCmd => "ventilation"}, GPLOT => "EnO_D2-50-xx:Temp/AirQuality,EnO_D2-50-xx_2:AirFlow/FanSpeed,"},
   "D2.A0.01" => {attr => {subType => "valveCtrl.00", defaultChannel => 0, webCmd => "opens:closes"}, GPLOT => "EnO_valveCtrl:Valve,"},
+  "D2.B0.51" => {attr => {subType => "liquidLeakage.51"}, GPLOT => "EnO_liquidLeakage:LiquidLeakage,"},
   "D5.00.01" => {attr => {subType => "contact", manufID => "7FF"}, GPLOT => "EnO_contact:Contact,"},
+  "F6.01.01" => {attr => {subType => "switch", sensorMode => "pushbutton"}},
   "F6.02.01" => {attr => {subType => "switch"}},
   "F6.02.02" => {attr => {subType => "switch"}},
   "F6.02.03" => {attr => {subType => "switch"}},
@@ -340,42 +377,67 @@ my %EnO_eepConfig = (
   "F6.03.02" => {attr => {subType => "switch"}},
   "F6.04.01" => {attr => {subType => "keycard"}, GPLOT => "EnO_keycard:Keycard,"},
  #"F6.04.02" => {attr => {subType => "keycard.02"}, GPLOT => "EnO_keycard:Keycard,"},
+  "F6.05.00" => {attr => {subType => "windSpeed.00"}},
   "F6.05.01" => {attr => {subType => "liquidLeakage"}, GPLOT => "EnO_liquidLeakage:LiquidLeakage,"},
+  "F6.05.02" => {attr => {subType => "smokeDetector.02"}},
   "F6.10.00" => {attr => {subType => "windowHandle"}, GPLOT => "EnO_windowHandle:WindowHandle,"},
  #"F6.10.01" => {attr => {subType => "windowHandle.01"}, GPLOT => "EnO_windowHandle:WindowHandle,"},
   "F6.3F.7F" => {attr => {subType => "switch.7F"}},
-  "B0.00.00" => {attr => {subType => "genericProfile"}},
  # special profiles
+  "G5.07.01" => {attr => {subType => "occupSensor.01", eep => "A5-07-01", manufID => "00D", model => 'tracker'}, GPLOT => "EnO_motion:Motion,EnO_voltage4current4:Voltage/Current,"},
   "G5.10.12" => {attr => {subType => "roomSensorControl.01", eep => "A5-10-12", manufID => "00D", scaleMax => 40, scaleMin => 0, scaleDecimals => 1}, GPLOT => "EnO_temp4humi6:Temp/Humi,"},
   "G5.38.08" => {attr => {subType => "gateway", eep => "A5-38-08", gwCmd => "dimming", manufID => "00D", webCmd => "on:off:dim"}, GPLOT => "EnO_dim4:Dim,"},
+  "H5.38.08" => {attr => {subType => "gateway", comMode => "confirm", eep => "A5-38-08", gwCmd => "dimming", manufID => "00D", model => "Eltako_TF", teachMethod => "confirm", webCmd => "on:off:dim"}, GPLOT => "EnO_dim4:Dim,"},
   "G5.3F.7F" => {attr => {subType => "manufProfile", eep => "A5-3F-7F", manufID => "00D", webCmd => "opens:stop:closes"}},
+  "H5.3F.7F" => {attr => {subType => "manufProfile", comMode => "confirm", eep => "A5-3F-7F", manufID => "00D", model => "Eltako_TF", sensorMode => 'pushbutton', settingAccuracy => "high", teachMethod => "confirm", webCmd => "opens:stop:closes"}},
   "M5.38.08" => {attr => {subType => "gateway", eep => "A5-38-08", gwCmd => "switching", manufID => "00D", webCmd => "on:off"}},
+  "N5.38.08" => {attr => {subType => "gateway", comMode => "confirm", eep => "A5-38-08", gwCmd => "switching", manufID => "00D", model => "Eltako_TF", teachMethod => "confirm", webCmd => "on:off"}},
   "G5.ZZ.ZZ" => {attr => {subType => "PM101", manufID => "005"}, GPLOT => "EnO_motion:Motion,EnO_brightness4:Brightness,"},
-  "L6.02.01" => {attr => {subType => "FRW", eep => "F6-02-01", manufID => "00D"}},
+  "L6.02.01" => {attr => {subType => "smokeDetector.02", eep => "F6-05-02", manufID => "00D"}},
   "ZZ.ZZ.ZZ" => {attr => {subType => "raw"}},
 );
 
-my %EnO_getRemoteFunctionCode = (
-  4 => "id",
-  6 => "ping",
-  7 => "functionCommands",
-  8 => "status"
+my %EnO_extendedRemoteFunctionCode = (
+  0x210 => "remoteLinkTableInfo", # get
+  0x211 => "remoteLinkTable",     # get
+  0x212 => "remoteLinkTable",     # set
+  0x213 => "remoteLinkTableGP",   # get
+  0x214 => "remoteLinkTableGP",   # set
+  0x220 => "remoteLearnMode",     # set
+  0x221 => "remoteTeach",         # set
+  0x224 => "remoteReset",         # set
+  0x225 => "remoteRLT",           # set
+  0x226 => "remoteApplyChanges",  # set
+  0x227 => "remoteProductID",     # get
+  0x230 => "remoteDevCfg",        # get
+  0x231 => "remoteDevCfg",        # set
+  0x232 => "remoteLinkCfg",       # get
+  0x233 => "remoteLinkCfg",       # set
+  0x240 => "remoteAck",           # parse
+  0x250 => "remoteRepeater",      # get
+  0x251 => "remoteRepeater",      # set
+  0x252 => "remoteRepeaterFilter" # set
 );
 
-my %EnO_setRemoteFunctionCode = (
-  1 => "unlock",
-  2 => "lock",
-  3 => "setCode",
-  5 => "action",
-);
-
-my @EnO_models = qw (
-  other
-  FAE14 FHK14 FHK61
-  FSA12 FSB14 FSB61 FSB70
-  FSM12 FSM61
-  FT55
-  FTS12
+my %EnO_models = (
+  "Eltako_FAE14" => {attr => {manufID => "00D"}},
+  "Eltako_FHK14" => {attr => {manufID => "00D"}},
+  "Eltako_FHK61" => {attr => {manufID => "00D"}},
+  "Eltako_FSA12" => {attr => {manufID => "00D"}},
+  "Eltako_FSB14" => {attr => {manufID => "00D"}},
+  "Eltako_FSB61" => {attr => {manufID => "00D"}},
+  "Eltako_FSB70" => {attr => {manufID => "00D"}},
+  "Eltako_FSB_ACK" => {attr => {manufID => "00D"}},
+  "Eltako_FSM12" => {attr => {manufID => "00D"}},
+  "Eltako_FSM61" => {attr => {manufID => "00D"}},
+  "Eltako_FT55" => {attr => {manufID => "00D"}},
+  "Eltako_FTS12" => {attr => {manufID => "00D"}},
+  "Eltako_TF"=> {attr => {manufID => "00D"}},
+  "Eltako_TF_RWB"=> {attr => {manufID => "00D"}},
+  "Holter_OEM" => {attr => {pidCtrl => "off"}},
+  "Micropelt_MVA004" => {attr => {remoteCode => "FFFFFFFE", remoteEEP => "A5-20-01", remoteID => "getNextID", remoteManagement => "manager"}, xml => {productID => "0x004900000000", xmlDescrLocation => "/FHEM/lib/EnO_ReCom_Device_Descr.xml"}},
+  other => {},
+  tracker => {}
 );
 
 my @EnO_defaultChannel = ("all", "input", 0..29);
@@ -607,10 +669,10 @@ EnOcean_Initialize($)
   my $subTypeList = join(",", sort grep { !$subTypeList{$_}++ } @subTypeList);
 
   $hash->{AutoCreate} = {"EnO.*" => {ATTR => "creator:autocreate", FILTER => "%NAME"}};
-  $hash->{noAutocreatedFilelog} = 1; 
+  $hash->{noAutocreatedFilelog} = 1;
   $hash->{Match} = "^EnOcean:";
   $hash->{DefFn} = "EnOcean_Define";
-  $hash->{DeleteFn} = "EnOcean_Delete";  
+  $hash->{DeleteFn} = "EnOcean_Delete";
   $hash->{UndefFn} = "EnOcean_Undef";
   $hash->{ParseFn} = "EnOcean_Parse";
   $hash->{SetFn} = "EnOcean_Set";
@@ -620,7 +682,7 @@ EnOcean_Initialize($)
   $hash->{AttrFn} = "EnOcean_Attr";
   $hash->{AttrList} = "IODev do_not_notify:1,0 ignore:0,1 dummy:0,1 " .
                       "showtime:1,0 " .
-                      "actualTemp angleMax:slider,-180,20,180 alarmAction:no,stop,opens,closes " .
+                      "actualTemp angleMax:slider,-180,20,180 alarmAction " .
                       "angleMin:slider,-180,20,180 " .
                       "angleTime setCmdTrigger:man,refDev blockUnknownMSC:no,yes blockMotion:no,yes " .
                       "blockTemp:no,yes blockDisplay:no,yes blockDateTime:no,yes " .
@@ -633,29 +695,32 @@ EnOcean_Initialize($)
                       "demandRespThreshold:slider,0,1,15 demandRespTimeoutLevel:max,last destinationID " .
                       "devChannel devMode:master,slave devUpdate:off,auto,demand,polling,interrupt " .
                       "dimMax dimMin dimValueOn disable:0,1 disabledForIntervals " .
-                      "displayContent:default,humidity,off,setPointTemp,tempertureExtern,temperatureIntern,time,no_change " .
+                      "displayContent:default,humidity,off,setpointTemp,tempertureExtern,temperatureIntern,time,no_change " .
                       "displayOrientation:0,90,180,270 " .
                       "eep gpDef gwCmd:" . join(",", sort @EnO_gwCmd) . " humitity humidityRefDev " .
                       "keyRcv keySnd macAlgo:no,3,4 measurementCtrl:disable,enable " .
                       "manufID:" . join(",", sort keys %EnO_manuf) . " " .
-                      "model:" . join(",", @EnO_models) . " " .
+                      "model:" . join(",", sort keys %EnO_models) . " " .
                       "observe:on,off observeCmdRepetition:1,2,3,4,5 observeErrorAction observeInterval observeLogic:and,or " .
                       #observeCmds observeExeptions
                       "observeRefDev pidActorErrorAction:errorPos,freeze pidActorCallBeforeSetting pidActorErrorPos " .
                       "pidActorLimitLower pidActorLimitUpper pidCtrl:on,off pidDeltaTreshold pidFactor_D pidFactor_I " .
                       "pidFactor_P pidIPortionCallBeforeSetting pidSensorTimeout " .
-                      "pollInterval productID rampTime releasedChannel:A,B,C,D,I,0,auto repeatingAllowed:yes,no " .
-                      "remoteManagement:off,on rlcAlgo:no,2++,3++ rlcRcv rlcSnd rlcTX:true,false " .
+                      "pollInterval postmasterID productID rampTime rcvRespAction ".
+                      "releasedChannel:A,B,C,D,I,0,auto repeatingAllowed:yes,no remoteCode remoteEEP remoteID remoteManufID " .
+                      "remoteManagement:client,manager,off rlcAlgo:no,2++,3++ rlcRcv rlcSnd rlcTX:true,false " .
                       "reposition:directly,opens,closes rltRepeat:16,32,64,128,256 rltType:1BS,4BS " .
-                      "scaleDecimals:0,1,2,3,4,5,6,7,8,9 scaleMax scaleMin secMode:rcv,snd,bidir" .
-                      "secCode secLevel:encapsulation,encryption,off sendDevStatus:no,yes sensorMode:switch,pushbutton " .
-                      "serviceOn:no,yes setpointRefDev setpointTempRefDev shutTime shutTimeCloses subDef " .
+                      "scaleDecimals:0,1,2,3,4,5,6,7,8,9 scaleMax scaleMin secMode:rcv,snd,bidir " .
+                      "secLevel:encapsulation,encryption,off sendDevStatus:no,yes sensorMode:switch,pushbutton " .
+                      "serviceOn:no,yes settingAccuracy:high,low setpointRefDev setpointSummerMode:slider,0,5,100 " .
+                      "signal:off,on signOfLife:off,on signOfLifeInterval setpointTempRefDev shutTime shutTimeCloses subDef " .
                       "subDef0 subDefI subDefA subDefB subDefC subDefD subDefH subDefW " .
                       "subType:$subTypeList subTypeSet:$subTypeList subTypeReading:$subTypeList " .
                       "summerMode:off,on switchMode:switch,pushbutton " .
-                      "switchHysteresis switchType:direction,universal,channel,central temperatureRefDev " .
+                      "switchHysteresis switchType:direction,universal,channel,central " .
+                      "teachMethod:1BS,4BS,confirm,GP,RPS,smartAck,STE,UTE temperatureRefDev " .
                       "temperatureScale:C,F,default,no_change timeNotation:12,24,default,no_change " .
-                      "timeProgram1 timeProgram2 timeProgram3 timeProgram4 updateState:default,yes,no " .
+                      "timeProgram1 timeProgram2 timeProgram3 timeProgram4 trackerWakeUpCycle:10,20,30,40,60,120,180,240,3600,86400 updateState:default,yes,no " .
                       "uteResponseRequest:yes,no " .
                       "wakeUpCycle:" . join(",", keys %wakeUpCycle) . " " .
                       $readingFnAttributes;
@@ -669,12 +734,16 @@ EnOcean_Initialize($)
   } else {
     Log3 undef, 2, "EnOcean Cryptographic functions are not available.";
   }
+  if ($xmlFunc == 1){
+    Log3 undef, 2, "EnOcean XML functions available.";
+  } else {
+    Log3 undef, 2, "EnOcean XML functions are not available.";
+  }
   return undef;
 }
 
 # Define
-sub
-EnOcean_Define($$) {
+sub EnOcean_Define($$) {
   my ($hash, $def) = @_;
   my @a = split("[ \t][ \t]*", $def);
   my $name = $hash->{NAME};
@@ -688,12 +757,12 @@ EnOcean_Define($$) {
     while (($autocreateName, $autocreateHash) = each(%defs)) {
       last if ($defs{$autocreateName}{TYPE} eq "autocreate");
     }
-    $autocreateDeviceRoom = $attr{$autocreateName}{device_room} if (exists $attr{$autocreateName}{device_room});
+    $autocreateDeviceRoom = AttrVal($autocreateName, "device_room", $autocreateDeviceRoom) if (defined $autocreateName);
     $autocreateDeviceRoom = 'EnOcean' if ($autocreateDeviceRoom eq '%TYPE');
     $autocreateDeviceRoom = $name if ($autocreateDeviceRoom eq '%NAME');
-    $autocreateDeviceRoom = $attr{$name}{room} if (exists $attr{$name}{room});
+    $autocreateDeviceRoom = AttrVal($name, "room", $autocreateDeviceRoom);
     if ($init_done) {
-      Log3 $name, 2, "EnOcean define " . join(' ', @a);    
+      Log3 $name, 2, "EnOcean define " . join(' ', @a);
       if (!defined(AttrVal($autocreateName, "disable", undef)) && !exists($defs{$filelogName})) {
         # create FileLog
         $autocreateFilelog = $attr{$autocreateName}{filelog} if (exists $attr{$autocreateName}{filelog});
@@ -722,7 +791,7 @@ EnOcean_Define($$) {
       $attr{$name}{manufID} = "7FF" if (!exists $attr{$name}{manufID});
       $attr{$name}{room} = $autocreateDeviceRoom;
       $attr{$name}{subType} = "raw" if (!exists $attr{$name}{subType});
-      
+
     } elsif ($a[2] =~ m/^[A-Fa-f0-9]{8}$/i) {
       # DestinationID
       $def = uc($a[2]);
@@ -760,7 +829,7 @@ EnOcean_Define($$) {
             my ($weblinkName, $weblinkHash);
             while (($weblinkName, $weblinkHash) = each(%defs)) {
               if ($weblinkName =~ /^SVG_$name.*/) {
-                CommandDelete(undef, $weblinkName) ;
+                CommandDelete(undef, $weblinkName);
                 Log3 $hash->{NAME}, 2, "EnOcean $weblinkName deleted";
               }
             }
@@ -785,54 +854,89 @@ EnOcean_Define($$) {
         # autocreate: parse received device telegram
         AssignIoPort($hash) if (!exists $hash->{IODev});
         $modules{EnOcean}{defptr}{$def} = $hash;
-        my ($data, $rorg, $status);
-        (undef, undef, $rorg, $data, undef, $status, undef) = split(':', $a[3]);     
-        $attr{$name}{subType} = $EnO_rorgname{$rorg};
-        if ($attr{$name}{subType} eq "switch") {
-          my $nu = (hex($status) & 0x10) >> 4;
-          my $t21 = (hex($status) & 0x20) >> 5;
-          $attr{$name}{manufID} = "7FF";
-          if ($t21 && $nu) {
-            $attr{$name}{eep} = "F6-02-01";
-            readingsSingleUpdate($hash, "teach", "RPS teach-in accepted EEP F6-02-01 Manufacturer: no ID", 1);
-            Log3 $name, 2, "EnOcean $name teach-in EEP F6-02-01 Manufacturer: no ID";
-          } elsif (!$t21 && $nu) {
-            $attr{$name}{eep} = "F6-03-01";
-            readingsSingleUpdate($hash, "teach", "RPS teach-in accepted EEP F6-03-01 Manufacturer: no ID", 1);
-            Log3 $name, 2, "EnOcean $name teach-in EEP F6-03-01 Manufacturer: no ID";
-          } elsif ($t21 && !$nu) {
-            $attr{$name}{subType} = "windowHandle";
-            $attr{$name}{eep} = "F6-10-00";
-            readingsSingleUpdate($hash, "teach", "RPS teach-in accepted EEP F6-10-00 Manufacturer: no ID", 1);
-            Log3 $name, 2, "EnOcean $name teach-in EEP F6-10-00 Manufacturer: no ID";
-          }      
-        } elsif ($attr{$name}{subType} eq "contact" && hex($data) & 8) {
-          $attr{$name}{eep} = "D5-00-01";
-          $attr{$name}{manufID} = "7FF";
-          readingsSingleUpdate($hash, "teach", "1BS teach-in accepted EEP D5-00-01 Manufacturer: no ID", 1);
-          Log3 $name, 2, "EnOcean $name teach-in EEP D5-00-01 Manufacturer: no ID";
-        } elsif ($attr{$name}{subType} eq "4BS" && hex(substr($data, 6, 2)) & 8) {
-          $hash->{helper}{teachInWait} = "4BS";      
-          readingsSingleUpdate($hash, "teach", "4BS teach-in is missing", 1);
-          Log3 $name, 2, "EnOcean $name 4BS teach-in is missing";
-        } elsif ($attr{$name}{subType} eq "UTE") {
-          $hash->{helper}{teachInWait} = "UTE";
-        } elsif ($attr{$name}{subType} eq "VLD") {
-          $hash->{helper}{teachInWait} = "UTE";
-          readingsSingleUpdate($hash, "teach", "UTE teach-in is missing", 1);
-          Log3 $name, 2, "EnOcean $name UTE teach-in is missing";
-        } elsif ($attr{$name}{subType} eq "MSC") {
-          readingsSingleUpdate($hash, "teach", "MSC not supported", 1);
-          Log3 $name, 2, "EnOcean $name MSC not supported";
-        } elsif ($attr{$name}{subType} =~ m/^SEC|ENC$/) {
-          $hash->{helper}{teachInWait} = "STE";
-          readingsSingleUpdate($hash, "teach", "STE teach-in is missing", 1);
-          Log3 $name, 2, "EnOcean $name STE teach-in is missing";
-        } elsif ($attr{$name}{subType} =~ m/^GPCD|GPSD$/) {
-          $hash->{helper}{teachInWait} = "GPTI";
-          readingsSingleUpdate($hash, "teach", "GP teach-in is missing", 1);
-          Log3 $name, 2, "EnOcean $name GP teach-in is missing";
+        my @msg = split(':', $a[3]);
+        my $packetType = hex $msg[1];
+
+        if ($packetType == 1) {
+          my ($data, $rorg, $status);
+          #EnOcean:PacketType:RORG:MessageData:SourceID:Status:OptionalData
+          (undef, undef, $rorg, $data, undef, $status, undef) = @msg;
+          $attr{$name}{subType} = $EnO_rorgname{$rorg};
+          if ($attr{$name}{subType} eq "switch") {
+            my $nu = (hex($status) & 0x10) >> 4;
+            my $t21 = (hex($status) & 0x20) >> 5;
+            $attr{$name}{manufID} = "7FF";
+            if ($t21 && $nu) {
+              $attr{$name}{eep} = "F6-02-01";
+              readingsSingleUpdate($hash, "teach", "RPS teach-in accepted EEP F6-02-01 Manufacturer: no ID", 1);
+              $attr{$name}{teachMethod} = 'RPS';
+              Log3 $name, 2, "EnOcean $name teach-in EEP F6-02-01 Manufacturer: no ID";
+            } elsif (!$t21 && $nu) {
+              $attr{$name}{eep} = "F6-03-01";
+              readingsSingleUpdate($hash, "teach", "RPS teach-in accepted EEP F6-03-01 Manufacturer: no ID", 1);
+              $attr{$name}{teachMethod} = 'RPS';
+              Log3 $name, 2, "EnOcean $name teach-in EEP F6-03-01 Manufacturer: no ID";
+            } elsif ($t21 && !$nu) {
+              $attr{$name}{subType} = "windowHandle";
+              $attr{$name}{eep} = "F6-10-00";
+              readingsSingleUpdate($hash, "teach", "RPS teach-in accepted EEP F6-10-00 Manufacturer: no ID", 1);
+              $attr{$name}{teachMethod} = 'RPS';
+              Log3 $name, 2, "EnOcean $name teach-in EEP F6-10-00 Manufacturer: no ID";
+            }
+          } elsif ($attr{$name}{subType} eq "contact" && hex($data) & 8) {
+            $attr{$name}{eep} = "D5-00-01";
+            $attr{$name}{manufID} = "7FF";
+            readingsSingleUpdate($hash, "teach", "1BS teach-in accepted EEP D5-00-01 Manufacturer: no ID", 1);
+            $attr{$name}{teachMethod} = '1BS';
+            Log3 $name, 2, "EnOcean $name teach-in EEP D5-00-01 Manufacturer: no ID";
+          } elsif ($attr{$name}{subType} eq "4BS" && hex(substr($data, 6, 2)) & 8) {
+            $hash->{helper}{teachInWait} = "4BS";
+            readingsSingleUpdate($hash, "teach", "4BS teach-in is missing", 1);
+            Log3 $name, 2, "EnOcean $name 4BS teach-in is missing";
+          } elsif ($attr{$name}{subType} eq "UTE") {
+            $hash->{helper}{teachInWait} = "UTE";
+          } elsif ($attr{$name}{subType} eq "VLD") {
+            $hash->{helper}{teachInWait} = "UTE";
+            readingsSingleUpdate($hash, "teach", "UTE teach-in is missing", 1);
+            Log3 $name, 2, "EnOcean $name UTE teach-in is missing";
+          } elsif ($attr{$name}{subType} eq "MSC") {
+            readingsSingleUpdate($hash, "teach", "MSC not supported", 1);
+            Log3 $name, 2, "EnOcean $name MSC not supported";
+          } elsif ($attr{$name}{subType} =~ m/^SEC|ENC$/) {
+            $hash->{helper}{teachInWait} = "STE";
+            readingsSingleUpdate($hash, "teach", "STE teach-in is missing", 1);
+            Log3 $name, 2, "EnOcean $name STE teach-in is missing";
+          } elsif ($attr{$name}{subType} =~ m/^GPCD|GPSD$/) {
+            $hash->{helper}{teachInWait} = "GPTI";
+            readingsSingleUpdate($hash, "teach", "GP teach-in is missing", 1);
+            Log3 $name, 2, "EnOcean $name GP teach-in is missing";
+          }
+
+        } elsif ($packetType == 4) {
+          $hash->{helper}{smartAckLearnWait} = $name;
+
+        } elsif ($packetType == 7) {
+          # remote management
+          #EnOcean:PacketType:RORG:MessageData:SourceID:DestinationID:FunctionNumber:ManufacturerID:RSSI:Delay
+          if (hex($msg[6]) < 0x600) {
+            $attr{$name}{remoteManagement} = 'client';
+            # unlock device to send acknowledgment telegram
+            $hash->{RemoteClientUnlock} = 1;
+            RemoveInternalTimer($hash->{helper}{timer}{RemoteClientUnlock}) if(exists $hash->{helper}{timer}{RemoteClientUnlock});
+            $hash->{helper}{timer}{RemoteClientUnlock} = {hash => $hash, param => 'RemoteClientUnlock'};
+            InternalTimer(gettimeofday() + 1, 'EnOcean_cdmClearHashVal', $hash->{helper}{timer}{RemoteClientUnlock}, 0);
+          } else {
+            $attr{$name}{remoteManagement} = 'manager';
+          }
+          $attr{$name}{eep} = 'C5-00-00';
+          $attr{$name}{manufID} = substr($msg[7], 1);
+          $attr{$name}{remoteEEP} = 'C5-00-00';
+          $attr{$name}{remoteID} = $msg[4];
+          $attr{$name}{remoteManufID} = substr($msg[7], 1);
+          $attr{$name}{subType} = 'remote';
+          $modules{EnOcean}{defptr}{$msg[4]} = $hash;
         }
+
         EnOcean_Parse($hash, $a[3]);
         if (exists $attr{$name}{eep}) {
           $attr{$name}{eep} =~ m/^([A-Za-z0-9]{2})-([A-Za-z0-9]{2})-([A-Za-z0-9]{2})$/i;
@@ -846,6 +950,7 @@ EnOcean_Define($$) {
       } else {
         # no device infos
         AssignIoPort($hash) if (!exists $hash->{IODev});
+        # assign defptr
         if (exists $hash->{OLDDEF}) {
           delete $modules{EnOcean}{defptr}{$hash->{OLDDEF}};
         }
@@ -854,7 +959,7 @@ EnOcean_Define($$) {
         $attr{$name}{room} = $autocreateDeviceRoom;
         $attr{$name}{subType} = "raw" if (!exists $attr{$name}{subType});
       }
-      
+
     } elsif ($a[2] =~ m/^([A-Za-z0-9]{2})-([A-Za-z0-9]{2})-([A-Za-z0-9]{2})$/i) {
       # EEP
       my ($rorg, $func, $type) = (uc($1), uc($2), uc($3));
@@ -887,7 +992,10 @@ EnOcean_Define($$) {
         } else {
           $hash->{DEF} = $def;
           if ($eep eq 'A5.3F.00') {
-            $attr{$name}{subDef} = EnOcean_CheckSenderID("getNextID", $hash->{IODev}{NAME}, "00000000");          
+            $attr{$name}{subDef} = EnOcean_CheckSenderID("getNextID", $hash->{IODev}{NAME}, "00000000");
+          } elsif ($eep eq 'C5.00.00') {
+            # remote management
+
           } else {
             $def = EnOcean_CheckSenderID("getNextID", $hash->{IODev}{NAME}, "00000000");
             $hash->{DEF} = $def;
@@ -915,11 +1023,11 @@ EnOcean_Define($$) {
         EnOcean_CreateSVG('del', $hash, $a[2]);
       } else {
         return "EEP $rorg-$func-$type not supported";
-      }      
+      }
     } else {
       return "wrong syntax: define <name> EnOcean <8-digit-hex-code> [<EEP>]|getNextID|<EEP>";
     }
-  
+
   } else {
     return "wrong syntax: define <name> EnOcean <8-digit-hex-code> [<EEP>]|getNextID|<EEP>";
   }
@@ -931,6 +1039,7 @@ EnOcean_Define($$) {
     $hash->{helper}{stopped} = 0;
     #$hash->{helper}{adjust} = '';
   }
+
   # all notifys needed
   #$hash->{NOTIFYDEV} = "global";
   Log3 $name, 5, "EnOcean_define for device $name executed.";
@@ -967,25 +1076,31 @@ sub EnOcean_Get($@)
   if ($eep =~ m/^([A-Fa-f0-9]{2})-([A-Fa-f0-9]{2})-([A-Fa-f0-9]{2})$/i) {
     $eep = (((hex($1) << 6) | hex($2)) << 7) | hex($3);
   } else {
-    $eep = (((hex("A5") << 6) | hex("3F")) << 7) | hex("7F");
+    $eep = (((hex("FF") << 6) | hex("3F")) << 7) | hex("7F");
   }
   my $manufID = uc(AttrVal($name, "manufID", ""));
   my $model = AttrVal($name, "model", "");
   my $packetType = 1;
   $packetType = 0x0A if (ReadingsVal($hash->{IODev}{NAME}, "mode", "00") eq "01");
+  my $remoteID = AttrVal($name, "remoteID", undef);
+  my $remoteManufID = uc(AttrVal($name, "remoteManufID", AttrVal($name, "manufID", "")));
   my $rorg;
-  my $status = "00";
+  my $status = '00';
   my $st = AttrVal($name, "subType", "");
   my $stSet = AttrVal($name, "subTypeSet", undef);
   if (defined $stSet) {$st = $stSet;}
   my $subDef = uc(AttrVal($name, "subDef", $hash->{DEF}));
   if ($subDef !~ m/^[\dA-F]{8}$/) {return "SenderID $subDef wrong, choose <8-digit-hex-code>.";}
   my $timeNow = TimeNow();
-  if (AttrVal($name, "remoteManagement", "off") eq "on") {
+  if (AttrVal($name, "remoteManagement", "off") eq "manager") {
     # Remote Management
-    $cmdList = "remoteCommands:noArg remoteID:noArg remotePing:noArg remoteStatus:noArg ";
+    $cmdList .= "remoteDevCfg remoteFunctions:noArg remoteID:noArg remoteLinkCfg remoteLinkTableInfo:noArg remoteLinkTable remoteLinkTableGP remotePing:noArg remoteProductID:noArg remoteRepeater:noArg remoteStatus:noArg ";
   }
-  # control set actions
+  if (AttrVal($name, "signal", "off") eq "on") {
+    # signal telegram
+    $cmdList .= "signal:energy,revision,RXlevel,harvester ";
+  }
+  # control get actions
   # $updateState = -1: no get commands available e. g. sensors
   #                 0: execute get commands
   #                 1: execute get commands and and update reading state
@@ -1000,57 +1115,251 @@ sub EnOcean_Get($@)
     if ($cmd eq "remoteID") {
       $cmdID = 4;
       $manufID = 0x7FF;
-      #$packetType = 7;
+      $packetType = 7;
       $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
       shift(@a);
-      my $cntr = (((3 << 11) | $manufID) << 12) | $cmdID;
-      $data = sprintf "%02X%08X%06X00", $seq, $cntr, ($eep << 3) | 1;
-      #$data = sprintf "0004%04X%06X", $manufID, ($eep << 3) | 1;
+      $data = sprintf "0004%04X%06X", $manufID, ($eep << 3);
       $destinationID = "FFFFFFFF";
-      Log3 $name, 3, "EnOcean get $name $cmd $data";
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x604}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x604}) if(exists $hash->{helper}{timer}{0x604});
+      $hash->{helper}{timer}{0x604} = {hash => $hash, param => 0x604};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x604}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
 
     } elsif ($cmd eq "remotePing") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
       $cmdID = 6;
       $manufID = 0x7FF;
-      #$packetType = 7;
+      $packetType = 7;
       $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
       shift(@a);
-      my $cntr = ($manufID << 12) | $cmdID;
-      $data = sprintf "%02X%08X00000000", $seq, $cntr;
-      #$data = sprintf "0006%04X", $manufID;
-      $destinationID = $hash->{DEF};
-      Log3 $name, 3, "EnOcean get $name $cmd $data";
-      #($rorg, $data) = EnOcean_Encapsulation($packetType, $rorg, $data, $destinationID);
+      $data = sprintf "0006%04X", $manufID;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x606}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x606}) if(exists $hash->{helper}{timer}{0x606});
+      $hash->{helper}{timer}{0x606} = {hash => $hash, param => 0x606};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x606}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
 
-    } elsif ($cmd eq "remoteCommands") {
+    } elsif ($cmd eq "remoteFunctions") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
       $cmdID = 7;
       $manufID = 0x7FF;
-      #$packetType = 7;
+      $packetType = 7;
       $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
       shift(@a);
-      my $cntr = ($manufID << 12) | $cmdID;
-      $data = sprintf "%02X%08X00000000", $seq, $cntr;
-      #$data = sprintf "0007%04X", $manufID;
-      $destinationID = $hash->{DEF};
-      Log3 $name, 3, "EnOcean get $name $cmd $data";
-      #($rorg, $data) = EnOcean_Encapsulation($packetType, $rorg, $data, $destinationID);
+      $data = sprintf "0007%04X", $manufID;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x607}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x607}) if(exists $hash->{helper}{timer}{0x607});
+      $hash->{helper}{timer}{0x607} = {hash => $hash, param => 0x607};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x607}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
 
     } elsif ($cmd eq "remoteStatus") {
       $cmdID = 8;
       $manufID = 0x7FF;
-      #$packetType = 7;
+      $packetType = 7;
       $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
       shift(@a);
-      my $cntr = ($manufID << 12) | $cmdID;
-      $data = sprintf "%02X%08X00000000", $seq, $cntr;
-      #$data = "000807FF";
-      $destinationID = $hash->{DEF};
-      Log3 $name, 3, "EnOcean get $name $cmd $data";
-      #($rorg, $data) = EnOcean_Encapsulation($packetType, $rorg, $data, $destinationID);
+      $data = sprintf "0008%04X", $manufID;
+      if (defined $remoteID) {
+        $destinationID = $remoteID;
+      } else {
+        $destinationID = 'F' x 8;
+      }
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x608}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x608}) if(exists $hash->{helper}{timer}{0x608});
+      $hash->{helper}{timer}{0x608} = {hash => $hash, param => 0x608};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x608}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
+
+    } elsif ($cmd eq "remoteLinkTableInfo") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      $cmdID = 0x210;
+      $manufID = 0x7FF;
+      $packetType = 7;
+      $rorg = "C5";
+      shift(@a);
+      $data = sprintf "%04X%04X", $cmdID, $manufID;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x810}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x810}) if(exists $hash->{helper}{timer}{0x810});
+      $hash->{helper}{timer}{0x810} = {hash => $hash, param => 0x810};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x810}, 0);
+     Log3 $name, 3, "EnOcean get $name $cmd";
+
+    } elsif ($cmd eq "remoteLinkTable") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      $cmdID = 0x211;
+      $manufID = 0x7FF;
+      $packetType = 7;
+      $rorg = "C5";
+      my $startRef;
+      my $endRef;
+      my $direction;
+      if (defined($a[1]) && defined($a[2]) && defined($a[3]) && $a[1] =~ m/^in|out$/ && $a[2] =~ m/^[\dA-Fa-f]{2}$/ && $a[3] =~ m/^[\dA-Fa-f]{2}$/) {
+        shift(@a);
+        $direction = shift(@a);
+        $direction = $direction eq 'out' ? '80' : '00';
+        $startRef = uc(shift(@a));
+        $endRef = uc(shift(@a));
+        ($startRef, $endRef) = ($endRef, $startRef) if (hex($startRef) > hex($endRef));
+      } else {
+        return "Wrong parameter or direction/startRef/endRef not defined.";
+      }
+      $data = sprintf "%04X%04X%2s%2s%2s", $cmdID, $manufID, $direction, $startRef, $endRef;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x811}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x811}) if(exists $hash->{helper}{timer}{0x811});
+      $hash->{helper}{timer}{0x811} = {hash => $hash, param => 0x811};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x811}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
+
+    } elsif ($cmd eq "remoteLinkTableGP") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      $cmdID = 0x213;
+      $manufID = 0x7FF;
+      $packetType = 7;
+      $rorg = "C5";
+      my $direction;
+      my $index;
+      if (defined($a[1]) && defined($a[2]) && $a[1] =~ m/^in|out$/ && $a[2] =~ m/^[\dA-Fa-f]{2}$/) {
+        shift(@a);
+        $direction = shift(@a);
+        $direction = $direction eq 'out' ? '80' : '00';
+        $index = uc(shift(@a));
+      } else {
+        return "Wrong parameter or direction/index not defined.";
+      }
+      $data = sprintf "%04X%04X%2s%2s", $cmdID, $manufID, $direction, $index;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x813}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x813}) if(exists $hash->{helper}{timer}{0x813});
+      $hash->{helper}{timer}{0x813} = {hash => $hash, param => 0x813};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x813}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
+
+    } elsif ($cmd eq "remoteProductID") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      $cmdID = 0x227;
+      $manufID = 0x7FF;
+      $packetType = 7;
+      $rorg = "C5";
+      shift(@a);
+      $data = sprintf "%04X%04X", $cmdID, $manufID;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x827}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x827}) if(exists $hash->{helper}{timer}{0x827});
+      $hash->{helper}{timer}{0x827} = {hash => $hash, param => 0x827};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x827}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
+
+    } elsif ($cmd eq "remoteDevCfg") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      $cmdID = 0x230;
+      $manufID = 0x7FF;
+      $packetType = 7;
+      $rorg = "C5";
+      my $startRef;
+      my $endRef;
+      my $paraLen = '00';
+      if (defined($a[1]) && defined($a[2]) && $a[1] =~ m/^[\dA-Fa-f]{4}$/ && $a[2] =~ m/^[\dA-Fa-f]{4}$/) {
+        shift(@a);
+        $startRef = uc(shift(@a));
+        $endRef = uc(shift(@a));
+        ($startRef, $endRef) = ($endRef, $startRef) if (hex($startRef) > hex($endRef));
+        if (defined($a[0]) && $a[0] =~ m/^[\dA-Fa-f]{2}$/) {
+          $paraLen = uc(shift(@a));
+        }
+      } else {
+        return "Wrong parameter or startRef/endRef not defined.";
+      }
+      $data = sprintf "%04X%04X%4s%4s%2s", $cmdID, $manufID, $startRef, $endRef, $paraLen;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x830}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x830}) if(exists $hash->{helper}{timer}{0x830});
+      $hash->{helper}{timer}{0x830} = {hash => $hash, param => 0x830};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x830}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
+
+    } elsif ($cmd eq "remoteLinkCfg") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      $cmdID = 0x232;
+      $manufID = 0x7FF;
+      $packetType = 7;
+      $rorg = "C5";
+      my $direction;
+      my $idx;
+      my $startRef;
+      my $endRef;
+      my $paraLen = '00';
+      if (defined($a[1]) && defined($a[2]) && defined($a[3]) && defined($a[4])
+          && $a[1] =~ m/^in|out$/ && $a[2] =~ m/^[\dA-Fa-f]{2}$/ && $a[3] =~ m/^[\dA-Fa-f]{4}$/ && $a[4] =~ m/^[\dA-Fa-f]{4}$/) {
+        shift(@a);
+        $direction = shift(@a);
+        $direction = $direction eq 'out' ? '80' : '00';
+        $idx = uc(shift(@a));
+        $startRef = uc(shift(@a));
+        $endRef = uc(shift(@a));
+        ($startRef, $endRef) = ($endRef, $startRef) if (hex($startRef) > hex($endRef));
+        if (defined($a[0]) && $a[0] =~ m/^[\dA-Fa-f]{2}$/) {
+          $paraLen = uc(shift(@a));
+        }
+      } else {
+        return "Wrong parameter or startRef/endRef not defined.";
+      }
+      $data = sprintf "%04X%04X%2s%2s%4s%4s%2s", $cmdID, $manufID, $direction, $idx, $startRef, $endRef, $paraLen;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x832}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x832}) if(exists $hash->{helper}{timer}{0x832});
+      $hash->{helper}{timer}{0x832} = {hash => $hash, param => 0x832};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x832}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
+
+    } elsif ($cmd eq "remoteRepeater") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      $cmdID = 0x250;
+      $manufID = 0x7FF;
+      $packetType = 7;
+      $rorg = "C5";
+      shift(@a);
+      $data = sprintf "%04X%04X", $cmdID, $manufID;
+      $destinationID = $remoteID;
+      $status = '0F';
+      $hash->{IODev}{helper}{remoteAnswerWait}{0x850}{hash} = $hash;
+      RemoveInternalTimer($hash->{helper}{timer}{0x850}) if(exists $hash->{helper}{timer}{0x850});
+      $hash->{helper}{timer}{0x850} = {hash => $hash, param => 0x850};
+      InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', $hash->{helper}{timer}{0x850}, 0);
+      Log3 $name, 3, "EnOcean get $name $cmd";
+
+    } elsif ($cmd eq "signal") {
+      # trigger status massage of device
+      $rorg = "D0";
+      $destinationID = $hash->{DEF} if ($destinationID eq 'F' x 8);
+      shift(@a);
+      my $trigger = shift(@a);
+      my %trigger = ('energy' => '01', 'revision' => '02', 'RXlevel' => '03', 'harvester' => '04');
+      if (defined $trigger) {
+        if (exists $trigger{$trigger}) {
+          $data = '04' . $trigger{$trigger};
+        } else {
+          return "$cmd <trigger> wrong, choose energy|revision|RXlevel|harvester.";
+        }
+      } else {
+        return "$cmd <trigger> wrong, choose energy|revision|RXlevel|harvester.";
+      }
+      Log3 $name, 3, "EnOcean get $name $cmd $trigger";
 
     } elsif ($st eq "switch.05") {
       # Dual Channel Switch Actuator
@@ -1105,7 +1414,7 @@ sub EnOcean_Get($@)
           return "$cmd <channel> wrong, choose 0...29|all|input.";
         }
       }
-      
+
       if ($cmd eq "state") {
         $cmdID = 3;
         Log3 $name, 3, "EnOcean get $name $cmd $channel";
@@ -1114,88 +1423,135 @@ sub EnOcean_Get($@)
       } elsif ($cmd eq "measurement") {
         $cmdID = 6;
         my $query = shift(@a);
-        Log3 $name, 3, "EnOcean get $name $cmd $channel $query";
-        if ($query eq "energy") {
+        if (!defined $query) {
+          return "$cmd <channel> <query> wrong, choose 0...30|all|input energy|power.";
+        } elsif ($query eq "energy") {
           $query = 0;
         } elsif ($query eq "power") {
           $query = 1;
         } else {
           return "$cmd <channel> <query> wrong, choose 0...30|all|input energy|power.";
         }
+        Log3 $name, 3, "EnOcean get $name $cmd $channel $query";
         $data = sprintf "%02X%02X", $cmdID, $query << 5 | $channel;
 
       } elsif ($cmd eq "roomCtrlMode") {
         Log3 $name, 3, "EnOcean get $name $cmd";
         $data = '09';
-        
+
       } elsif ($cmd eq "settings") {
         $cmdID = 10;
         Log3 $name, 3, "EnOcean get $name $cmd $channel";
         $data = sprintf "%02X%02X", $cmdID, $channel;
 
-      } elsif ($cmd eq "special" && $manufID eq "033") {
+      } elsif ($cmd eq "special") {
         $rorg = "D1";
         my $query = shift(@a);
-        Log3 $name, 3, "EnOcean get $name $cmd $channel $query";
-        if ($query eq "health") {
-          $query = 7;
-        } elsif ($query eq "load") {
-          $query = 8;
-        } elsif ($query eq "voltage") {
-          $query = 9;
-        } elsif ($query eq "serialNumber") {
-          $query = 0x81;
-        } else {
-          return "$cmd <channel> <query> wrong, choose health|load|voltage|serialNumber.";
+        if ($manufID eq "033") {
+          if (!defined $query) {
+            return "$cmd <channel> <query> wrong, choose health|load|voltage|serialNumber.";
+          } elsif ($query eq "health") {
+            $query = 7;
+          } elsif ($query eq "load") {
+            $query = 8;
+          } elsif ($query eq "voltage") {
+            $query = 9;
+          } elsif ($query eq "serialNumber") {
+            $query = 0x81;
+          } else {
+            return "$cmd <channel> <query> wrong, choose health|load|voltage|serialNumber.";
+          }
+          $data = sprintf "0331%02X", $query;
+          Log3 $name, 3, "EnOcean get $name $cmd $channel $query";
+          readingsSingleUpdate($hash, "getParam", $query, 0);
+        } elsif ($manufID eq "046") {
+          if (!defined $query) {
+            return "$cmd <channel> <query> wrong, choose reset|firmwareVersion|taughtInDevNum|taughtInDevID.";
+          } elsif ($query eq "reset") {
+            $query = 1;
+            $data = sprintf "0046%02X", $query;
+          } elsif ($query eq "firmwareVersion") {
+            $query = 2;
+            $data = sprintf "0046%02X", $query;
+          } elsif ($query eq "taughtInDevNum") {
+            $query = 4;
+            $data = sprintf "0046%02X", $query;
+          } elsif ($query eq "taughtInDevID") {
+            $query = 6;
+            my $taughtInDevNum = shift(@a);
+            if (defined $taughtInDevNum && $taughtInDevNum =~ m/^\d+$/ && $taughtInDevNum >= 0 && $taughtInDevNum <= 23) {
+              $data = sprintf "0046%02X%02X", $query, $taughtInDevNum;
+            } else {
+              return "Usage: taughtInDevID is not numeric or out of range";
+            }
+          } else {
+            return "$cmd <channel> <query> wrong, choose reset|firmwareVersion|taughtInDevNum|taughtInDevID.";
+          }
+          Log3 $name, 3, "EnOcean get $name $cmd $channel $query";
+          readingsSingleUpdate($hash, "getParam", $query, 0);
         }
-        $data = sprintf "0331%02X", $query;
-        readingsSingleUpdate($hash, "getParam", $query, 0);
 
       } else {
-        if ($manufID eq "033") {
+        if ($manufID =~ m/^033|046$/) {
           return "Unknown argument $cmd, choose one of " . $cmdList . "state measurement roomCtrlMode:noArg special settings";
         } else {
           return "Unknown argument $cmd, choose one of " . $cmdList . "state measurement roomCtrlMode:noArg settings";
         }
       }
 
-    } elsif ($st eq "blindsCtrl.00") {
+    } elsif ($st =~ m/^blindsCtrl\.0[01]$/) {
       # Blinds Control for Position and Angle
-      # (D2-05-00)
+      # (D2-05-xx)
       $rorg = "D2";
       shift(@a);
       $updateState = 0;
-      my $channel = 0;
       if ($cmd eq "position") {
         # query position and angle
         $cmdID = 3;
+        my $channel = shift(@a);
+        if (!defined $channel) {
+          $channel = AttrVal($name, "defaultChannel", 'all');
+          $channel = $channel eq "all" ? 15 : $channel - 1;
+        } elsif ($channel =~ m/^all$/) {
+          $channel = 15;
+        } elsif ($channel =~ m/^[1234]$/) {
+          $channel -= 1;
+        } else {
+          return "$cmd parameter wrong, choose one of 1|2|3|4|all";
+        }
         Log3 $name, 3, "EnOcean get $name $cmd";
         $data = sprintf "%02X", $channel << 4 | $cmdID;
 
       } else {
-        $cmdList .= "position:noArg";
+        $cmdList .= "position";
         return "Unknown argument $cmd, choose one of $cmdList";
       }
 
     } elsif ($st eq "multisensor.01") {
-      #####
       # Multisensor Windows Handle
       # (D2-06-01)
       $rorg = "D2";
       shift(@a);
       $updateState = 2;
+      my $waitingCmds = ReadingsVal($name, "waitingCmds", undef);
+      if (defined $waitingCmds) {
+        # check presence state
+        $waitingCmds = ReadingsVal($name, "presence", "present") eq "absent" ? $waitingCmds & 0xDF | 32 : $waitingCmds & 0xDF;
+      } else {
+        $waitingCmds = ReadingsVal($name, "presence", "present") eq "absent" ? 32 : 0;
+      }
       if ($cmd eq "config") {
         # query config
-        readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) | 0x80, 0);
+        readingsSingleUpdate($hash, "waitingCmds", $waitingCmds | 0x80, 0);
         Log3 $name, 3, "EnOcean get $name $cmd";
       } elsif ($cmd eq "log") {
         # query log
-        readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) | 0x40, 0);
+        readingsSingleUpdate($hash, "waitingCmds", $waitingCmds | 0x40, 0);
         Log3 $name, 3, "EnOcean get $name $cmd";
       } else {
         $cmdList .= "config:noArg log:noArg";
         return "Unknown argument $cmd, choose one of $cmdList";
-      }      
+      }
 
     } elsif ($st eq "roomCtrlPanel.00") {
       # Room Control Panel
@@ -1282,9 +1638,12 @@ sub EnOcean_Get($@)
         return "Unknown argument $cmd, choose one of $cmdList";
       }
 
+    } elsif ($st eq "remote") {
+      return "Unknown argument $cmd, choose one of $cmdList";
+
     } else {
       # subtype does not support get commands
-      if (AttrVal($name, "remoteManagement", "off") eq "on") {
+      if (AttrVal($name, "remoteManagement", "off") eq "manager" || AttrVal($name, "signal", "off") eq "on") {
         return "Unknown argument $cmd, choose one of $cmdList";
       } else {
         return;
@@ -1324,10 +1683,14 @@ sub EnOcean_Set($@)
     return "DestinationID $destinationID wrong, choose <8-digit-hex-code>.";
   }
   $destinationID = uc($destinationID);
+  my $IODev = $hash->{IODev}{NAME};
+  my $IOHash = $defs{$IODev};
   my $manufID = uc(AttrVal($name, "manufID", ""));
   my $model = AttrVal($name, "model", "");
   my $packetType = 1;
-  $packetType = 0x0A if (ReadingsVal($hash->{IODev}{NAME}, "mode", "00") eq "01");
+  $packetType = 0x0A if (ReadingsVal($IODev, "mode", "00") eq "01");
+  my $remoteID = AttrVal($name, "remoteID", undef);
+  my $remoteManufID = uc(AttrVal($name, "remoteManufID", AttrVal($name, "manufID", "")));
   my $rorg;
   my $sendCmd = 1;
   my $status = "00";
@@ -1338,9 +1701,13 @@ sub EnOcean_Set($@)
   if ($subDef !~ m/^[\dA-F]{8}$/) {return "SenderID $subDef wrong, choose <8-digit-hex-code>.";}
   my $switchMode = AttrVal($name, "switchMode", "switch");
   my $timeNow = TimeNow();
-  if (AttrVal($name, "remoteManagement", "off") eq "on") {
-    # Remote Management
-    $cmdList = "remoteAction:noArg remoteLock:noArg remote_teach-in:noArg remote_teach-out:noArg remoteSetCode:noArg remoteUnlock:noArg ";
+  my $remoteManagement = AttrVal($name, "remoteManagement", "off");
+  if ($remoteManagement eq "manager") {
+    # Remote Management Manager
+    $cmdList = "remoteAction:noArg remoteApplyChanges:devCfg,linkTable,no_change remoteDevCfg remoteLinkCfg remoteLock:noArg remoteLearnMode remoteLinkTable remoteLinkTableGP remoteRepeater remoteRepeaterFilter remoteReset:devCfg,linkTableIn,linkTableOut,no_change remoteRLT remoteSetCode:noArg remoteTeach remoteUnlock:noArg ";
+  } elsif ($remoteManagement eq "client" || $st eq "remote") {
+    # Remote Management Client
+    $cmdList .= "remoteLock:noArg remoteUnlock ";
   }
   # control set actions
   # $updateState = -1: no set commands available e. g. sensors
@@ -1357,106 +1724,360 @@ sub EnOcean_Set($@)
     my ($cmd1, $cmd2);
 
     if ($cmd eq "remoteUnlock") {
-      $cmdID = 1;
-      my $secCode = AttrVal($name, "secCode", undef);
-      return "Security Code not defined, set attr $name secCode <00000001 ... FFFFFFFE>!" if (!defined($secCode));
-      $manufID = 0x7FF;
-      $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
-      #shift(@a);
-      my $cntr = (((4 << 11) | $manufID) << 12) | $cmdID;
-      $data = sprintf "%02X%08X%s", $seq, $cntr, uc($secCode);
-      ####
-      $destinationID = $hash->{DEF};
-      Log3 $name, 3, "EnOcean set $name $cmd $data";
-      $updateState = 0;
+      if ($remoteManagement eq "manager") {
+        # manager
+        $cmdID = 1;
+        my $remoteCode = AttrVal($name, "remoteCode", undef);
+        return "Security Code not defined, set attr $name remoteCode <00000001 ... FFFFFFFE>!" if (!defined($remoteCode));
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $data = sprintf "%04X%04X%s", $cmdID, $manufID, uc($remoteCode);
+        if (defined $remoteID) {
+          $destinationID = $remoteID;
+        } else {
+          $destinationID = 'F' x 8;
+        }
+        $updateState = 0;
+      } else {
+        # client
+        my $remoteUnlockPeriod = 1800;
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^\d+$/ && $a[1] >= 0 && $a[1] <= 1800) {
+            $remoteUnlockPeriod = $a[1];
+            shift(@a);
+          } else {
+            return "Usage: $a[1] is not numeric or out of range";
+          }
+        }
+        $hash->{RemoteClientUnlock} = 1;
+        RemoveInternalTimer($hash->{helper}{timer}{RemoteClientUnlock}) if(exists $hash->{helper}{timer}{RemoteClientUnlock});
+        $hash->{helper}{timer}{RemoteClientUnlock} = {hash => $hash, param => 'RemoteClientUnlock'};
+        InternalTimer(gettimeofday() + $remoteUnlockPeriod, 'EnOcean_cdmClearHashVal', $hash->{helper}{timer}{RemoteClientUnlock}, 0);
+        $updateState = 3;
+      }
+      Log3 $name, 3, "EnOcean set $name $cmd";
 
     } elsif ($cmd eq "remoteLock") {
-      $cmdID = 2;
-      my $secCode = AttrVal($name, "secCode", undef);
-      return "Security Code not defined, set attr $name secCode <00000001 ... FFFFFFFE>!" if (!defined($secCode));
-      $manufID = 0x7FF;
-      $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
-      #shift(@a);
-      my $cntr = (((4 << 11) | $manufID) << 12) | $cmdID;
-      $data = sprintf "%02X%08X%s", $seq, $cntr, uc($secCode);
-      ####
-      $destinationID = $hash->{DEF};
-      Log3 $name, 3, "EnOcean set $name $cmd $data";
-      $updateState = 0;
+      if ($remoteManagement eq "manager") {
+        # manager
+        $cmdID = 2;
+        my $remoteCode = AttrVal($name, "remoteCode", undef);
+        return "Security Code not defined, set attr $name remoteCode <00000001 ... FFFFFFFE>!" if (!defined($remoteCode));
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $data = sprintf "%04X%04X%s", $cmdID, $manufID, uc($remoteCode);
+        if (defined $remoteID) {
+          $destinationID = $remoteID;
+        } else {
+          $destinationID = 'F' x 8;
+        }
+        $updateState = 0;
+      } else {
+        # client
+        delete $hash->{RemoteClientUnlock};
+        RemoveInternalTimer($hash->{helper}{timer}{RemoteClientUnlock}) if(exists $hash->{helper}{timer}{RemoteClientUnlock});
+        $updateState = 3;
+      }
+      Log3 $name, 3, "EnOcean set $name $cmd";
 
     } elsif ($cmd eq "remoteSetCode") {
       $cmdID = 3;
-      my $secCode = AttrVal($name, "secCode", undef);
-      return "Security Code not defined, set attr $name secCode <00000001 ... FFFFFFFE>!" if (!defined($secCode));
+      my $remoteCode = AttrVal($name, "remoteCode", undef);
+      return "Security Code not defined, set attr $name remoteCode <00000001 ... FFFFFFFE>!" if (!defined($remoteCode));
       $manufID = 0x7FF;
+      $packetType = 7;
       $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
-      #shift(@a);
-      my $cntr = (((4 << 11) | $manufID) << 12) | $cmdID;
-      $data = sprintf "%02X%08X%s", $seq, $cntr, uc($secCode);
-      ####
-      $destinationID = $hash->{DEF};
-      Log3 $name, 3, "EnOcean set $name $cmd $data";
+      $data = sprintf "%04X%04X%s", $cmdID, $manufID, uc($remoteCode);
+      if (defined $remoteID) {
+        $destinationID = $remoteID;
+      } else {
+        $destinationID = 'F' x 8;
+      }
+      Log3 $name, 3, "EnOcean set $name $cmd";
       $updateState = 0;
 
     } elsif ($cmd eq "remoteAction") {
       $cmdID = 5;
       $manufID = 0x7FF;
+      $packetType = 7;
       $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
-      #shift(@a);
-      my $cntr = ($manufID << 12) | $cmdID;
-      ####
-      $data = sprintf "%02X%08X00000000", $seq, $cntr;
-      $destinationID = $hash->{DEF};
-      Log3 $name, 3, "EnOcean set $name $cmd $data";
+      $data = sprintf "%04X%04X", $cmdID, $manufID;
+      if (defined $remoteID) {
+        $destinationID = $remoteID;
+      } else {
+        $destinationID = 'F' x 8;
+      }
+      Log3 $name, 3, "EnOcean set $name $cmd";
       $updateState = 0;
 
-    } elsif ($cmd eq "remote_teach-in") {
-      $cmdID = 0x201;
-      $manufID = 0x7FF;
-      $rorg = "C5";
-      my $seq = int(rand(2) + 1) << 6;
-      #shift(@a);
-      my $cntr = (((4 << 11) | $manufID) << 12) | $cmdID;
-      ####
-      my $eep = AttrVal($name, "eep", undef);
-      return "EEP not defined, set attr $name eep <rorg>-<function>-<type>" if (!defined($eep));
-      $eep =~ m/^(..)(.)(..)(.)(..)$/;
-      $data = sprintf "%02X%08X%s%s%s01", $seq, $cntr, $1, $3, $5;
-      #$destinationID = "FFFFFFFF";
-      $destinationID = $hash->{DEF};
-      Log3 $name, 3, "EnOcean set $name $cmd $data";
-      $updateState = 0;
+    } elsif ($cmd eq "remoteLinkTable") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && defined $a[2] && defined $a[3] && defined $a[4] && defined $a[5] &&
+          $a[1] =~ m/^in|out$/ && $a[2] =~ m/^[\dA-Fa-f]{2}$/ && $a[3] =~ m/^[\dA-Fa-f]{8}$/ && $a[4] =~ m/^[\dA-Fa-f]{2}-[\dA-Fa-f]{2}-[\dA-Fa-f]{2}$/ && $a[5] =~ m/^[\dA-Fa-f]{2}$/) {
+        $cmdID = 0x212;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $a[4] =~ m/^(..)-(..)-(..)$/;
+        $data = sprintf "%04X%04X%s%s%s%s%s%s%s", $cmdID, $manufID, $a[1] eq 'out' ? '80' : '00', uc($a[2]), uc($a[3]), uc($1), uc($2), uc($3), uc($a[5]);
+        splice(@a,0,5);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      } else {
+        return "Usage: $cmd arguments needed or wrong.";
+      }
 
-    } elsif ($cmd eq "remote_teach-out") {
-      $cmdID = 0x201;
-      $manufID = 0x7FF;
-      $rorg = "C5";
-      # SEQ = 0...3
-      my $seq = int(rand(4)) << 6;
-      #shift(@a);
-      my $cntr = (((4 << 11) | $manufID) << 12) | $cmdID;
-      ####
-      my $eep = AttrVal($name, "eep", undef);
-      return "EEP not defined, set attr $name eep <rorg>-<function>-<type>" if (!defined($eep));
-      $eep =~ m/^(..)(.)(..)(.)(..)$/;
-      $data = sprintf "%02X%08X%s%s%s03", $seq, $cntr, $1, $3, $5;
-      #$destinationID = "FFFFFFFF";
-      $destinationID = $hash->{DEF};
-      #($rorg, $data) = EnOcean_Encapsulation($packetType, $rorg, $data, $destinationID);
-      Log3 $name, 3, "EnOcean set $name $cmd $data";
-      $updateState = 0;
+    } elsif ($cmd eq "remoteLinkTableGP") {
+      # gpDef example: ch2:O:1:24:1:7:-40:1:40:1
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && defined $a[2] && defined $a[3] && $a[1] =~ m/^in|out$/ && $a[2] =~ m/^[\dA-Fa-f]{2}$/) {
+        $cmdID = 0x214;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        my $direction = $a[1] eq 'out' ? '80' : '00';
+        my $gpDef;
+        my ($channelName, $channelDir, $channelType, $signalType, $valueType, $resolution, $engMin, $scalingMin, $engMax, $scalingMax) =
+          split(':', $a[3]);
+        if ($channelDir eq "O" && $a[1] eq 'out' || $channelDir eq "I" && $a[1] eq 'in') {
+          # add channel-, signal- and valuetype
+          $gpDef .= substr(unpack('B8', pack('C', $channelType)), 6) .
+                    unpack('B8', pack('C', $signalType)) .
+                    substr(unpack('B8', pack('C', $valueType)), 6);
+          if ($channelType == 1 || $channelType == 3) {
+            # data, enumeration: add resolution
+            $gpDef .= substr(unpack('B8', pack('C', $resolution)), 4);
+          }
+          if ($channelType == 1) {
+            # data: add engineering and scaling
+            $gpDef .= unpack('B8', pack('c', $engMin)) .
+                      substr(unpack('B8', pack('C', $scalingMin)), 4) .
+                      unpack('B8', pack('c', $engMax)) .
+                      substr(unpack('B8', pack('C', $scalingMax)), 4);
+          }
+        } else {
+          return "Usage: Link Table GP Entry Direction wrong.";
+        }
+        if (length($gpDef) % 8) {
+          # fill with trailing zeroes to x bytes
+          $gpDef .= 0 x (8 - length($gpDef) % 8);
+        }
+        $data = sprintf "%04X%04X%s%s%s", $cmdID, $manufID, $a[1] eq 'out' ? '80' : '00', uc($a[2]), EnOcean_convBitToHex($gpDef);
+        splice(@a,0,3);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      } else {
+        return "Usage: $cmd arguments needed or wrong.";
+      }
 
+    } elsif ($cmd eq "remoteLearnMode") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1]) {
+        $cmdID = 0x220;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $destinationID = $remoteID;
+        my $learnMode;
+        my $cmdVal = 0;
+
+        if ($a[1] eq 'in') {
+          $learnMode = '00';
+          shift(@a);
+        } elsif ($a[1] eq 'out') {
+          $learnMode = '40';
+          shift(@a);
+        } elsif ($a[1] eq 'off') {
+          $learnMode = '80';
+          shift(@a);
+        } else {
+          return "Usage: $cmd $a[1] argument unknown.";
+        }
+        if (defined $a[1] && $a[1] =~ m/^[\dA-Fa-f]{2}$/) {
+          $cmdVal = $a[1];
+          shift(@a);
+        } else {
+          return "Usage: $cmd <learnMode> argument needed or wrong.";
+        }
+        $data = sprintf "%04X%04X%s%s", $cmdID, $manufID, $learnMode, $cmdVal;
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      }
+
+    } elsif ($cmd eq "remoteTeach") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && $a[1] =~ m/^[\dA-Fa-f]{2}$/) {
+        $cmdID = 0x221;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $destinationID = $remoteID;
+        $data = sprintf "%04X%04X%s", $cmdID, $manufID, $a[1];
+        shift(@a);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+        if (!exists($hash->{IODev}{Teach})) {
+          # enable teach-in receiving for 3 sec
+          $hash->{IODev}{Teach} = 1;
+          RemoveInternalTimer($hash->{helper}{timer}{Teach}) if(exists $hash->{helper}{timer}{Teach});
+          $hash->{helper}{timer}{Teach} = {hash => $IOHash, param => 'Teach'};
+          InternalTimer(gettimeofday() + 3, 'EnOcean_cdmClearHashVal', $hash->{helper}{timer}{Teach}, 0);
+        }
+      } else {
+        return "Usage: $cmd argument needed or wrong.";
+      }
+
+    } elsif ($cmd eq "remoteReset") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && $a[1] =~ m/^devCfg|linkTableIn|linkTableOut|no_change$/) {
+        $cmdID = 0x224;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $destinationID = $remoteID;
+        my %changeCmd = ('devCfg' => '80', 'linkTableIn' => '40', 'linkTableOut' => '20', 'no_change' => '00');
+        $data = sprintf "%04X%04X%s", $cmdID, $manufID, $changeCmd{$a[1]};
+        shift(@a);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      } else {
+        return "Usage: $cmd argument needed or wrong.";
+      }
+
+    } elsif ($cmd eq "remoteRLT") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && defined $a[2] && $a[1] =~ m/^off|on$/ && $a[2] =~ m/^[0-7][1-9A-Fa-f]$/) {
+        $cmdID = 0x225;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $destinationID = $remoteID;
+        my $rltMode = hex $a[2];
+        $rltMode |= 0x80 if ($a[1] eq 'on');
+        $data = sprintf "%04X%04X%02X", $cmdID, $manufID, $rltMode;
+        splice(@a,0,2);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      }
+
+    } elsif ($cmd eq "remoteApplyChanges") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && $a[1] =~ m/^devCfg|linkTable|no_change$/) {
+        $cmdID = 0x226;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $destinationID = $remoteID;
+        my %changeCmd = ('devCfg' => '40', 'linkTable' => '80', 'no_change' => '00');
+        $data = sprintf "%04X%04X%s", $cmdID, $manufID, $changeCmd{$a[1]};
+        shift(@a);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      } else {
+        return "Usage: $cmd argument needed or wrong.";
+      }
+
+    } elsif ($cmd eq "remoteDevCfg") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && defined $a[2] && $a[1] =~ m/^[\dA-Fa-f]{4}$/ && $a[2] =~ m/^[\dA-Fa-f]{2}[\dA-Fa-f]*$/ && length($a[2]) % 2 == 0) {
+        $cmdID = 0x231;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $destinationID = $remoteID;
+        $data = sprintf "%04X%04X%s%02X%s", $cmdID, $manufID, uc($a[1]), length($a[2]) / 2, uc($a[2]);
+        splice(@a,0,2);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      } else {
+        return "Usage: $cmd arguments needed or wrong.";
+      }
+
+    } elsif ($cmd eq "remoteLinkCfg") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && defined $a[2] && defined $a[3] && defined $a[4] &&
+          $a[1] =~ m/^in|out$/ && $a[2] =~ m/^[\dA-Fa-f]{2}$/ && $a[3] =~ m/^[\dA-Fa-f]{4}$/ &&
+          $a[4] =~ m/^[\dA-Fa-f]{2}[\dA-Fa-f]*$/ && length($a[4]) % 2 == 0) {
+        $cmdID = 0x233;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        my $direction = $a[1] eq 'out' ? '80' : '00';
+        $destinationID = $remoteID;
+        $data = sprintf "%04X%04X%s%s%s%02X%s", $cmdID, $manufID, $direction, uc($a[2]), uc($a[3]), length($a[4]) / 2, uc($a[4]);
+        splice(@a,0,4);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      } else {
+        return "Usage: $cmd arguments needed or wrong.";
+      }
+
+    } elsif ($cmd eq "remoteRepeater") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && defined $a[2] && defined $a[3] &&
+          $a[1] =~ m/^on|off|filter$/ && $a[2] =~ m/^[1-2]$/ && $a[3] =~ m/^AND|OR$/) {
+        $cmdID = 0x251;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        my %repFunc = ('on' => 0x40, 'off' => 0, 'filter' => 0x80);
+        my $cmdVal = $repFunc{$a[1]} | ($a[2] == 2 ? 0x20 : 0x10) | ($a[3] eq 'OR' ? 8 : 0);
+        $destinationID = $remoteID;
+        $data = sprintf "%04X%04X%02X", $cmdID, $manufID, $cmdVal;
+        splice(@a,0,3);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      } else {
+        return "Usage: $cmd arguments needed or wrong.";
+      }
+
+    } elsif ($cmd eq "remoteRepeaterFilter") {
+      return "Attribute remoteID is missing, please define it." if (!defined $remoteID);
+      if (defined $a[1] && defined $a[2] &&
+          $a[1] =~ m/^apply|block|delete|deleteAll$/ && $a[2] =~ m/^destinationID|sourceID|rorg|rssi$/) {
+        my %repFilterCtrl = ('deleteAll' => 0x30, 'delete' => 0x20, 'apply' => 0x10, 'block' => 0);
+        my $cmdVal = $repFilterCtrl{$a[1]};
+        my $cmdAttr;
+        if (defined $a[3]) {
+          if ($a[2] =~ m/^destinationID$/ && $a[3] =~ m/^[\dA-Fa-f]{8}$/) {
+            $cmdVal |= 3;
+            $cmdAttr = $a[3];
+          } elsif ($a[2] =~ m/^sourceID$/ && $a[3] =~ m/^[\dA-Fa-f]{8}$/) {
+            $cmdVal |= 0;
+            $cmdAttr = $a[3];
+          } elsif ($a[2] =~ m/^rorg$/ && $a[3] =~ m/^[\dA-Fa-f]{2}$/) {
+            $cmdVal |= 1;
+            $cmdAttr = '0' x 6 . $a[3];
+          } elsif ($a[2] =~ m/^rssi$/ && $a[3] =~ m/^-?\d+$/ && abs($a[3]) >= 0 && abs($a[3]) <= 255) {
+            $cmdVal |= 2;
+            $cmdAttr = sprintf "000000%02X", abs($a[3]);
+          } else {
+            return "Usage: $cmd $a[2] argument wrong.";
+          }
+        } else {
+          return "Usage: $cmd $a[2] argument needed.";
+        }
+        $cmdID = 0x252;
+        $manufID = 0x7FF;
+        $packetType = 7;
+        $rorg = "C5";
+        $destinationID = $remoteID;
+        $data = sprintf "%04X%04X%02X%s", $cmdID, $manufID, $cmdVal, $cmdAttr;
+        splice(@a,0,3);
+        Log3 $name, 3, "EnOcean set $name $cmd";
+        $updateState = 0;
+      } else {
+        return "Usage: $cmd arguments needed or wrong.";
+      }
     } elsif ($st eq "switch") {
       # Rocker Switch, simulate a PTM200 switch module
       # separate first and second action
       ($cmd1, $cmd2) = split(",", $cmd, 2);
       # check values
       if (!defined($EnO_ptm200btn{$cmd1}) || ($cmd2 && !defined($EnO_ptm200btn{$cmd2}))) {
-        $cmdList .= join(":noArg ", sort keys %EnO_ptm200btn);
+        $cmdList .= join(":noArg ", sort keys %EnO_ptm200btn) . ':noArg';
         return SetExtensions($hash, $cmdList, $name, @a);
       }
       my $channelA = ReadingsVal($name, "channelA", undef);
@@ -1550,6 +2171,8 @@ sub EnOcean_Set($@)
       # convert and send first and second command
       my $switchCmd;
       ($switchCmd, $status) = split(':', $EnO_ptm200btn{$cmd1}, 2);
+      # reset T21 status flag if 4 rocker
+      $status = '10' if ($switchCmd > 3);
       $switchCmd <<= 5;
       if ($cmd1 ne "released") {
         # set the pressed flag
@@ -1562,13 +2185,20 @@ sub EnOcean_Set($@)
           $cmd = $cmd1;
         } else {
           my ($d2, undef) = split(':', $EnO_ptm200btn{$cmd2}, 2);
+          # reset T21 status flag if 4 rocker
+          $status = '10' if ($d2 > 3);
           $switchCmd |= ($d2 << 1) | 0x01;
         }
       }
       if (defined $sendCmd) {
         $data = sprintf "%02X", $switchCmd;
         $rorg = "F6";
+        SetExtensionsCancel($hash);
         Log3 $name, 3, "EnOcean set $name $cmd";
+        if ($updateState) {
+          readingsSingleUpdate($hash, "channel" . $1, $cmd1, 1) if ($cmd1 =~ m/^([A-D])./);
+          readingsSingleUpdate($hash, "channel" . $1, $cmd2, 1) if ($cmd2 && $cmd2 =~ m/^([A-D])./);
+        }
         readingsSingleUpdate($hash, ".lastChannel", $lastChannel, 0);
       }
 
@@ -1604,6 +2234,7 @@ sub EnOcean_Set($@)
       } else {
         $data = sprintf "%02X", $EnO_switch_00Btn{$switchCmd};
         $rorg = "D2";
+        SetExtensionsCancel($hash);
       }
       Log3 $name, 3, "EnOcean set $name $switchCmd";
 
@@ -1744,7 +2375,6 @@ sub EnOcean_Set($@)
       } else {
         return "Unknown argument " . $cmd . ", choose one of " . $cmdList . " setpoint:slider,0,1,255 setpointScaled switch:on,off teach:noArg"
       }
-
       Log3 $name, 3, "EnOcean set $name $cmd";
 
     } elsif ($st eq "roomSensorControl.05") {
@@ -1776,7 +2406,7 @@ sub EnOcean_Set($@)
           $data = "40300D85";
           $attr{$name}{eep} = "A5-10-06";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
         } elsif ($cmd eq "desired-temp" || $cmd eq "setpointTemp") {
@@ -2058,11 +2688,11 @@ sub EnOcean_Set($@)
       # [Kieback&Peter MD15-FTL-xx]
       $rorg = "A5";
       my $setpointTemp = ReadingsVal($name, "setpointTemp", 20);
-      my $temperature = ReadingsVal($name, "temperature", 20);      
+      my $temperature = ReadingsVal($name, "temperature", 20);
       if ($cmd eq "setpoint") {
         if (defined $a[1] && $a[1] =~ m/^\d+$/ && $a[1] >= 0 && $a[1] <= 100) {
           readingsBeginUpdate($hash);
-          readingsBulkUpdate($hash, "setpointSet", $a[1]);          
+          readingsBulkUpdate($hash, "setpointSet", $a[1]);
           readingsBulkUpdate($hash, "waitingCmds", $cmd);
           readingsEndUpdate($hash, 0);
           # stop PID regulator
@@ -2074,7 +2704,7 @@ sub EnOcean_Set($@)
           return "Usage: $cmd value wrong.";
         }
         $updateState = 2;
-      
+
       } elsif ($cmd =~ m/^desired-temp|setpointTemp$/) {
         if (defined $a[1] && $a[1] =~ m/^\d+(\.\d)?$/ && $a[1] >= 10 && $a[1] <= 30) {
           $cmd = "setpointTemp";
@@ -2093,34 +2723,34 @@ sub EnOcean_Set($@)
           return "Usage: $cmd value wrong.";
         }
         $updateState = 2;
-      
+
       } elsif ($cmd =~ m/^liftSet|runInit|valveOpens|valveCloses$/) {
-        # unattended?  
+        # unattended?
         readingsBeginUpdate($hash);
         readingsBulkUpdate($hash, "waitingCmds", $cmd);
         readingsEndUpdate($hash, 0);
         # stop PID regulator
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
         CommandDeleteReading(undef, "$name setpointSet");
-        CommandDeleteReading(undef, "$name setpointTempSet");        
+        CommandDeleteReading(undef, "$name setpointTempSet");
         Log3 $name, 3, "EnOcean set $name $cmd";
         $updateState = 2;
-      
+
       } else {
         $cmdList .= "setpointTemp:slider,0,1,40 " if (AttrVal($name, "pidCtrl", 'on') eq 'on' || AttrVal($name, "manufID", '7FF') ne '049');
         $cmdList .= "setpoint:slider,0,5,100 desired-temp liftSet:noArg runInit:noArg valveOpens:noArg valveCloses:noArg";
         return "Unknown command " . $cmd . ", choose one of " . $cmdList;
       }
- 
+
     } elsif ($st eq "hvac.04") {
      # heating radiator valve actuating drive (EEP A5-20-04)
       $rorg = "A5";
       my $setpointTemp = ReadingsVal($name, "setpointTemp", 20);
-      my $temperature = ReadingsVal($name, "temperature", 20);      
+      my $temperature = ReadingsVal($name, "temperature", 20);
       if ($cmd eq "setpoint") {
         if (defined $a[1] && $a[1] =~ m/^\d+$/ && $a[1] >= 0 && $a[1] <= 100) {
           readingsBeginUpdate($hash);
-          readingsBulkUpdate($hash, "setpointSet", $a[1]);          
+          readingsBulkUpdate($hash, "setpointSet", $a[1]);
           readingsBulkUpdate($hash, "waitingCmds", $cmd);
           readingsEndUpdate($hash, 0);
           # stop PID regulator
@@ -2132,7 +2762,7 @@ sub EnOcean_Set($@)
           return "Usage: $cmd value wrong.";
         }
         $updateState = 2;
-      
+
       } elsif ($cmd =~ m/^desired-temp|setpointTemp$/) {
         if (defined $a[1] && $a[1] =~ m/^\d+(\.\d)?$/ && $a[1] >= 10 && $a[1] <= 30) {
           $cmd = "setpointTemp";
@@ -2142,7 +2772,8 @@ sub EnOcean_Set($@)
           readingsBulkUpdate($hash, "waitingCmds", "setpointTemp");
           readingsEndUpdate($hash, 0);
           # PID regulator active
-          ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'start', '');
+          my $activatePID = AttrVal($name, 'pidCtrl', 'on') eq 'on' ? 'start' : 'stop';
+          ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, $activatePID, '');
           CommandDeleteReading(undef, "$name setpointSet");
           Log3 $name, 3, "EnOcean set $name $cmd $setpointTemp";
           shift(@a);
@@ -2150,7 +2781,7 @@ sub EnOcean_Set($@)
           return "Usage: $cmd value wrong.";
         }
         $updateState = 2;
-      
+
       } elsif ($cmd =~ m/^runInit|valveOpens|valveCloses$/) {
         readingsBeginUpdate($hash);
         readingsBulkUpdate($hash, "waitingCmds", $cmd);
@@ -2158,16 +2789,17 @@ sub EnOcean_Set($@)
         # stop PID regulator
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
         CommandDeleteReading(undef, "$name setpointSet");
-        CommandDeleteReading(undef, "$name setpointTempSet");        
+        CommandDeleteReading(undef, "$name setpointTempSet");
         Log3 $name, 3, "EnOcean set $name $cmd";
         $updateState = 2;
-      
+
       } else {
-        $cmdList .= "setpointTemp:slider,10,1,30 " if (AttrVal($name, "pidCtrl", 'on') eq 'on');
-        $cmdList .= "setpoint:slider,0,5,100 runInit:noArg valveCloses:noArg valveOpens:noArg";
+        $cmdList .= "setpointTemp:slider,10,1,30 " if (AttrVal($name, "pidCtrl", 'on') eq 'on' || AttrVal($name, "model", '') eq 'Holter_OEM');
+        $cmdList .= "setpoint:slider,0,5,100 " if (AttrVal($name, "pidCtrl", 'on') eq 'off' && AttrVal($name, "model", '') ne 'Holter_OEM');
+        $cmdList .= "runInit:noArg valveCloses:noArg valveOpens:noArg";
         return "Unknown command " . $cmd . ", choose one of " . $cmdList;
       }
- 
+
     } elsif ($st eq "hvac.10") {
       # Generic HVAC Interface (EEP A5-20-10)
       $rorg = "A5";
@@ -2254,6 +2886,7 @@ sub EnOcean_Set($@)
         readingsBulkUpdate($hash, "powerSwitch", "off");
         readingsBulkUpdate($hash, "state", "off");
         readingsEndUpdate($hash, 0);
+        SetExtensionsCancel($hash);
       } elsif ($ctrlFuncID == 2) {
         # on
         $powerSwitch = "on";
@@ -2262,10 +2895,11 @@ sub EnOcean_Set($@)
         readingsBulkUpdate($hash, "powerSwitch", "on");
         readingsBulkUpdate($hash, "state", "off");
         readingsEndUpdate($hash, 0);
+        SetExtensionsCancel($hash);
       } elsif ($ctrlFuncID == 3) {
         # occupancy
         if (defined $a[1] && $a[1] =~ m/^occupied|standby|unoccupied|off$/) {
-          $occupancy = $a[1]; 
+          $occupancy = $a[1];
           readingsSingleUpdate($hash, "occupancy", $a[1], 0);
           shift(@a);
         } else {
@@ -2275,7 +2909,7 @@ sub EnOcean_Set($@)
       } elsif ($ctrlFuncID == 4) {
         # ctrl
         if (defined $a[1] && ($a[1] =~ m/^auto$/ || $a[1] =~ m/^\d+$/ && $a[1] >= 0 && $a[1] <= 100)) {
-          $ctrl = $a[1]; 
+          $ctrl = $a[1];
           readingsSingleUpdate($hash, "ctrl", $a[1], 0);
           shift(@a);
         } else {
@@ -2285,7 +2919,7 @@ sub EnOcean_Set($@)
       } elsif ($ctrlFuncID == 5) {
         # fanSpeed
         if (defined $a[1] && ($a[1] =~ m/^auto$/ || $a[1] =~ m/^\d+$/ && $a[1] > 0 && $a[1] < 15)) {
-          $fanSpeed = $a[1]; 
+          $fanSpeed = $a[1];
           readingsSingleUpdate($hash, "fanSpeed", $a[1], 0);
           shift(@a);
         } else {
@@ -2296,7 +2930,7 @@ sub EnOcean_Set($@)
         # vanePosition
         my $vanePositionValues = join("|", keys %vanePosition);
         if (defined $a[1] && $a[1] =~ m/^$vanePositionValues$/) {
-          $vanePosition = $a[1]; 
+          $vanePosition = $a[1];
           readingsSingleUpdate($hash, "vanePosition", $a[1], 0);
           shift(@a);
         } else {
@@ -2307,7 +2941,7 @@ sub EnOcean_Set($@)
         # mode
         my $modeValues = join("|", keys %mode);
         if (defined $a[1] && $a[1] =~ m/^$modeValues$/) {
-          $mode = $a[1]; 
+          $mode = $a[1];
           readingsSingleUpdate($hash, "mode", $a[1], 0);
           shift(@a);
         } else {
@@ -2336,7 +2970,7 @@ sub EnOcean_Set($@)
       }
       $data = sprintf "%02X%02X%02X%02X", $ctrlParam1, $ctrlParam2, $ctrlParam3, $setCmd;
       Log3 $name, 3, "EnOcean set $name $cmd";
-    
+
     } elsif ($st eq "hvac.11") {
       # Generic HVAC Interface - Error Control (EEP A5-20-11)
       $rorg = "A5";
@@ -2371,7 +3005,7 @@ sub EnOcean_Set($@)
       } elsif ($ctrlFuncID == 1) {
         # external disablement
         if (defined $a[1] && $a[1] =~ m/^disabled|enabled$/) {
-          $extern = $a[1]; 
+          $extern = $a[1];
           readingsSingleUpdate($hash, "externalDisable", $a[1], 0);
           shift(@a);
         } else {
@@ -2381,7 +3015,7 @@ sub EnOcean_Set($@)
       } elsif ($ctrlFuncID == 2) {
         # disable remote controller
         if (defined $a[1] && $a[1] =~ m/^disabled|enabled$/) {
-          $remote = $a[1]; 
+          $remote = $a[1];
           readingsSingleUpdate($hash, "remoteCtrl", $a[1], 0);
           shift(@a);
         } else {
@@ -2391,7 +3025,7 @@ sub EnOcean_Set($@)
       } elsif ($ctrlFuncID == 3) {
         # window contact
         if (defined $a[1] && $a[1] =~ m/^closed|opened$/) {
-          $window = $a[1]; 
+          $window = $a[1];
           readingsSingleUpdate($hash, "window", $a[1], 0);
           shift(@a);
         } else {
@@ -2405,7 +3039,7 @@ sub EnOcean_Set($@)
       }
       $data = sprintf "%02X%02X%02X%02X", $ctrlParam1, $ctrlParam2, $ctrlParam3, $setCmd;
       Log3 $name, 3, "EnOcean set $name $cmd";
-    
+
     } elsif ($st eq "gateway") {
       # Gateway (EEP A5-38-08)
       # select Command from attribute gwCmd or command line
@@ -2435,27 +3069,33 @@ sub EnOcean_Set($@)
         if($cmd eq "teach") {
           # teach-in EEP A5-38-08, Manufacturer "Multi user Manufacturer ID"
           #$data = sprintf "%02X000000", $gwCmdID;
-          $data = "E047FF80";
+          if ($model =~ m/TF$/) {
+            $data = "E0400D80";
+          } else {
+            $data = "E047FF80";
+          }
           $attr{$name}{eep} = "A5-38-08";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
+          EnOcean_setTeachConfirmWaitHash(undef, $hash);
         } elsif ($cmd eq "on") {
           $setCmd = 9;
           readingsSingleUpdate($hash, "block", "unlock", 1);
           if ($a[1]) {
             return "Usage: $cmd [lock|unlock]" if (($a[1] ne "lock") && ($a[1] ne "unlock"));
             if ($a[1] eq "lock") {
-              $setCmd = $setCmd | 4 ;
+              $setCmd = $setCmd | 4;
               readingsSingleUpdate($hash, "block", "lock", 1);
             }
             shift(@a);
           }
           #$updateState = 0;
+          SetExtensionsCancel($hash);
           $data = sprintf "%02X%04X%02X", $gwCmdID, $time, $setCmd;
         } elsif ($cmd eq "off") {
-          if ($model eq "FSA12") {
+          if ($model =~ m/FSA12$/) {
             $setCmd = 0x0E;
           } else {
             $setCmd = 8;
@@ -2464,15 +3104,28 @@ sub EnOcean_Set($@)
           if ($a[1]) {
             return "Usage: $cmd [lock|unlock]" if (($a[1] ne "lock") && ($a[1] ne "unlock"));
             if ($a[1] eq "lock") {
-              $setCmd = $setCmd | 4 ;
+              $setCmd = $setCmd | 4;
               readingsSingleUpdate($hash, "block", "lock", 1);
+            }
+            shift(@a);
+          }
+          #$updateState = 0;
+          SetExtensionsCancel($hash);
+          $data = sprintf "%02X%04X%02X", $gwCmdID, $time, $setCmd;
+        } elsif ($cmd eq "local") {
+          if ($a[1]) {
+            return "Usage: $cmd [learn]" if ($a[1] ne "learn");
+            if ($a[1] eq "learn") {
+              $cmd = 'off';
+              $setCmd = $setCmd | 0x28;
+              readingsSingleUpdate($hash, "block", "unlock", 1);
             }
             shift(@a);
           }
           #$updateState = 0;
           $data = sprintf "%02X%04X%02X", $gwCmdID, $time, $setCmd;
         } else {
-          my $cmdList = "on:noArg off:noArg teach:noArg";
+          my $cmdList = "local:learn on:noArg off:noArg teach:noArg";
           return SetExtensions ($hash, $cmdList, $name, @a);
         }
 
@@ -2499,12 +3152,17 @@ sub EnOcean_Set($@)
           # teach-in EEP A5-38-08, Manufacturer "Multi user Manufacturer ID"
           #$data = "E047FF80";
           # teach-in Eltako
-          $data = "02000000";
+          if ($model =~ m/TF$/) {
+            $data = "E0400D80";
+          } else {
+            $data = "02000000";
+          }
           $attr{$name}{eep} = "A5-38-08";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
+          EnOcean_setTeachConfirmWaitHash(undef, $hash);
         } elsif ($cmd eq "dim") {
           return "Usage: $cmd dim/% [rampTime/s lock|unlock]"
             if(@a < 2 || $a[1] !~ m/^\d+$/ || $a[1] < 0 || $a[1] > 100);
@@ -2583,8 +3241,24 @@ sub EnOcean_Set($@)
           $setCmd = 8;
           $sendDimCmd = 1;
 
+        } elsif ($cmd eq "local") {
+          if ($a[1]) {
+            return "Usage: $cmd [learn]" if ($a[1] ne "learn");
+            if ($a[1] eq "learn") {
+              $cmd = 'off';
+              $dimVal = 0;
+              $rampTime = 1;
+              $setCmd = 0x2C;
+              readingsSingleUpdate($hash, "block", "lock", 1);
+            }
+            shift(@a);
+          }
+          #$updateState = 0;
+          SetExtensionsCancel($hash);
+          $data = sprintf "%02X%02X%02X%02X", $gwCmdID, $dimVal, $rampTime, $setCmd;
+
         } else {
-          my $cmdList = "dim:slider,0,1,100 on:noArg off:noArg teach:noArg";
+          my $cmdList = "dim:slider,0,1,100 local:learn on:noArg off:noArg teach:noArg";
           return SetExtensions ($hash, $cmdList, $name, @a);
         }
         if ($sendDimCmd) {
@@ -2632,9 +3306,10 @@ sub EnOcean_Set($@)
           $data = "E047FF80";
           $attr{$name}{eep} = "A5-38-08";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
+          EnOcean_setTeachConfirmWaitHash(undef, $hash);
         } elsif ($cmd eq "shift") {
           if (($a[1] =~ m/^[+-]?\d+(\.\d+)?$/) && ($a[1] >= -12.7) && ($a[1] <= 12.8)) {
             #$updateState = 0;
@@ -2654,9 +3329,10 @@ sub EnOcean_Set($@)
           $data = "E047FF80";
           $attr{$name}{eep} = "A5-38-08";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
+          EnOcean_setTeachConfirmWaitHash(undef, $hash);
         } elsif ($cmd eq "basic") {
           if (($a[1] =~ m/^[+-]?\d+(\.\d+)?$/) && ($a[1] >= 0) && ($a[1] <= 51.2)) {
             #$updateState = 0;
@@ -2677,9 +3353,10 @@ sub EnOcean_Set($@)
           $data = "E047FF80";
           $attr{$name}{eep} = "A5-38-08";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
+          EnOcean_setTeachConfirmWaitHash(undef, $hash);
         } elsif ($cmd eq "presence") {
           if ($a[1] eq "standby") {
             $setCmd = 0x0A;
@@ -2744,9 +3421,10 @@ sub EnOcean_Set($@)
           $data = "E047FF80";
           $attr{$name}{eep} = "A5-38-08";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
+          EnOcean_setTeachConfirmWaitHash(undef, $hash);
         } elsif ($cmd eq "stage") {
           if ($a[1] eq "auto") {
             #$updateState = 0;
@@ -2817,7 +3495,7 @@ sub EnOcean_Set($@)
           $setCmd = 0x80;
           $attr{$name}{eep} = "A5-38-08";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
         } elsif ($blindFuncID == 0) {
@@ -2852,7 +3530,7 @@ sub EnOcean_Set($@)
               my $angleMin = ReadingsVal($name, 'angleMin', -180);
               my $angleMax = ReadingsVal($name, 'angleMax', 180);
               if ($blindParam1 == 0) {
-                $blindParam2 = $positionLogic eq 'normal' ? $angleMax : $angleMin;              
+                $blindParam2 = $positionLogic eq 'normal' ? $angleMax : $angleMin;
               } elsif ($blindParam1 == 100) {
                 $blindParam2 = $positionLogic eq 'normal' ? $angleMin : $angleMax;
               } else {
@@ -2998,7 +3676,7 @@ sub EnOcean_Set($@)
         $data = "DC0FFF80";
         $attr{$name}{eep} = "A5-37-01";
         CommandDeleteReading(undef, "$name .*");
-        readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+        readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
         $updateState = 0;
         ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
         Log3 $name, 3, "EnOcean set $name $cmd";
@@ -3070,7 +3748,6 @@ sub EnOcean_Set($@)
                   $timeout, $powerUsageScale | $powerUsage, $setpoint);
         EnOcean_energyManagement_01Parse($hash, @db);
       }
-      #shift(@a);
       Log3 $name, 3, "EnOcean set $name $cmd";
 
     } elsif ($st eq "lightCtrl.01") {
@@ -3114,16 +3791,18 @@ sub EnOcean_Set($@)
         $setCmd = 0x80;
         $attr{$name}{eep} = "A5-38-09";
         CommandDeleteReading(undef, "$name .*");
-        readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+        readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
         ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
         $updateState = 0;
       } elsif ($ctrlFuncID == 1) {
         # off
         CommandDeleteReading(undef, "$name scene");
+        SetExtensionsCancel($hash);
         $updateState = 0;
       } elsif ($ctrlFuncID == 2) {
         # on
         CommandDeleteReading(undef, "$name scene");
+        SetExtensionsCancel($hash);
         $updateState = 0;
       } elsif ($ctrlFuncID == 3 || $ctrlFuncID == 4) {
         # dimup / dimdown
@@ -3141,10 +3820,12 @@ sub EnOcean_Set($@)
         $ctrlParam2 = ($rampTime & 0xFF00) >> 8;
         readingsSingleUpdate($hash, "rampTime", $rampTime, 1);
         CommandDeleteReading(undef, "$name scene");
+        SetExtensionsCancel($hash);
         $updateState = 0;
       } elsif ($ctrlFuncID == 5) {
         # stop
         CommandDeleteReading(undef, "$name scene");
+        SetExtensionsCancel($hash);
         $updateState = 0;
       } elsif ($ctrlFuncID == 6) {
         # dim
@@ -3168,6 +3849,7 @@ sub EnOcean_Set($@)
         $ctrlParam2 = ($rampTime & 0xFF00) >> 8;
         CommandDeleteReading(undef, "$name scene");
         readingsSingleUpdate($hash, "rampTime", $rampTime, 1);
+        SetExtensionsCancel($hash);
         $updateState = 0;
       } elsif ($ctrlFuncID == 7) {
         # RGB
@@ -3316,7 +3998,6 @@ sub EnOcean_Set($@)
       $setCmd |= 4 if (AttrVal($name, "sendDevStatus", "yes") eq "no");
       $setCmd |= 1 if (AttrVal($name, "serviceOn", "no") eq "yes");
       $data = sprintf "%02X%02X%02X%02X", $ctrlParam1, $ctrlParam2, $ctrlParam3, $setCmd;
-      #shift(@a);
       Log3 $name, 3, "EnOcean set $name $cmd";
 
     } elsif ($st eq "radioLinkTest") {
@@ -3330,7 +4011,7 @@ sub EnOcean_Set($@)
         return "Unknown argument " . $cmd . ", choose one of " . $cmdList . "standby:noArg stop:noArg"
       }
       Log3 $name, 3, "EnOcean set $name $cmd";
-      
+
     } elsif ($st eq "manufProfile") {
       if ($manufID eq "00D") {
         # Eltako Shutter
@@ -3341,6 +4022,12 @@ sub EnOcean_Set($@)
         my $angleTime = AttrVal($name, "angleTime", 0);
         my $position = ReadingsVal($name, "position", undef);
         my $positionStart;
+        my $setCmd = 8;
+        my $settingAccuracy = 1;
+        if (AttrVal($name, 'settingAccuracy', 'low') eq 'high') {
+          $setCmd = 0x0A;
+          $settingAccuracy = 10;
+        }
         if ($cmd eq "?" || $cmd eq "stop") {
 
         } else {
@@ -3389,9 +4076,10 @@ sub EnOcean_Set($@)
           $data = "FFF80D80";
           $attr{$name}{eep} = "A5-3F-7F";
           CommandDeleteReading(undef, "$name .*");
-          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);          
+          readingsSingleUpdate($hash, "teach", "4BS teach-in sent", 1);
           $updateState = 0;
           ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDef", "confirm");
+          EnOcean_setTeachConfirmWaitHash(undef, $hash);
         } elsif ($cmd eq "stop") {
           # stop
           # delete readings, as they are undefined
@@ -3425,7 +4113,8 @@ sub EnOcean_Set($@)
         } elsif ($cmd eq "up") {
           # up
           if (defined $a[1]) {
-            if ($a[1] =~ m/^[+-]?\d+$/ && $a[1] >= 0 && $a[1] <= 255) {
+            #if ($a[1] =~ m/^[+-]?\d+$/ && $a[1] >= 0 && $a[1] <= 255) {
+            if ($a[1] =~ m/^[+-]?\d*[.]?\d+$/ && $a[1] >= 0 && $a[1] <= 255) {
               $position = $positionStart - $a[1] / $shutTime * 100;
               if ($angleTime) {
                 $anglePos = $anglePosStart - ($angleMax - $angleMin) * $a[1] / $angleTime;
@@ -3461,7 +4150,8 @@ sub EnOcean_Set($@)
         } elsif ($cmd eq "down") {
           # down
           if (defined $a[1]) {
-            if ($a[1] =~ m/^[+-]?\d+$/ && $a[1] >= 0 && $a[1] < 255) {
+            #if ($a[1] =~ m/^[+-]?\d+$/ && $a[1] >= 0 && $a[1] <= 255) {
+            if ($a[1] =~ m/^[+-]?\d*[.]?\d+$/ && $a[1] >= 0 && $a[1] <= 255) {
               $position = $positionStart + $a[1] / $shutTime * 100;
               if ($angleTime) {
                 $anglePos = $anglePosStart + ($angleMax - $angleMin) * $a[1] / $angleTime;
@@ -3520,8 +4210,8 @@ sub EnOcean_Set($@)
                 $angleTime = $angleTime * ($angleMax - $anglePos) / ($angleMax - $angleMin);
                 $shutTime = $shutTime  * ($a[1] - $positionStart) / 100 + $angleTime;
                 # round up
-                $angleTime = int($angleTime) + 1 if ($angleTime > int($angleTime));
-                $shutTime = int($shutTime) + 1 if ($shutTime > int($shutTime));
+                $angleTime = int($angleTime) + 1 if ($settingAccuracy == 1 && $angleTime > int($angleTime));
+                $shutTime = int($shutTime) + 1 if ($settingAccuracy == 1 && $shutTime > int($shutTime));
                 $position = $a[1] + $angleTime / $shutTimeSet * 100;
                 if ($position >= 100) {
                   $position = 100;
@@ -3537,8 +4227,8 @@ sub EnOcean_Set($@)
                 $angleTime = $angleTime * ($anglePos - $angleMin) /($angleMax - $angleMin);
                 $shutTime = $shutTime * ($positionStart - $a[1]) / 100 + $angleTime;
                 # round up
-                $angleTime = int($angleTime) + 1 if ($angleTime > int($angleTime));
-                $shutTime = int($shutTime) + 1 if ($shutTime > int($shutTime));
+                $angleTime = int($angleTime) + 1 if ($settingAccuracy == 1 && $angleTime > int($angleTime));
+                $shutTime = int($shutTime) + 1 if ($settingAccuracy == 1 && $shutTime > int($shutTime));
                 $position = $a[1] - $angleTime / $shutTimeSet * 100;
                 if ($position <= 0) {
                   $position = 0;
@@ -3555,17 +4245,19 @@ sub EnOcean_Set($@)
                   # up >> reduce slats angle
                   $shutTime = $angleTime * ($anglePosStart - $anglePos)/($angleMax - $angleMin);
                   # round up
-                  $shutTime = int($shutTime) + 1 if ($shutTime > int($shutTime));
+                  $shutTime = int($shutTime) + 1 if ($settingAccuracy == 1 && $shutTime > int($shutTime));
                   $shutCmd = 1;
                 } elsif ($anglePosStart < $anglePos) {
                   # down >> enlarge slats angle
                   $shutTime = $angleTime * ($anglePos - $anglePosStart) /($angleMax - $angleMin);
                   # round up
-                  $shutTime = int($shutTime) + 1 if ($shutTime > int($shutTime));
+                  $shutTime = int($shutTime) + 1 if ($settingAccuracy == 1 && $shutTime > int($shutTime));
                   $shutCmd = 2;
                 } else {
                   # position and slats angle ok
+                  $data = '00000008';
                   $shutCmd = 0;
+                  $updateState = 3;
                 }
               }
               if ($position == 0) {
@@ -3585,12 +4277,59 @@ sub EnOcean_Set($@)
               return "Usage: $a[1] is not numeric or out of range";
             }
           }
+        } elsif ($cmd eq "anglePos") {
+          if (!defined $positionStart) {
+            return "Position unknown, please first opens the blinds completely."
+          } elsif ($angleTime > 0 && !defined $anglePosStart){
+            return "Slats angle position unknown, please first opens the blinds completely."
+          } else {
+            if (defined $a[1]) {
+              if ($a[1] =~ m/^[+-]?\d+$/ && $a[1] >= $angleMin && $a[1] <= $angleMax) {
+                $anglePos = $a[1];
+                shift(@a);
+                if ($anglePosStart > $anglePos) {
+                  # up >> reduce slats angle
+                  $shutTime = $angleTime * ($anglePosStart - $anglePos)/($angleMax - $angleMin);
+                  # round up
+                  $shutTime = int($shutTime) + 1 if ($settingAccuracy == 1 && $shutTime > int($shutTime));
+                  $shutCmd = 1;
+                } elsif ($anglePosStart < $anglePos) {
+                  # down >> enlarge slats angle
+                  $shutTime = $angleTime * ($anglePos - $anglePosStart) /($angleMax - $angleMin);
+                  # round up
+                  $shutTime = int($shutTime) + 1 if ($settingAccuracy == 1 && $shutTime > int($shutTime));
+                  $shutCmd = 2;
+                } else {
+                  # slats angle ok
+                  $data = '00000008';
+                  $shutCmd = 0;
+                  $updateState = 3;
+                }
+                readingsSingleUpdate($hash, "anglePos", sprintf("%d", $anglePos), 1);
+              } else {
+                return "Usage: $a[1] is not numeric or out of range";
+              }
+            } else {
+              return "Usage: $cmd values are missing";
+            }
+          }
+        } elsif ($cmd eq "local") {
+          if ($a[1]) {
+            return "Usage: $cmd [learn]" if ($a[1] ne "learn");
+            if ($a[1] eq "learn") {
+              $setCmd = $setCmd | 0x20;
+            }
+            shift(@a);
+          }
+          $updateState = 0;
+          $data = sprintf "%04X%02X%02X", int($shutTime * $settingAccuracy), $shutCmd, $setCmd;
+
         } else {
-          return "Unknown argument " . $cmd . ", choose one of " . $cmdList . "closes:noArg down opens:noArg position:slider,0,5,100 stop:noArg teach:noArg up"
+          return "Unknown argument " . $cmd . ", choose one of " . $cmdList . "position:slider,0,5,100 anglePos:slider,-180,5,180 closes:noArg down local:learn opens:noArg stop:noArg teach:noArg up"
         }
         if ($shutCmd || $cmd eq "stop") {
           #$updateState = 0;
-          $data = sprintf "%02X%02X%02X%02X", 0, $shutTime, $shutCmd, 8;
+          $data = sprintf "%04X%02X%02X", int($shutTime * $settingAccuracy), $shutCmd, $setCmd;
         }
         Log3 $name, 3, "EnOcean set $name $cmd";
       }
@@ -3606,7 +4345,7 @@ sub EnOcean_Set($@)
       my $outputVal;
 
       if ($cmd =~ m/^\d+$/) {
-        # interpretive numeric value as position
+        # interpretive numeric value as dimming
         unshift(@a, 'dim');
         $cmd = 'dim';
       }
@@ -3910,7 +4649,7 @@ sub EnOcean_Set($@)
             return "Usage: $cmd $localCmd <value> wrong, choose disabled enabled.";
           }
         } else {
-          return "Usage: $cmd <localCmd> wrong, choose defaultState|localControl|" .
+          return "Usage: $cmd <localCmd> wrong, choose dayNight|defaultState|localControl|" .
           "overCurrentShutdown|overCurrentShutdownReset|rampTime1|rampTime2|rampTime3|teachInDev.";
         }
         readingsSingleUpdate($hash, "dayNight", $dayNight, 1);
@@ -4085,9 +4824,9 @@ sub EnOcean_Set($@)
           $roomCtrlModeCmd = 5;
         } else {
           return "$cmd <channel> <roomCtrlMode> wrong, choose off|comfort|comfort-1|comfort-2|economy|buildingProtection.";
-        }        
+        }
         $data = sprintf "%02X%02X", $cmdID, $roomCtrlModeCmd;
-        
+
       } elsif ($cmd eq "autoOffTime") {
         shift(@a);
         $updateState = 0;
@@ -4122,7 +4861,7 @@ sub EnOcean_Set($@)
         } else {
           $extSwitchMode = 0;
         }
-        my $extSwitchType = ReadingsVal($name, "extSwitchType", 'toggle') eq 'direction' ? 1 : 0;        
+        my $extSwitchType = ReadingsVal($name, "extSwitchType", 'toggle') eq 'direction' ? 1 : 0;
         $data = sprintf "%02X%02X%04XFFFF%02X", $cmdID, $channel, $outputVal, $extSwitchMode << 6 | $extSwitchType << 5;
 
       } elsif ($cmd eq "delayOffTime") {
@@ -4159,7 +4898,7 @@ sub EnOcean_Set($@)
         } else {
           $extSwitchMode = 0;
         }
-        my $extSwitchType = ReadingsVal($name, "extSwitchType", 'toggle') eq 'direction' ? 1 : 0;        
+        my $extSwitchType = ReadingsVal($name, "extSwitchType", 'toggle') eq 'direction' ? 1 : 0;
         $data = sprintf "%02X%02XFFFF%04X%02X", $cmdID, $channel, $outputVal, $extSwitchMode << 6 | $extSwitchType << 5;
 
       } elsif ($cmd eq "extSwitchMode") {
@@ -4193,7 +4932,7 @@ sub EnOcean_Set($@)
         } else {
           return "$cmd $channel wrong, choose 0...31|all|input.";
         }
-        my $extSwitchType = ReadingsVal($name, "extSwitchType", 'toggle') eq 'direction' ? 1 : 0;        
+        my $extSwitchType = ReadingsVal($name, "extSwitchType", 'toggle') eq 'direction' ? 1 : 0;
         $data = sprintf "%02X%02XFFFFFFFF%02X", $cmdID, $channel, $extSwitchMode << 6 | $extSwitchType << 5;
 
       } elsif ($cmd eq "extSwitchType") {
@@ -4210,7 +4949,7 @@ sub EnOcean_Set($@)
           $extSwitchType = $extSwitchType{$extSwitchType};
         } else {
           return "Usage: $cmd variable wrong, choose toggle|direction.";
-        }        
+        }
         $channel = shift(@a);
         $channel = AttrVal($name, "defaultChannel", AttrVal($name, "devChannel", undef)) if (!defined $channel);
         if (!defined $channel || $channel eq "all") {
@@ -4239,19 +4978,51 @@ sub EnOcean_Set($@)
         }
         $data = sprintf "%02X%02XFFFFFFFF%02X", $cmdID, $channel, $extSwitchMode << 6 | $extSwitchType << 5;
 
+      } elsif ($cmd eq "special") {
+        $rorg = "D1";
+        shift(@a);
+        $updateState = 0;
+        my $repeaterActive = 0;
+        my $repeaterLevel = 0;
+        my $specialCmd = shift(@a);
+        if ($manufID eq "046") {
+          if (!defined $specialCmd) {
+            return "$cmd <command> wrong, choose repeaterLevel.";
+          } elsif ($specialCmd eq "repeaterLevel") {
+            $cmdID = 8;
+            my $repeaterLevel = shift(@a);
+            if (defined $repeaterLevel && $repeaterLevel =~ m/^off|1|2$/) {
+              if ($repeaterLevel eq "off") {
+                $repeaterLevel = 0;
+              } else {
+                $repeaterActive = 1;
+              }
+            } else {
+              return "Usage: repeaterLevel is wrong";
+            }
+          } else {
+            return "$cmd $specialCmd <arg> wrong, choose repeaterLevel off|1|2.";
+          }
+        }
+        $data = sprintf "0046%02X%02X%02X", $cmdID, $repeaterActive, $repeaterLevel;
+
       } else {
-        $cmdList .= "dim:slider,0,1,100 on off autoOffTime delayOffTime extSwitchMode extSwitchType local measurement roomCtrlMode:off,buildingProtection,economy,comfort-2,comfort-1,comfort";
+        if ($manufID =~ m/^046$/) {
+          $cmdList .= "dim:slider,0,1,100 on off autoOffTime delayOffTime extSwitchMode extSwitchType local measurement roomCtrlMode:off,buildingProtection,economy,comfort-2,comfort-1,comfort special";
+        } else {
+          $cmdList .= "dim:slider,0,1,100 on off autoOffTime delayOffTime extSwitchMode extSwitchType local measurement roomCtrlMode:off,buildingProtection,economy,comfort-2,comfort-1,comfort";
+        }
         return SetExtensions ($hash, $cmdList, $name, @a);
       }
       Log3 $name, 3, "EnOcean set $name $cmd";
 
-    } elsif ($st eq "blindsCtrl.00") {
+    } elsif ($st =~ m/^blindsCtrl\.0[01]$/) {
       # Blinds Control for Position and Angle
-      # (D2-05-00)
+      # (D2-05-xx)
       $rorg = "D2";
       $updateState = 0;
       my $cmdID;
-      my $channel = 0;
+      my $channel = AttrVal($name, "defaultChannel", 'all');
       my $position = 127;
       my $angle = 127;
       my $repo = AttrVal($name, "reposition", "directly");
@@ -4287,6 +5058,19 @@ sub EnOcean_Set($@)
               if (($a[0] =~ m/^\d+$/) && ($a[0] >= 0) && ($a[0] <= 100)) {
                 $angle = shift(@a);
                 if (defined $a[0]) {
+                  # channel
+                  $channel = shift(@a);
+                  if ($channel =~ m/^all$/) {
+                    $channel = 15;
+                  } elsif ($channel =~ m/^[1234]$/) {
+                    $channel -= 1;
+                  } else {
+                    return "Usage: $position $angle $channel argument unknown, choose one of 1|2|3|4|all";
+                  }
+                } else {
+                  $channel = 15;
+                }
+                if (defined $a[0]) {
                   # reposition value
                   $repo = shift(@a);
                   if ($repo eq "directly") {
@@ -4296,16 +5080,16 @@ sub EnOcean_Set($@)
                   } elsif ($repo eq "closes") {
                     $repo = 2;
                   } else {
-                    return "Usage: $position $angle $repo argument unknown, choose one of directly opens closes";
+                    return "Usage: $position $angle $channel $repo argument unknown, choose one of directly opens closes";
                   }
                 }
                 readingsSingleUpdate($hash, "anglePos", $angle, 1);
               } else {
                 return "Usage: $position $a[0] is not numeric or out of range";
               }
+            } else {
+              $channel = 15;
             }
-            readingsSingleUpdate($hash, "position", $position, 1);
-            readingsSingleUpdate($hash, "endPosition", "not_reached", 1);
             readingsSingleUpdate($hash, "state", "in_motion", 1);
           } else {
             return "Usage: $a[0] is not numeric or out of range";
@@ -4315,7 +5099,7 @@ sub EnOcean_Set($@)
         }
         $data = sprintf "%02X%02X%02X%02X", $position, $angle, $repo << 4 | $lock, $channel << 4 | $cmdID;
 
-      } elsif ($cmd eq "angle") {
+      } elsif ($cmd eq "anglePos") {
         $cmdID = 1;
         shift(@a);
         if (ReadingsVal($name, "block", "unlock") ne "unlock") {
@@ -4324,13 +5108,25 @@ sub EnOcean_Set($@)
         if (defined $a[0]) {
           if (($a[0] =~ m/^\d+$/) && ($a[0] >= 0) && ($a[0] <= 100)) {
             $angle = shift(@a);
-            readingsSingleUpdate($hash, "anglePos", $angle, 1);
+            if (defined $a[0]) {
+              # channel
+              $channel = shift(@a);
+              if ($channel =~ m/^all$/) {
+                $channel = 15;
+              } elsif ($channel =~ m/^[1234]$/) {
+                $channel -= 1;
+              } else {
+                return "Usage: $angle $channel argument unknown, choose one of 1|2|3|4|all";
+              }
+            } else {
+              $channel = 15;
+            }
             readingsSingleUpdate($hash, "state", "in_motion", 1);
           } else {
             return "Usage: $a[0] is not numeric or out of range";
           }
         } else {
-          return "Usage: set <name> angle <angle>";
+          return "Usage: set <name> anglePos <angle>";
         }
         $repo = 0;
         $data = sprintf "%02X%02X%02X%02X", $position, $angle, $repo << 4 | $lock, $channel << 4 | $cmdID;
@@ -4338,7 +5134,20 @@ sub EnOcean_Set($@)
       } elsif ($cmd eq "stop") {
         $cmdID = 2;
         shift(@a);
-        readingsSingleUpdate($hash, "state", "stoped", 1);
+        if (defined $a[0]) {
+          # channel
+          $channel = shift(@a);
+          if ($channel =~ m/^all$/) {
+            $channel = 15;
+          } elsif ($channel =~ m/^[1234]$/) {
+            $channel -= 1;
+          } else {
+            return "Usage: stop $channel argument unknown, choose one of 1|2|3|4|all";
+          }
+        } else {
+          $channel = 15;
+        }
+        readingsSingleUpdate($hash, "state", "stopped", 1);
         $data = sprintf "%02X", $channel << 4 | $cmdID;
 
       } elsif ($cmd eq "opens") {
@@ -4346,6 +5155,19 @@ sub EnOcean_Set($@)
         shift(@a);
         if (ReadingsVal($name, "block", "unlock") ne "unlock") {
           return "Attention: Device locked";
+        }
+        if (defined $a[0]) {
+          # channel
+          $channel = shift(@a);
+          if ($channel =~ m/^all$/) {
+            $channel = 15;
+          } elsif ($channel =~ m/^[1234]$/) {
+            $channel -= 1;
+          } else {
+            return "Usage: opens $channel argument unknown, choose one of 1|2|3|4|all";
+          }
+        } else {
+          $channel = 15;
         }
         $position = 0;
         $repo = 0;
@@ -4357,6 +5179,19 @@ sub EnOcean_Set($@)
         if (ReadingsVal($name, "block", "unlock") ne "unlock") {
           return "Attention: Device locked";
         }
+        if (defined $a[0]) {
+          # channel
+          $channel = shift(@a);
+          if ($channel =~ m/^all$/) {
+            $channel = 15;
+          } elsif ($channel =~ m/^[1234]$/) {
+            $channel -= 1;
+          } else {
+            return "Usage: closes $channel argument unknown, choose one of 1|2|3|4|all";
+          }
+        } else {
+          $channel = 15;
+        }
         $position = 100;
         $repo = 0;
         $data = sprintf "%02X%02X%02X%02X", $position, $angle, $repo << 4 | $lock, $channel << 4 | $cmdID;
@@ -4364,6 +5199,19 @@ sub EnOcean_Set($@)
       } elsif ($cmd eq "unlock") {
         $cmdID = 1;
         shift(@a);
+        if (defined $a[0]) {
+          # channel
+          $channel = shift(@a);
+          if ($channel =~ m/^all$/) {
+            $channel = 15;
+          } elsif ($channel =~ m/^[1234]$/) {
+            $channel -= 1;
+          } else {
+            return "Usage: unlock $channel argument unknown, choose one of 1|2|3|4|all";
+          }
+        } else {
+          $channel = 15;
+        }
         $repo = 0;
         $lock = 7;
         $data = sprintf "%02X%02X%02X%02X", $position, $angle, $repo << 4 | $lock, $channel << 4 | $cmdID;
@@ -4371,6 +5219,19 @@ sub EnOcean_Set($@)
       } elsif ($cmd eq "lock") {
         $cmdID = 1;
         shift(@a);
+        if (defined $a[0]) {
+          # channel
+          $channel = shift(@a);
+          if ($channel =~ m/^all$/) {
+            $channel = 15;
+          } elsif ($channel =~ m/^[1234]$/) {
+            $channel -= 1;
+          } else {
+            return "Usage: lock $channel argument unknown, choose one of 1|2|3|4|all";
+          }
+        } else {
+          $channel = 15;
+        }
         $repo = 0;
         $lock = 1;
         $data = sprintf "%02X%02X%02X%02X", $position, $angle, $repo << 4 | $lock, $channel << 4 | $cmdID;
@@ -4378,22 +5239,41 @@ sub EnOcean_Set($@)
       } elsif ($cmd eq "alarm") {
         $cmdID = 1;
         shift(@a);
+        if (defined $a[0]) {
+          # channel
+          $channel = shift(@a);
+          if ($channel =~ m/^all$/) {
+            $channel = 15;
+          } elsif ($channel =~ m/^[1234]$/) {
+            $channel -= 1;
+          } else {
+            return "Usage: alarm $channel argument unknown, choose one of 1|2|3|4|all";
+          }
+        }  else {
+          $channel = 15;
+        }
         $repo = 0;
         $lock = 2;
         $data = sprintf "%02X%02X%02X%02X", $position, $angle, $repo << 4 | $lock, $channel << 4 | $cmdID;
 
       } else {
-        $cmdList .= "position:slider,0,1,100 angle:slider,0,1,100 stop:noArg opens:noArg closes:noArg lock:noArg unlock:noArg alarm:noArg";
+        $cmdList .= "position:slider,0,1,100 anglePos:slider,0,1,100 stop opens closes lock unlock alarm";
         return "Unknown argument $cmd, choose one of $cmdList";
       }
       Log3 $name, 3, "EnOcean set $name $cmd";
 
     } elsif ($st eq "multisensor.01") {
-      #####
       # Multisensor Windows Handle
       # (D2-06-01)
       $rorg = "D2";
       $updateState = 2;
+      my $waitingCmds = ReadingsVal($name, "waitingCmds", undef);
+      if (defined $waitingCmds) {
+        # check presence state
+        $waitingCmds = ReadingsVal($name, "presence", "present") eq "absent" ? $waitingCmds & 0xDF | 32 : $waitingCmds & 0xDF;
+      } else {
+        $waitingCmds = ReadingsVal($name, "presence", "present") eq "absent" ? 32 : 0;
+      }
       if ($cmd eq "presence") {
         # set presence
         if (defined $a[1]) {
@@ -4401,12 +5281,12 @@ sub EnOcean_Set($@)
             readingsSingleUpdate($hash, "presence", $a[1], 1);
             Log3 $name, 3, "EnOcean set $name $cmd $a[1]";
             shift(@a);
-            readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) & 0xDF, 0);
+            readingsSingleUpdate($hash, "waitingCmds", $waitingCmds & 0xDF | 32, 0);
           } elsif ($a[1] =~ m/^present$/) {
             readingsSingleUpdate($hash, "presence", $a[1], 1);
             Log3 $name, 3, "EnOcean set $name $cmd $a[1]";
             shift(@a);
-            readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) & 0xDF | 32, 0);
+            readingsSingleUpdate($hash, "waitingCmds", $waitingCmds & 0xDF, 0);
           } else {
             return "Usage: $a[1] is not numeric or out of range";
           }
@@ -4418,12 +5298,12 @@ sub EnOcean_Set($@)
             readingsSingleUpdate($hash, "handleClosedClick", $a[1] . 'd', 1);
             Log3 $name, 3, "EnOcean set $name $cmd $a[1]";
             shift(@a);
-            readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) & 0xE7 | 8, 0);
+            readingsSingleUpdate($hash, "waitingCmds", $waitingCmds & 0xE7 | 8, 0);
           } elsif ($a[1] =~ m/^enable$/) {
             readingsSingleUpdate($hash, "handleClosedClick", $a[1] . 'd', 1);
             Log3 $name, 3, "EnOcean set $name $cmd $a[1]";
             shift(@a);
-            readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) & 0xE7 | 16, 0);
+            readingsSingleUpdate($hash, "waitingCmds", $waitingCmds & 0xE7 | 16, 0);
           } else {
             return "Usage: $a[1] is not numeric or out of range";
           }
@@ -4435,12 +5315,12 @@ sub EnOcean_Set($@)
             readingsSingleUpdate($hash, "batteryLowClick", $a[1] . 'd', 1);
             Log3 $name, 3, "EnOcean set $name $cmd $a[1]";
             shift(@a);
-            readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) & 0xF9 | 2, 0);
+            readingsSingleUpdate($hash, "waitingCmds", $waitingCmds & 0xF9 | 2, 0);
           } elsif ($a[1] =~ m/^enable$/) {
             readingsSingleUpdate($hash, "batteryLowClick", $a[1] . 'd', 1);
             Log3 $name, 3, "EnOcean set $name $cmd $a[1]";
             shift(@a);
-            readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) & 0xF9 | 4, 0);
+            readingsSingleUpdate($hash, "waitingCmds", $waitingCmds & 0xF9 | 4, 0);
           } else {
             return "Usage: $a[1] is not numeric or out of range";
           }
@@ -4453,7 +5333,7 @@ sub EnOcean_Set($@)
             readingsSingleUpdate($hash, "updateIntervalSet", $a[1], 0);
             Log3 $name, 3, "EnOcean set $name $cmd $a[1]";
             shift(@a);
-            readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) | 1, 0);
+            readingsSingleUpdate($hash, "waitingCmds", $waitingCmds | 1, 0);
           } else {
             return "Usage: $a[1] is not numeric or out of range";
           }
@@ -4466,7 +5346,7 @@ sub EnOcean_Set($@)
             readingsSingleUpdate($hash, "blinkIntervalSet", $a[1], 0);
             Log3 $name, 3, "EnOcean set $name $cmd $a[1]";
             shift(@a);
-            readingsSingleUpdate($hash, "waitingCmds", ReadingsVal($name, "waitingCmds", 0) | 1, 0);
+            readingsSingleUpdate($hash, "waitingCmds", $waitingCmds | 1, 0);
           } else {
             return "Usage: $a[1] is not numeric or out of range";
           }
@@ -4485,7 +5365,7 @@ sub EnOcean_Set($@)
             shift(@a);
           } elsif ($a[1] =~ m/^windowHandleOpen$/) {
             $rorg = "F6";
-            $data = 'C0';
+            $data = 'E0';
             $status = '20';
             ($err, $subDef) = EnOcean_AssignSenderID(undef, $hash, "subDefH", "biDir");
             readingsSingleUpdate($hash, "teachSlave", 'RPS teach-in sent', 1);
@@ -4515,7 +5395,7 @@ sub EnOcean_Set($@)
         $cmdList .= "presence:absent,present handleClosedClick:enable,disable batteryLowClick:enable,disable " .
                     "updateInterval blinkInterval teachSlave:contact,windowHandleClosed,windowHandleOpen,windowHandleTilted";
         return "Unknown argument $cmd, choose one of $cmdList";
-      }      
+      }
 
     } elsif ($st eq "roomCtrlPanel.00") {
       # Room Control Panel
@@ -4667,6 +5547,218 @@ sub EnOcean_Set($@)
         return "Unknown argument $cmd, choose one of $cmdList";
       }
 
+    } elsif ($st eq "roomCtrlPanel.01") {
+      # Room Control Panel
+      # (D2-11-01 - D2-11-08)
+      $rorg = "D2";
+      $updateState = 0;
+      my $cooling = ReadingsVal($name, "colling", 'off');
+      my $fanSpeed = ReadingsVal($name, "fanSpeed", 'auto');
+      my $heating = ReadingsVal($name, "heating", 'off');
+      my $humidity = ReadingsVal($name, "humidity", 0);
+      my $occupancy = ReadingsVal($name, "occupancy", 'unoccupied');
+      my $setpointBase = ReadingsVal($name, "setpointBase", 20);
+      my $setpointTemp = ReadingsVal($name, "setpointTemp", 20);
+      my $setpointShift = ReadingsVal($name, "setpointShift", 0);
+      my $setpointShiftMax = ReadingsVal($name, "setpointShiftMax", 10);
+      my $setpointType = ReadingsVal($name, "setpointType", 'setpointShift');
+      my $temperature = ReadingsVal($name, "temperature", 20);
+      my $waitingCmds = ReadingsVal($name, "waitingCmds", 0);
+      my $window = ReadingsVal($name, "window", 'closed');
+      if ($cmd eq "desired-temp"|| $cmd eq "setpointTemp") {
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^\d+$/ && $a[1] >= 5 && $a[1] <= 40) {
+            readingsBeginUpdate($hash);
+            if ($a[1] < 15) {
+              $setpointBase = 15;
+              $setpointShift =  $a[1] - $setpointBase;
+              $setpointShiftMax = $setpointBase - $a[1] if ($setpointShiftMax < -$setpointShift);
+              readingsBulkUpdate($hash, "setpointShiftMax", $setpointShiftMax);
+            } elsif ($a[1] > 30) {
+              $setpointBase = 30;
+              $setpointShift =  $a[1] - $setpointBase;
+              $setpointShiftMax = $a[1] - $setpointBase  if ($setpointShiftMax < $setpointShift);
+              readingsBulkUpdate($hash, "setpointShiftMax", $setpointShiftMax);
+            } else {
+              $setpointBase = $a[1];
+              $setpointShift = 0;
+            }
+            readingsBulkUpdate($hash, "setpointShift", $setpointShift);
+            readingsBulkUpdate($hash, "setpointBase", $setpointBase);
+            $setpointTemp = $a[1];
+            readingsBulkUpdate($hash, "setpointTemp", $a[1]);
+            readingsBulkUpdate($hash, "state", "T: $temperature H: $humidity SPT: $setpointTemp F: $fanSpeed");
+            readingsBulkUpdate($hash, "waitingCmds", $waitingCmds |= 1);
+            readingsEndUpdate($hash, 1);
+            CommandDeleteReading(undef, "$name smartAckMailbox");
+            Log3 $name, 3, "EnOcean set $name setpointTemp $a[1]";
+            shift(@a);
+          } else {
+            return "Usage: $a[1] is not numeric or out of range";
+          }
+        } else {
+          return "Usage: set <name> setpointTemp 5...40";
+        }
+
+      } elsif ($cmd eq "setpointShiftMax") {
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^\d+$/ && $a[1] >= 1 && $a[1] <= 10) {
+            readingsBeginUpdate($hash);
+            if ($setpointTemp < 15 - $a[1]) {
+              $setpointShiftMax = 15 - $setpointTemp;
+            } elsif ($setpointTemp > 30 + $a[1]) {
+              $setpointShiftMax = $setpointTemp - 30;
+            } else {
+              $setpointShiftMax = $a[1];
+            }
+            readingsBulkUpdate($hash, "setpointShiftMax", $setpointShiftMax);
+            readingsBulkUpdate($hash, "waitingCmds", $waitingCmds |= 2);
+            readingsEndUpdate($hash, 1);
+            CommandDeleteReading(undef, "$name smartAckMailbox");
+            Log3 $name, 3, "EnOcean set $name setpointShiftMax $a[1]";
+            shift(@a);
+          } else {
+            return "Usage: $a[1] is not numeric or out of range";
+          }
+        } else {
+          return "Usage: set <name> setpointShiftMax 1...10";
+        }
+
+      } elsif ($cmd eq "setpointType") {
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^setpointTemp|setpointShift$/) {
+            readingsBeginUpdate($hash);
+            $setpointType = $a[1];
+            readingsBulkUpdate($hash, "setpointType", $setpointType);
+            readingsBulkUpdate($hash, "waitingCmds", $waitingCmds |= 0x80);
+            readingsEndUpdate($hash, 1);
+            CommandDeleteReading(undef, "$name smartAckMailbox");
+            Log3 $name, 3, "EnOcean set $name setpointType $a[1]";
+            shift(@a);
+          } else {
+            return "Usage: $a[1] is wrong.";
+          }
+        } else {
+          return "Usage: set <name> setpointType setpointTemp|setpointShift";
+        }
+
+      } elsif ($cmd eq 'fanSpeed') {
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^auto|off|1|2|3$/) {
+            $fanSpeed = $a[1];
+            readingsBeginUpdate($hash);
+            readingsBulkUpdate($hash, "fanSpeed", $a[1]);
+            readingsBulkUpdate($hash, "state", "T: $temperature H: $humidity SPT: $setpointTemp F: $fanSpeed");
+            readingsBulkUpdate($hash, "waitingCmds", $waitingCmds |= 4);
+            readingsEndUpdate($hash, 1);
+            CommandDeleteReading(undef, "$name smartAckMailbox");
+            Log3 $name, 3, "EnOcean set $name fanSpeed $a[1]";
+            shift(@a);
+          } else {
+            return "Usage: $a[1] is wrong.";
+          }
+        } else {
+          return "Usage: set <name> fanspeed 1...3|auto|off";
+        }
+
+      } elsif ($cmd eq "cooling") {
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^on|off$/) {
+            $cooling = $a[1];
+            readingsBeginUpdate($hash);
+            readingsBulkUpdate($hash, "cooling", $a[1]);
+            if ($a[1] eq 'on') {
+              $heating = 'off';
+              readingsBulkUpdate($hash, "heating", 'off');
+            }
+            readingsBulkUpdate($hash, "waitingCmds", $waitingCmds |= 0x20);
+            readingsEndUpdate($hash, 1);
+            CommandDeleteReading(undef, "$name smartAckMailbox");
+            Log3 $name, 3, "EnOcean set $name cooling $a[1]";
+            shift(@a);
+         } else {
+            return "Usage: $a[1] is wrong.";
+          }
+        } else {
+          return "Usage: set <name> cooling on|off";
+        }
+
+      } elsif ($cmd eq "heating") {
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^on|off$/) {
+            $heating = $a[1];
+            readingsBeginUpdate($hash);
+            readingsBulkUpdate($hash, "heating", $a[1]);
+            if ($a[1] eq 'on') {
+              $cooling = 'off';
+              readingsBulkUpdate($hash, "cooling", 'off');
+            }
+            readingsBulkUpdate($hash, "waitingCmds", $waitingCmds |= 0x40);
+            readingsEndUpdate($hash, 1);
+            CommandDeleteReading(undef, "$name smartAckMailbox");
+            Log3 $name, 3, "EnOcean set $name heating $a[1]";
+            shift(@a);
+          } else {
+            return "Usage: $a[1] is wrong.";
+          }
+        } else {
+          return "Usage: set <name> heating on|off";
+        }
+
+      } elsif ($cmd eq "occupancy") {
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^occupied|unoccupied$/) {
+            $occupancy = $a[1];
+            readingsBeginUpdate($hash);
+            readingsBulkUpdate($hash, "occupancy", $a[1]);
+            readingsBulkUpdate($hash, "waitingCmds", $waitingCmds |= 8);
+            readingsEndUpdate($hash, 1);
+            CommandDeleteReading(undef, "$name smartAckMailbox");
+            Log3 $name, 3, "EnOcean set $name occupancy $a[1]";
+            shift(@a);
+         } else {
+            return "Usage: $a[1] is wrong.";
+          }
+        } else {
+          return "Usage: set <name> occupancy occupied|unoccupied";
+        }
+
+      } elsif ($cmd eq "window") {
+        if (defined $a[1]) {
+          if ($a[1] =~ m/^closed|open$/) {
+            $window = $a[1];
+            readingsBeginUpdate($hash);
+            readingsBulkUpdate($hash, "window", $a[1]);
+            readingsBulkUpdate($hash, "waitingCmds", $waitingCmds |= 0x10);
+            readingsEndUpdate($hash, 1);
+            CommandDeleteReading(undef, "$name smartAckMailbox");
+            Log3 $name, 3, "EnOcean set $name window $a[1]";
+            shift(@a);
+         } else {
+            return "Usage: $a[1] is wrong.";
+          }
+        } else {
+          return "Usage: set <name> window open|closed";
+        }
+
+      } else {
+        $cmdList .= "setpointTemp:slider,5,1,40 cooling:off,on desired-temp " .
+                    "fanSpeed:auto,off,1,2,3 heating:off,on occupancy:occupied,unoccupied " .
+                    "setpointShiftMax:slider,1,1,10 setpointType:setpointShift,setpointTemp window:closed,open";
+        return "Unknown argument $cmd, choose one of $cmdList";
+      }
+      $setpointType = $setpointType eq 'setpointTemp' ? 0x80 : 0;
+      $heating = $heating eq 'on' ? 0x40 : 0;
+      $cooling = $cooling eq 'on' ? 0x20 : 0;
+      $window = $window eq 'open' ? 0x10 : 0;
+      $setpointShift = int(($setpointShift + $setpointShiftMax) * 255 / ($setpointShiftMax * 2));
+      #$setpointShift = unpack('C', pack('c', $setpointShift));
+      my %fanSpeed = ('auto' => 0, 'off' =>1, 1 => 2, 2 => 3, 3 => 4);
+      $occupancy = $occupancy eq 'occupied' ? 1 : 0;
+      $data = sprintf "%02X%02X%02X%02X", $setpointType |$heating | $cooling | $window | 1,
+                                          $setpointShift, $setpointBase,
+                                          $setpointShiftMax << 4 | $fanSpeed{$fanSpeed} << 1 | $occupancy;
+
     } elsif ($st eq "fanCtrl.00") {
       # Fan Control
       # (D2-20-00 - D2-20-02)
@@ -4705,10 +5797,12 @@ sub EnOcean_Set($@)
       } elsif ($cmd eq "on") {
         $opMode = 1;
         Log3 $name, 3, "EnOcean set $name $a[0]";
+        shift(@a);
 
       } elsif ($cmd eq "off") {
         $opMode = 0;
         Log3 $name, 3, "EnOcean set $name $a[0]";
+        shift(@a);
 
       } elsif ($cmd eq "desired-temp" || $cmd eq "setpointTemp") {
         $updateState = 0;
@@ -4833,8 +5927,8 @@ sub EnOcean_Set($@)
       my $humidityThreshold = ReadingsVal($name, "humidityThreshold", 'default');
       $humidityThreshold = $humidityThreshold eq 'default' ? 127 : $humidityThreshold;
       my $startTimerMode = 0;
-      my $tempThreshold = ReadingsVal($name, "roomTempSet", 'default');;
-      $tempThreshold = $tempThreshold eq 'default' ? 127 : $tempThreshold;
+      my $tempThreshold = ReadingsVal($name, "roomTempSet", 'default');
+      $tempThreshold = $tempThreshold eq 'default' ? 0 : $tempThreshold;
       my $ventilation = 15;
       if ($cmd eq "ventilation") {
         $ventilation = $a[1];
@@ -4858,7 +5952,7 @@ sub EnOcean_Set($@)
         }
 
       } elsif ($cmd eq "heatExchangerBypass") {
-        $heatExchangerBypass = $a[1];     
+        $heatExchangerBypass = $a[1];
         return "Usage: $cmd variable is missing, choose opens|closes." if (!defined $heatExchangerBypass);
         shift(@a);
         my %heatExchangerBypass = (
@@ -4870,21 +5964,21 @@ sub EnOcean_Set($@)
         } else {
           return "Usage: $cmd variable wrong, choose opens|closes.";
         }
-      
+
       } elsif ($cmd eq "startTimerMode") {
         $startTimerMode = 1;
-        
+
       } elsif ($cmd eq "CO2Threshold") {
         $CO2Threshold = $a[1];
         if (defined $CO2Threshold) {
           if ($CO2Threshold eq 'default') {
             $CO2Threshold = 127;
-            readingsSingleUpdate($hash, "CO2Threshold", 'default', 1);          
+            readingsSingleUpdate($hash, "CO2Threshold", 'default', 1);
           } elsif ($CO2Threshold =~ m/^\d+$/ && $CO2Threshold >= 0 && $CO2Threshold <= 100) {
-            readingsSingleUpdate($hash, "CO2Threshold", $CO2Threshold, 1);          
+            readingsSingleUpdate($hash, "CO2Threshold", $CO2Threshold, 1);
           } else {
             return "Usage: $cmd variable is wrong, choose default|0 ... 100." ;
-          }        
+          }
         } else {
           return "Usage: $cmd variable is wrong, choose default|0 ... 100." ;
         }
@@ -4896,11 +5990,11 @@ sub EnOcean_Set($@)
             $humidityThreshold = 127;
             readingsSingleUpdate($hash, "humidityThreshold", 'default', 1);
           } elsif ($humidityThreshold =~ m/^\d+$/ && $humidityThreshold >= 0 && $humidityThreshold <= 100) {
-            readingsSingleUpdate($hash, "humidityThreshold", $humidityThreshold, 1);          
+            readingsSingleUpdate($hash, "humidityThreshold", $humidityThreshold, 1);
           } else {
-            return "Usage: $cmd variable is wrong, choose default|0 ... 100." ;          
+            return "Usage: $cmd variable is wrong, choose default|0 ... 100." ;
           }
-        } else {          
+        } else {
           return "Usage: $cmd variable is wrong, choose default|0 ... 100." ;
         }
         shift(@a);
@@ -4911,10 +6005,10 @@ sub EnOcean_Set($@)
             $airQuatityThreshold = 127;
             readingsSingleUpdate($hash, "airQuatityThreshold", 'default', 1);
           } elsif ($airQuatityThreshold =~ m/^\d+$/ && $airQuatityThreshold >= 0 && $airQuatityThreshold <= 100) {
-            readingsSingleUpdate($hash, "airQuatityThreshold", $airQuatityThreshold, 1);          
+            readingsSingleUpdate($hash, "airQuatityThreshold", $airQuatityThreshold, 1);
           } else {
             return "Usage: $cmd variable is wrong, choose default|0 ... 100." ;
-          }        
+          }
         } else {
           return "Usage: $cmd variable is wrong, choose default|0 ... 100." ;
         }
@@ -4923,11 +6017,12 @@ sub EnOcean_Set($@)
         $tempThreshold = $a[1];
         if (defined $tempThreshold) {
           if ($tempThreshold eq 'default') {
-            $tempThreshold = 127;
+            $tempThreshold = 0;
             readingsSingleUpdate($hash, "roomTempSet", 'default', 1);
           } elsif ($tempThreshold =~ m/^[+-]?\d+$/ && $tempThreshold >= - 63 && $tempThreshold <= 63) {
             readingsSingleUpdate($hash, "roomTempSet", $tempThreshold, 1);
-            $tempThreshold = abs($tempThreshold) | 0x40 if ($tempThreshold < 0);
+            $tempThreshold += 64;
+            #$tempThreshold = abs($tempThreshold) | 0x40 if ($tempThreshold < 0);
           } else {
             return "Usage: $cmd variable is wrong, choose default|-63 ... 63." ;
           }
@@ -4988,7 +6083,7 @@ sub EnOcean_Set($@)
       if ($cmd eq "teach") {
         $attr{$name}{eep} = "D5-00-01";
         CommandDeleteReading(undef, "$name .*");
-        readingsSingleUpdate($hash, "teach", "1BS teach-in sent", 1);          
+        readingsSingleUpdate($hash, "teach", "1BS teach-in sent", 1);
         $setCmd = 0;
         $updateState = 0;
       } elsif ($cmd eq "closed") {
@@ -5036,7 +6131,7 @@ sub EnOcean_Set($@)
           $engMin = '' if (!defined $engMin);
           $scalingMin = '' if (!defined $scalingMin);
           $engMax = '' if (!defined $engMax);
-          $scalingMax = '' if (!defined $scalingMax);          
+          $scalingMax = '' if (!defined $scalingMax);
           $gpDef[$setChannel] = $channelName . ':' . $channelDir . ':' . $channelType . ':' . $signalType . ':' . $valueType .
                                 ':' . $resolution . ':' . $engMin . ':' . $scalingMin . ':' . $engMax . ':' . $scalingMax;
           $attr{$name}{gpDef} = join(' ', @gpDef);
@@ -5054,10 +6149,9 @@ sub EnOcean_Set($@)
         my $channelDirSeq = "--";
         my $comMode = 0;
         $attr{$name}{comMode} = "uniDir";
+        $attr{$name}{eep} = "B0-00-00";
         # multicast teach-in
         $destinationID = "FFFFFFFF";
-        my $IODev = $hash->{IODev}{NAME};
-	my $IOHash = $defs{$IODev};
 	my $productID = AttrVal($name, "productID", undef);
 	if (defined $productID) {
 	  $productID = '0000000010' . EnOcean_convHexToBit($productID);
@@ -5118,9 +6212,9 @@ sub EnOcean_Set($@)
           if (!exists($hash->{IODev}{Teach})) {
             # enable teach-in receiving for 3 sec
             $hash->{IODev}{Teach} = 1;
-            my %timeoutHash = (hash => $IOHash, function => "gpRespTimeout", helper => "gpRespWait");
-            RemoveInternalTimer(\%timeoutHash);
-            InternalTimer(gettimeofday() + 3, "EnOcean_RespTimeout", \%timeoutHash, 0);
+            RemoveInternalTimer($hash->{helper}{timer}{gpRespTimeout}) if(exists $hash->{helper}{timer}{gpRespTimeout});
+            $hash->{helper}{timer}{gpRespTimeout} = {hash => $IOHash, function => "gpRespTimeout", helper => "gpRespWait"};
+            InternalTimer(gettimeofday() + 3, 'EnOcean_RespTimeout', $hash->{helper}{timer}{gpRespTimeout}, 0);
           }
         }
         $header = (0x7FF << 1 | $comMode) << 4;
@@ -5151,8 +6245,6 @@ sub EnOcean_Set($@)
         $rorg = "B0";
         $channelType = 0;
         my $comMode = 0;
-        my $IODev = $hash->{IODev}{NAME};
-	my $IOHash = $defs{$IODev};
 	if (AttrVal($name, "comMode", "uniDir") eq "biDir") {
           $comMode = 1;
           $hash->{IODev}{helper}{gpRespWait}{AttrVal($name, "subDef", $hash->{DEF})}{teachInReq} = "out";
@@ -5160,10 +6252,10 @@ sub EnOcean_Set($@)
           if (!exists($hash->{IODev}{Teach})) {
             # enable teach-in receiving for 3 sec
             $hash->{IODev}{Teach} = 1;
-            my %timeoutHash = (hash => $IOHash, function => "gpRespTimeout", helper => "gpRespWait");
-            RemoveInternalTimer(\%timeoutHash);
-            InternalTimer(gettimeofday() + 3, "EnOcean_RespTimeout", \%timeoutHash, 0);
-          }
+            RemoveInternalTimer($hash->{helper}{timer}{gpRespTimeout}) if(exists $hash->{helper}{timer}{gpRespTimeout});
+            $hash->{helper}{timer}{gpRespTimeout} = {hash => $IOHash, function => "gpRespTimeout", helper => "gpRespWait"};
+            InternalTimer(gettimeofday() + 3, 'EnOcean_RespTimeout', $hash->{helper}{timer}{gpRespTimeout}, 0);
+         }
         }
         $data = sprintf '%04X', (0x7FF << 1 | $comMode) << 4 | 4;
         my $teachInState = $comMode == 1 ? "teach-in deletion sent, response requested" : "teach-in deletion sent";
@@ -5395,8 +6487,35 @@ sub EnOcean_Set($@)
           return "Wrong parameter, choose GPSD <data 1 ... 512 Byte hex> [status 1 Byte hex]";
         }
 
+      } elsif ($cmd eq "SEC") {
+        # secure telegram
+        if ($a[1] && $a[1] =~ m/^[\dA-Fa-f]{2,28}$/ && !(length($a[1]) % 2)) {
+          $data = uc($a[1]);
+          $rorg = "30";
+        } else {
+          return "Wrong parameter, choose SEC <data 1 ... 14 Byte hex> [status 1 Byte hex]";
+        }
+
+      } elsif ($cmd eq "ENC") {
+        # secure telegram with encapsulation
+        if ($a[1] && $a[1] =~ m/^[\dA-Fa-f]{2,28}$/ && !(length($a[1]) % 2)) {
+          $data = uc($a[1]);
+          $rorg = "31";
+        } else {
+          return "Wrong parameter, choose ENC <data 1 ... 14 Byte hex> [status 1 Byte hex]";
+        }
+
+      } elsif ($cmd eq "STE") {
+        # secure Teach-In
+        if ($a[1] && $a[1] =~ m/^[\dA-Fa-f]{2,28}$/ && !(length($a[1]) % 2)) {
+          $data = uc($a[1]);
+          $rorg = "35";
+        } else {
+          return "Wrong parameter, choose STE <data 1 ... 14 Byte hex> [status 1 Byte hex]";
+        }
+
       } else {
-        return "Unknown argument $cmd, choose one of 1BS 4BS GPCD GPSD GPTI GPTR MSC RPS UTE VLD";
+        return "Unknown argument $cmd, choose one of 1BS 4BS ENC GPCD GPSD GPTI GPTR MSC RPS SEC STE UTE VLD";
       }
       if ($a[2]) {
         if ($a[2] !~ m/^[\dA-Fa-f]{2}$/) {
@@ -5412,10 +6531,13 @@ sub EnOcean_Set($@)
       Log3 $name, 3, "EnOcean set $name $cmd $data $status";
       shift(@a);
 
+    } elsif ($st eq "remote") {
+      return "Unknown argument $cmd, choose one of $cmdList";
+
     } else {
       # subtype does not support set commands
       $updateState = -1;
-      if (AttrVal($name, "remoteManagement", "off") eq "on") {
+      if (AttrVal($name, "remoteManagement", "off") eq "manager") {
         return "Unknown argument $cmd, choose one of $cmdList";
       } else {
         return;
@@ -5427,10 +6549,10 @@ sub EnOcean_Set($@)
       readingsSingleUpdate($hash, "state", $cmd, 1);
     } elsif ($updateState == 0 && $updateStateAttr eq "yes") {
       readingsSingleUpdate($hash, "state", $cmd, 1);
-    } elsif ($updateState == 3) {
+    #} elsif ($updateState == 3) {
       #internal command
-    } else {
-      readingsSingleUpdate($hash, ".info", "await_confirm", 0);
+    #} else {
+    #  readingsSingleUpdate($hash, ".info", "await_confirm", 0);
     }
 
     # send commands
@@ -5443,6 +6565,7 @@ sub EnOcean_Set($@)
 	InternalTimer(gettimeofday() + 0.1, "EnOcean_TimerSet", \%par, 0);
       }
     }
+    #Log3 $name, 3, "EnOcean set $name remainder of CmdArg: " . join(' ' ,@a) if (@a > 0);
   }
 
   return undef;
@@ -5459,9 +6582,11 @@ sub EnOcean_Parse($$)
   my @msg = split(':', $msg);
   my ($rorg, $data, $senderID, $status, $odata, $subDef, $destinationID, $funcNumber, $manufID, $RSSI, $delay, $subTelNum);
   my $packetType = hex($msg[1]);
+  my @event;
 
   if ($packetType == 1) {
     # packet type RADIO
+    #EnOcean:PacketType:RORG:MessageData:SourceID:Status:OptionalData
     (undef, undef, $rorg, $data, $senderID, $status, $odata) = @msg;
     $odata =~ m/^(..)(........)(..)(..)$/;
     ($subTelNum, $destinationID, $RSSI) = (hex($1), $2, hex($3));
@@ -5472,7 +6597,11 @@ sub EnOcean_Parse($$)
     }
     $rorgname = $EnO_rorgname{$rorg};
     if (!$rorgname) {
-      Log3 undef, 2, "EnOcean RORG $rorg received from $senderID unknown.";
+      if($hash) {
+        Log3 $hash->{NAME}, 2, "EnOcean $hash->{NAME} RORG $rorg unknown.";
+      } else {
+        Log3 undef, 2, "EnOcean RORG $rorg received from $senderID unknown.";
+      }
       return "";
     }
 
@@ -5490,9 +6619,9 @@ sub EnOcean_Parse($$)
         $iohash->{helper}{cdm}{rorg} = $2;
         $iohash->{helper}{cdm}{data}{$idx} = $3;
         $iohash->{helper}{cdm}{lenCounter} = length($3) / 2;
-        my %functionHash = (hash => $iohash, function => "cdm");
-        RemoveInternalTimer(\%functionHash);
-        InternalTimer(gettimeofday() + 1, "EnOcean_cdmClear", \%functionHash, 0);
+        RemoveInternalTimer($hash->{helper}{timer}{helperClear}) if(exists $hash->{helper}{timer}{helperClear});
+        $hash->{helper}{timer}{helperClear} = {hash => $iohash, function => "cdm"};
+        InternalTimer(gettimeofday() + 1, 'EnOcean_helperClear', $hash->{helper}{timer}{helperClear}, 0);
         #Log3 $IODev, 3, "EnOcean $IODev CDM timer started";
       } else {
         $iohash->{helper}{cdm}{data}{$idx} = $data;
@@ -5516,15 +6645,15 @@ sub EnOcean_Parse($$)
           return "";
         }
         delete $iohash->{helper}{cdm};
-        my %functionHash = (hash => $iohash, function => "cdm");
-        RemoveInternalTimer(\%functionHash);
+        RemoveInternalTimer($hash->{helper}{timer}{helperClear}) if(exists $hash->{helper}{timer}{helperClear});
+        delete $hash->{helper}{timer}{helperClear} if (exists $hash->{helper}{timer}{helperClear});
         #Log3 $IODev, 3, "EnOcean $IODev CDM concatenated DATA $data";
       } else {
         # wait for next data message part
         return $IODev;
       }
-    } 
-    
+    }
+
     if($hash) {
       $name = $hash->{NAME};
       if ($rorg eq 'A5' && !(hex(substr($data, 6, 2)) & 8) &&
@@ -5549,7 +6678,7 @@ sub EnOcean_Parse($$)
               $hash = $rltHash;
               $name = $hash->{NAME};
               CommandModify(undef, "$name $senderID");
-              $modules{EnOcean}{defptr}{$senderID} = $hash;              
+              $modules{EnOcean}{defptr}{$senderID} = $hash;
             } else {
               # Radio Link Test Devices not ready at the moment
               return '';
@@ -5558,7 +6687,7 @@ sub EnOcean_Parse($$)
           Log3 $name, 4, "EnOcean received RLT Query messsage DATA: $data from DeviceID: $senderID";
         } else {
           Log3 $name, 4, "EnOcean received RLT Query messsage DATA: $data from DeviceID: $senderID";
-        }      
+        }
       } else {
         Log3 $name, 4, "EnOcean $name received PacketType: $packetType RORG: $rorg DATA: $data SenderID: $senderID STATUS: $status";
       }
@@ -5577,11 +6706,12 @@ sub EnOcean_Parse($$)
       Log3 undef, 5, "EnOcean received PacketType: $packetType RORG: $rorg DATA: $data SenderID: $senderID STATUS: $status";
       my $learningMode = AttrVal($IODev, "learningMode", "demand");
       my $ret = "UNDEFINED EnO_$senderID EnOcean $senderID $msg";
-      
-      if ($rorgname =~ m/^GPCD|GPSD$/) {        
-        Log3 undef, 4, "EnOcean Unknown GP device with SenderID $senderID and $rorgname telegram, please define it.";
-        
-      } elsif ($rorg eq 'A5' && 
+
+      if ($rorgname =~ m/^GPCD|GPSD|SMLRNANS|SMREC|SIGNAL$/) {
+        Log3 undef, 4, "EnOcean Received $rorgname telegram to the unknown device with SenderID $senderID.";
+        return '';
+
+      } elsif ($rorg eq 'A5' &&
                hex(substr($data, 0, 2)) >> 2 == 0x3F &&
                (hex(substr($data, 0, 4)) >> 3 & 0x7F) == 0 &&
                !(hex(substr($data, 6, 2)) & 8)) {
@@ -5603,12 +6733,32 @@ sub EnOcean_Parse($$)
           $filelogName = "FileLog_$name";
           Log3 $name, 4, "EnOcean RLT Query messsage DATA: $data from SenderID: $senderID received";
           $manufID = uc(AttrVal($name, "manufID", ""));
-          $subDef = uc(AttrVal($name, "subDef", $hash->{DEF}));        
+          $subDef = uc(AttrVal($name, "subDef", $hash->{DEF}));
         } else {
           Log3 undef, 1, "EnOcean Unknown device with SenderID $senderID and RLT Query message, please define it.";
           return $ret;
         }
-          
+
+      } elsif (exists $iohash->{helper}{teachConfirmWaitHash}) {
+        # teach-in response with confirm telegram, assign remote device
+        $hash = $iohash->{helper}{teachConfirmWaitHash};
+        $name = $hash->{NAME};
+        # substitute subDef with DEF
+        delete $modules{EnOcean}{defptr}{$hash->{DEF}};
+        $modules{EnOcean}{defptr}{$senderID} = $hash;
+        $attr{$name}{subDef} = $hash->{DEF};
+        $subDef = $attr{$name}{subDef};
+        $hash->{DEF} = $senderID;
+        $attr{$name}{comMode} = "confirm";
+        $manufID = uc(AttrVal($name, "manufID", ""));
+        $filelogName = "FileLog_$name";
+        # clear teach-in request
+        delete $iohash->{helper}{teachConfirmWaitHash};
+        # store changes
+        EnOcean_CommandSave(undef, undef);
+        push @event, "3:teach:4BS teach-in accepted";
+        Log3 $name, 2, "EnOcean $name remote device with SenderID $senderID assigned";
+
       } elsif ($learningMode eq "demand" && $iohash->{Teach}) {
         Log3 undef, 1, "EnOcean Unknown device with SenderID $senderID and $rorgname telegram, please define it.";
         return $ret;
@@ -5618,6 +6768,14 @@ sub EnOcean_Parse($$)
       } elsif ($learningMode eq "always") {
         if ($rorgname =~ m/^UTE|GPTI|GPTR$/) {
           if ($iohash->{Teach}) {
+            Log3 undef, 1, "EnOcean Unknown device with SenderID $senderID and $rorgname telegram, please define it.";
+            return $ret;
+          } else {
+            Log3 undef, 1, "EnOcean Unknown device with SenderID $senderID and $rorgname telegram, activate learning mode.";
+            return "";
+          }
+        } elsif ($rorgname =~ m/^SMLRNREQ$/) {
+          if ($iohash->{SmartAckLearn}) {
             Log3 undef, 1, "EnOcean Unknown device with SenderID $senderID and $rorgname telegram, please define it.";
             return $ret;
           } else {
@@ -5634,37 +6792,211 @@ sub EnOcean_Parse($$)
       }
     }
 
+  } elsif ($packetType == 2) {
+    # packet type RESPONSE
+    #EnOcean:PacketType:ResposeCode:MessageData:OptionalData
+    (undef, undef, $funcNumber, $data, $odata) = @msg;
+    $data = defined($data) ? $data : '';
+    $odata = defined($odata) ? $odata : '';
+    my %codes = (
+      "00" => "OK",
+      "01" => "ERROR",
+      "02" => "NOT_SUPPORTED",
+      "03" => "WRONG_PARAM",
+      "04" => "OPERATION_DENIED",
+      "82" => "FLASH_HW_ERROR",
+      "90" => "BASEID_OUT_OF_RANGE",
+      "91" => "BASEID_MAX_REACHED",
+    );
+    my $rcTxt = $codes{$funcNumber} if($codes{$funcNumber});
+    if($hash) {
+      $name = $hash->{NAME};
+      $funcNumber = hex($funcNumber);
+      Log3 $name, $funcNumber == 0 ? 5 : 2, "EnOcean $name RESPONSE: $rcTxt DATA: $data ODATA: $odata";
+      return $name;
+    } else {
+      Log3 undef, $funcNumber == 0 ? 5 : 2, "EnOcean RESPONSE: $rcTxt DATA: $data ODATA: $odata";
+      return "";
+    }
+
+  } elsif ($packetType == 4) {
+    # packet type EVENT
+    #EnOcean:PacketType:EventCode:MessageData
+    (undef, undef, $funcNumber, $data) = @msg;
+    Log3 undef, 5, "EnOcean EventCode: $funcNumber DATA: $data";
+    $funcNumber = hex($funcNumber);
+    if ($funcNumber == 2) {
+      # smart Ack confirm learn
+      my ($priority, $rorg, $func, $type, $postmasterID, $hopCount);
+      my $responseTime = 150;
+      my $sendData = '';
+      my $sendHash = defined($hash) ? $hash : $iohash;
+      my $sendName = $sendHash->{NAME};
+      $data =~ m/^(..)(....)(..)(..)(..)(..)(........)(........)(..)$/;
+      ($priority, $manufID, $rorg, $func, $type, $RSSI, $postmasterID, $senderID, $hopCount) = (hex($1), $2, $3, $4, $5, hex($6), $7, $8, $9);
+      #Log3 undef, 2, "EnOcean IOHASH: $iohash PRIORITY: $priority SmartAckLearn: " . (exists($iohash->{SmartAckLearn}) ? 1 : 0) .
+      #               " SmartAckLearnWait: " . (exists($iohash->{helper}{smartAckLearnWait}) ? $iohash->{helper}{smartAckLearnWait} : '');
+      if ($iohash->{SmartAckLearn} ||
+          exists($iohash->{helper}{smartAckLearnWait}) && $iohash->{helper}{smartAckLearnWait} eq $sendName) {
+        my $subType = "$rorg.$func.$type";
+        if (exists $EnO_eepConfig{$subType}) {
+          # EEP supported
+          if (exists $modules{EnOcean}{defptr}{$senderID}) {
+            $hash = $modules{EnOcean}{defptr}{$senderID};
+          }
+          $rorgname = $EnO_rorgname{$rorg};
+          if($hash) {
+            delete $iohash->{helper}{smartAckLearnWait};
+            $name = $hash->{NAME};
+            $subDef = uc(AttrVal($name, "subDef", $hash->{DEF}));
+            if (($priority & 15) == 15) {
+              # device exists, learn OUT
+              # send response, to delete mailbox
+              $rorg = substr(AttrVal($name, "eep", '  '), 0, 2);
+              $sendData = sprintf "00%04X20", $responseTime;
+              EnOcean_SndRadio(undef, $hash, 2, $rorg, $sendData, $subDef, '00', $hash->{DEF});
+              Log3 $name, 2, "EnOcean $name Smart Ack teach-out send";
+              Log3 $name, 2, "EnOcean $name device $name deleted";
+              CommandDelete(undef, $name);
+              EnOcean_CommandSave(undef, undef);
+              return '';
+
+            } else {
+              # config device
+              Log3 $name, 5, "EnOcean $name received PacketType: $packetType EventCode: $funcNumber DATA: $data";
+              $attr{$name}{subType} = $EnO_eepConfig{$subType}{attr}{subType};
+              $attr{$name}{eep} = "$rorg-$func-$type";
+              $manufID = sprintf "%03X", hex($manufID) & 0x7FF;
+              $attr{$name}{manufID} = $manufID;
+              $manufID = $EnO_manuf{$manufID} if(exists $EnO_manuf{$manufID});
+              $attr{$name}{postmasterID} = $postmasterID;
+              $hash->{SmartAckRSSI} = $RSSI;
+              $attr{$name}{teachMethod} = 'smartAck';
+              foreach my $attrCntr (keys %{$EnO_eepConfig{$subType}{attr}}) {
+                if ($attrCntr ne "subDef") {
+                  $attr{$name}{$attrCntr} = $EnO_eepConfig{$subType}{attr}{$attrCntr};
+                }
+              }
+              #if (defined AttrVal($name, 'subDef', undef)) {
+              #  $subDef = $attr{$name}{subDef};
+              #} else {
+                #$subDef = $postmasterID;
+                #$attr{$name}{subDef} = $postmasterID;
+              #}
+              $subDef = '0' x 8;
+              $attr{$name}{subDef} = '0' x 8;
+              # sent response to create mailbox
+              $sendData = sprintf "00%04X00", $responseTime;
+              EnOcean_SndRadio(undef, $hash, 2, $rorg, $sendData, $subDef, '00', $hash->{DEF});
+              readingsSingleUpdate($hash, "teach", "Smart Ack teach-in accepted EEP $rorg-$func-$type Manufacturer: $manufID", 1);
+              Log3 $name, 2, "EnOcean $name Smart Ack teach-in accepted EEP $rorg-$func-$type Manufacturer: $manufID";
+              EnOcean_CommandSave(undef, undef);
+              return $name;
+            }
+          } else {
+            # device unknown
+            if (($priority & 5) == 5) {
+              # Smart Ack priority ok (place for mailbox, good RSSI, Local)
+              Log3 undef, 1, "EnOcean Unknown device with SenderID $senderID and Smart Ack learn In message, please define it.";
+              return "UNDEFINED EnO_$senderID EnOcean $senderID $msg";
+            } elsif (($priority & 5) == 1) {
+              # Smart Ack no place for mailbox
+              $sendData = sprintf "00%04X12", $responseTime;
+              EnOcean_SndRadio(undef, $sendHash, 2, $rorg, $sendData, $postmasterID, '00', $senderID);
+              Log3 $sendName, 2, "EnOcean $sendName Smart Ack learn in from SenderID $senderID Discard learn in, postmaster has no place for further mailbox";
+              return '';
+            } else {
+              # Smart Ack priority to low
+              $sendData = sprintf "00%04X13", $responseTime;
+              EnOcean_SndRadio(undef, $sendHash, 2, $rorg, $sendData, $postmasterID, '00', $senderID);
+              Log3 $sendName, 2, "EnOcean $sendName Smart Ack learn in from SenderID $senderID Discard learn in, priority to low";
+              return '';
+            }
+          }
+        } else {
+          # EEP not supported
+          # sent response
+          $sendData = sprintf "00%04X11", $responseTime;
+          EnOcean_SndRadio(undef, $sendHash, 2, $rorg, $sendData, $postmasterID, '00', $senderID);
+          Log3 $sendName, 2, "EnOcean $sendName Smart Ack learn in from SenderID $senderID with EEP $rorg-$func-$type not supported";
+          return '';
+        }
+      } else {
+        # smart ack learn not activated
+        $sendData = sprintf "00%04XFF", $responseTime;
+        EnOcean_SndRadio(undef, $sendHash, 2, $rorg, $sendData, $postmasterID, '00', $senderID);
+        Log3 $sendName, 2, "EnOcean $sendName Smart Ack learn in from SenderID $senderID received, activate learning";
+        return '';
+      }
+    }
+
+  } elsif ($packetType == 6) {
+    # packet type SMART ACK
+    #EnOcean:PacketType:SmartAckCode:MessageData
+    (undef, undef, $funcNumber, $data) = @msg;
+    if($hash) {
+      $name = $hash->{NAME};
+      $subDef = uc(AttrVal($name, "subDef", $hash->{DEF}));
+      Log3 $name, 2, "EnOcean $name received PacketType: $packetType Function Number: $funcNumber DATA: $data";
+    } else {
+      Log3 undef, 2, "EnOcean received PacketType: $packetType Function Number: $funcNumber DATA: $data";
+      return "";
+    }
+    $funcNumber = hex($funcNumber);
+
   } elsif ($packetType == 7) {
     # packet type REMOTE_MAN_COMMAND
     #EnOcean:PacketType:RORG:MessageData:SourceID:DestinationID:FunctionNumber:ManufacturerID:RSSI:Delay
     (undef, undef, $rorg, $data, $senderID, $destinationID, $funcNumber, $manufID, $RSSI, $delay) = @msg;
     if (exists $modules{EnOcean}{defptr}{$senderID}) {
       $hash = $modules{EnOcean}{defptr}{$senderID};
+      $name = $hash->{NAME};
+      if (!exists $attr{$name}{remoteID}) {
+        $attr{$name}{remoteID} = $senderID;
+        Log3 $name, 2, "EnOcean $name remoteID $senderID assigned";
+        if (exists($iohash->{helper}{remoteAnswerWait}{hex($funcNumber)}{hash}) &&
+            $iohash->{helper}{remoteAnswerWait}{hex($funcNumber)}{hash} == $hash) {
+          delete $iohash->{helper}{remoteAnswerWait}{hex($funcNumber)}{hash};
+        }
+      }
+
+    } elsif (exists($iohash->{helper}{remoteAnswerWait}{hex($funcNumber)}{hash})) {
+      # the remoteID is assigned to the requesting device
+      $hash = $iohash->{helper}{remoteAnswerWait}{hex($funcNumber)}{hash};
+      $name = $hash->{NAME};
+      $subDef = '0' x 8;
+      $attr{$name}{remoteID} = $senderID;
+      $modules{EnOcean}{defptr}{$senderID} = $hash;
+      delete $iohash->{helper}{remoteAnswerWait}{hex($funcNumber)}{hash};
+      Log3 $name, 2, "EnOcean $name remoteID $senderID assigned";
+      #EnOcean_CommandSave(undef, undef);
     } elsif ($destinationID ne 'FFFFFFFF') {
       $hash = $modules{EnOcean}{defptr}{$destinationID};
     }
-    $rorgname = $EnO_rorgname{$rorg};
+    #$funcNumber = substr($funcNumber, 1);
     if($hash) {
       $name = $hash->{NAME};
-      #if ($IODev ne $hash->{IODev}{NAME}) {
-       # transceiver wrong
-      #  Log3 $name, 4, "EnOcean $name locked telegram via $IODev PacketType: $packetType RORG: $rorg DATA: $data SenderID: $senderID STATUS: $status";
-      #  return "";
-      #}
-      $subDef = uc(AttrVal($name, "subDef", $hash->{DEF}));
-      Log3 $name, 2, "EnOcean $name received PacketType: $packetType RORG: $rorg DATA: $data SenderID: $senderID
-                      DestinationID $destinationID Function Number: $funcNumber ManufacturerID: $manufID";
+      $manufID = substr($manufID, 1);
+      $rorgname = $EnO_rorgname{$rorg};
+      $subDef = '0' x 8;
+      Log3 $name, 4, "EnOcean $name received PacketType: $packetType RORG: $rorg DATA: $data SenderID: $senderID
+                      DestinationID $destinationID Function Number: " . substr($funcNumber, 1) . " ManufacturerID: $manufID";
+      $delay = hex($delay);
+      $funcNumber = hex($funcNumber);
+      $RSSI = hex($RSSI);
     } else {
-      Log3 undef, 2, "EnOcean received PacketType: $packetType RORG: $rorg DATA: $data SenderID: $senderID
-                      DestinationID $destinationID Function Number: $funcNumber ManufacturerID: $manufID";
-      return "";
+      if (hex($funcNumber) == 4) {
+        #Log3 undef, 1, "EnOcean received remote management query ID from unknown SenderID $senderID, please define device.";
+        #return "UNDEFINED EnO_$senderID EnOcean $senderID $msg";
+        return '';
+      } else {
+        return '';
+      }
     }
-    $funcNumber = hex($funcNumber);
-    $RSSI = hex($RSSI);
-    $delay = hex($delay);
   }
 
   my $eep = AttrVal($name, "eep", undef);
+  my $smartAckLearn = $hash->{IODev}{SmartAckLearn};
   my $teach = $hash->{IODev}{Teach};
   my ($deleteDevice, $oldDevice);
 
@@ -5677,6 +7009,12 @@ sub EnOcean_Parse($$)
         Log3 $name, 2, "EnOcean $name security ERROR: $err";
         return "";
       }
+    } elsif ($rorg eq "35") {
+      # pass second teach-in telegram
+
+    } else {
+      Log3 $name, 2, "EnOcean $name unsecure telegram locked";
+      return "";
     }
     if ($rorg eq "32") {
       if (defined $eep) {
@@ -5685,21 +7023,21 @@ sub EnOcean_Parse($$)
         Log3 $name, 5, "EnOcean $name decrypted data RORG: 32 >> $rorg DATA: $data SenderID: $senderID STATUS: $status";
       } else {
         # Teach-In telegram expected
-        #####
         # telegram analyse needed >> 1BS, 4BS, UTE
         if (length($data) == 14) {
+          # UTE
           $rorg = "D4";
+        } elsif (length($data) == 8) {
+          # 4BS
+          $rorg = "A5";
+        } elsif (length($data) == 2) {
+          # 1BS
+          $rorg = "D5";
         } else {
-          Log3 $name, 2, "EnOcean $name security teach-in failed, UTE message is missing";
+          Log3 $name, 2, "EnOcean $name security teach-in failed, UTE, 4BS or 1BS teach-in message is missing";
           return "";
         }
       }
-    } elsif ($rorg eq "35") {
-      # pass second teach-in telegram
-
-    } else {
-      Log3 $name, 2, "EnOcean $name unsecure telegram locked";
-      return "";
     }
   }
 
@@ -5720,6 +7058,7 @@ sub EnOcean_Parse($$)
     Log3 $name, 1, "EnOcean $name ADT decapsulation RORG: $rorg DATA: $data DestinationID: $3";
   }
 
+  # compute data
   # extract data bytes $db[x] ... $db[0]
   my @db;
   my $dbCntr = 0;
@@ -5728,38 +7067,66 @@ sub EnOcean_Parse($$)
     $dbCntr ++;
   }
 
-  my @event;
   my $model = AttrVal($name, "model", "");
   my $st = AttrVal($name, "subType", "");
   my $subtypeReading = AttrVal($name, "subTypeReading", undef);
   $st = $subtypeReading if (defined $subtypeReading);
 
   if ($rorg eq "F6") {
-    # RPS Telegram (PTM200)
-    # Rocker Switch (EEP F6-02-01 ... F6-03-02)
-    # Position Switch, Home and Office Application (EEP F6-04-01)
-    # Mechanical Handle (EEP F6-10-00)
+    # RPS Telegram
     my $event = "state";
     my $nu =  (hex($status) & 0x10) >> 4;
     # unused flags (AFAIK)
     #push @event, "1:T21:".((hex($status) & 0x20) >> 5);
     #push @event, "1:NU:$nu";
 
-    if ($st eq "FRW") {
-      # smoke detector Eltako FRW
-      if ($db[0] == 0x30) {
-        push @event, "3:battery:low";
-      } elsif ($db[0] == 0x10) {
-        push @event, "3:alarm:smoke-alarm";
-        $msg = "smoke-alarm";
-      } elsif ($db[0] == 0) {
-        push @event, "3:alarm:off";
-        push @event, "3:battery:ok";
-        $msg = "off";
+    if ($st eq "FRW" || $st eq "smokeDetector.02") {
+      # smoke detector
+      if (!exists($hash->{helper}{lastEvent}) || $hash->{helper}{lastEvent} != $db[0] || ReadingsVal($name, 'alarm', '') eq 'dead_sensor') {
+        if ($db[0] == 0x30) {
+          push @event, "3:alarm:off";
+          push @event, "3:battery:low";
+          $msg = ReadingsVal($name, 'state', 'off');
+        } elsif ($db[0] == 0x10) {
+          push @event, "3:battery:ok";
+          push @event, "3:alarm:smoke-alarm";
+          $msg = "smoke-alarm";
+        } elsif ($db[0] == 0) {
+          push @event, "3:alarm:off";
+          push @event, "3:battery:ok";
+          $msg = "off";
+        }
+        push @event, "3:$event:$msg";
+        $hash->{helper}{lastEvent} = $db[0];
       }
-      push @event, "3:$event:$msg";
+      RemoveInternalTimer($hash->{helper}{timer}{alarm}) if(exists $hash->{helper}{timer}{alarm});
+      @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+      InternalTimer(gettimeofday() + 1440, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
 
-    } elsif ($model eq "FAE14" || $model eq "FHK14" || $model eq "FHK61") {
+    } elsif ($st eq "windSpeed.00") {
+      # wind speed threshold detector
+      if (!exists($hash->{helper}{lastEvent}) || $hash->{helper}{lastEvent} != $db[0] || ReadingsVal($name, 'alarm', '') eq 'dead_sensor') {
+        push @event, "3:alarm:off";
+        if ($db[0] == 0x30) {
+          push @event, "3:battery:low";
+          $msg = ReadingsVal($name, 'state', 'off');
+        } elsif ($db[0] == 0x10) {
+          push @event, "3:windSpeed:on";
+          push @event, "3:battery:ok";
+          $msg = "on";
+        } elsif ($db[0] == 0) {
+          push @event, "3:windSpeed:off";
+          push @event, "3:battery:ok";
+          $msg = "off";
+        }
+        push @event, "3:$event:$msg";
+        $hash->{helper}{lastEvent} = $db[0];
+      }
+      RemoveInternalTimer($hash->{helper}{timer}{alarm}) if(exists $hash->{helper}{timer}{alarm});
+      @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+      InternalTimer(gettimeofday() + 1320, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
+
+    } elsif ($model =~ m/FAE14|FHK14|FHK61$/) {
       # heating/cooling relay FAE14, FHK14, untested
       $event = "controllerMode";
       if ($db[0] == 0x30) {
@@ -5784,10 +7151,14 @@ sub EnOcean_Parse($$)
     } elsif ($st eq "gateway") {
       # Eltako switching, dimming
       if ($db[0] == 0x70) {
-        # on
         $msg = "on";
       } elsif ($db[0] == 0x50) {
-        # off
+        $msg = "off";
+      } elsif ($db[0] == 0x30) {
+        $event = 'alert';
+        $msg = "on";
+      } elsif ($db[0] == 0x10) {
+        $event = 'alert';
         $msg = "off";
       }
       push @event, "3:$event:$msg";
@@ -5796,6 +7167,10 @@ sub EnOcean_Parse($$)
       # Eltako shutter
       if ($db[0] == 0x70) {
         # open
+        if ($model eq 'Eltako_FSB_ACK') {
+          push @event, "3:position:0";
+          push @event, "3:anglePos:" . AttrVal($name, "angleMin", -90);
+        }
         push @event, "3:endPosition:open_ack";
         $msg = "open_ack";
       } elsif ($db[0] == 0x50) {
@@ -5818,6 +7193,10 @@ sub EnOcean_Parse($$)
         $msg = "down";
       }
       push @event, "3:$event:$msg";
+
+    } elsif ($st eq "occupSensor.01" && $model eq "tracker") {
+      # tracker
+      push @event, "3:button:" . ($db[0] & 0x70 ? "pressed" : "released");
 
     } elsif ($st eq "switch.7F" && $manufID eq "00D") {
       $msg  = $EnO_ptm200btn[($db[0] & 0xE0) >> 5];
@@ -5876,13 +7255,10 @@ sub EnOcean_Parse($$)
       }
       # released events are disturbing when using a remote, since it overwrites
       # the "real" state immediately. In the case of an Eltako FSB14, FSB61 ...
-      # the state should remain released. (by Thomas)
+      # the state should remain released.
       if ($msg =~ m/released$/ &&
           AttrVal($name, "sensorMode", "switch") ne "pushbutton" &&
-          $model ne "FT55" && $model ne "FSB14" &&
-          $model ne "FSB61" && $model ne "FSB70" &&
-          $model ne "FSM12" && $model ne "FSM61" &&
-          $model ne "FTS12") {
+          $model !~ m/(FT55|FSB.*|FSM12|FSM61|FTS12)$/) {
         $event = "buttons";
         $msg = "released";
       } else {
@@ -5898,8 +7274,7 @@ sub EnOcean_Parse($$)
       EnOcean_RLT($hash->{helper}{rlt}{param});
     } else {
       # Single Input Contact (EEP D5-00-01)
-      # [Eltako FTK, STM-250]
-        push @event, "3:state:" . ($db[0] & 1 ? "closed" : "open");
+      # [EnOcean EMCS, Eltako FTK, STM-250]
         if (!($db[0] & 8)) {
           # teach-in
           $attr{$name}{eep} = "D5-00-01";
@@ -5909,7 +7284,14 @@ sub EnOcean_Parse($$)
           Log3 $name, 2, "EnOcean $name teach-in EEP D5-00-01 Manufacturer: no ID";
           # store attr subType, manufID ...
           EnOcean_CommandSave(undef, undef);
-       }
+        }
+        push @event, "3:state:" . ($db[0] & 1 ? "closed" : "open");
+        CommandDeleteReading(undef, "$name alarm");
+        if (AttrVal($name, "signOfLife", 'off') eq 'on') {
+          RemoveInternalTimer($hash->{helper}{timer}{alarm})  if(exists $hash->{helper}{timer}{alarm});
+          @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+          InternalTimer(gettimeofday() + AttrVal($name, "signOfLifeInterval", 1980), 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
+        }
     }
 
   } elsif ($rorg eq "A5") {
@@ -5928,7 +7310,7 @@ sub EnOcean_Parse($$)
           $mid = $EnO_manuf{$mid} if($EnO_manuf{$mid});
           my $st = "A5.$func.$type";
           $attr{$name}{eep} = "A5-$func-$type";
-          
+
           if ($db[0] & 0x10) {
             # 4BS teach-in bidirectional response received
             Log3 $name, 5, "EnOcean $name 4BS teach-in response message from $senderID received";
@@ -5950,23 +7332,24 @@ sub EnOcean_Parse($$)
                   delete $hash->{IODev}{helper}{"4BSRespWait"}{$destinationID};
                   # store attr subType, manufID ...
                   EnOcean_CommandSave(undef, undef);
-                  
+
                 } else {
                   # SenderID not stored / deleted
                   Log3 $name, 2, "EnOcean $name 4BS request not accepted by $senderID";
                   push @event, "3:teach:4BS request not accepted EEP $rorg-$func-$type Manufacturer: $mid";
-                }               
+                }
               } else {
                 # EEP not suppported
                 Log3 $name, 2, "EnOcean $name 4BS EEP not supported by $senderID";
                 push @event, "3:teach:4BS EEP not supported EEP $rorg-$func-$type Manufacturer: $mid";
-              }            
+              }
             } else {
               Log3 $name, 2, "EnOcean $name 4BS teach-in response message from $senderID ignored";
             }
-            
+
           } else {
-            # 4BS teach-in query          
+            # 4BS teach-in query
+            $attr{$name}{teachMethod} = '4BS';
             if(exists $EnO_eepConfig{$st}{attr}) {
               push @event, "3:teach:4BS teach-in accepted EEP A5-$func-$type Manufacturer: $mid";
               Log3 $name, 2, "EnOcean $name 4BS teach-in accepted EEP A5-$func-$type Manufacturer: $mid";
@@ -6004,8 +7387,6 @@ sub EnOcean_Parse($$)
                 EnOcean_SndRadio(undef, $hash, $packetType, $rorg, "800FFFF0", $subDef, "00", $hash->{DEF});
                 Log3 $name, 2, "EnOcean $name 4BS teach-in response sent to " . $hash->{DEF};
                 readingsSingleUpdate($hash, 'operationMode', 'setpointTemp', 0);
-                #####
-                #EnOcean_hvac_01Cmd($hash, $packetType, 128); # 128 == 20 degree C
 
               } elsif ($st eq "hvac.02") {
                 # EEP A5-20-02 not supported
@@ -6061,19 +7442,18 @@ sub EnOcean_Parse($$)
                 $data = sprintf "%06XF0", (hex($func) << 7 | hex($type)) << 11 | 0x7FF;
                 EnOcean_SndRadio(undef, $hash, $packetType, $rorg, $data, $subDef, "00", $hash->{DEF});
                 Log3 $name, 2, "EnOcean $name 4BS teach-in response sent to " . $hash->{DEF};
-              
+
               #} else {
                 # EEP not supported
                 # teach-in response
               #  $data = sprintf "%06X90", (hex($func) << 7 | hex($type)) << 11 | 0x7FF;
               #  EnOcean_SndRadio(undef, $hash, $packetType, $rorg, $data, "00000000", "00", $hash->{DEF});
-              #  Log3 $name, 2, "EnOcean $name 4BS teach-in response sent to " . $hash->{DEF};            
+              #  Log3 $name, 2, "EnOcean $name 4BS teach-in response sent to " . $hash->{DEF};
               }
 
             }
 
-          }   
-
+          }
           # store attr subType, manufID ...
           EnOcean_CommandSave(undef, undef);
           # delete standard readings
@@ -6105,14 +7485,17 @@ sub EnOcean_Parse($$)
       } else {
         $energyStorage = 'empty';
       }
-      push @event, "3:battery:$battery";
-      push @event, "3:energyStorage:$energyStorage";      
+      if (!exists($hash->{helper}{battery}) || $hash->{helper}{battery} ne $battery) {
+        push @event, "3:battery:$battery";
+        $hash->{helper}{battery} = $battery;
+      }
+      push @event, "3:energyStorage:$energyStorage";
       my $roomTemp = ReadingsVal($name, "roomTemp", 20);
       if ($db[2] & 4) {
         CommandDeleteReading(undef, "$name roomTemp");
       } else {
         $roomTemp = $db[1] * 40 / 255;
-        push @event, "3:roomTemp:" . sprintf "%0.1f", $roomTemp;        
+        push @event, "3:roomTemp:" . sprintf "%0.1f", $roomTemp;
       }
       my $setpoint = $db[3];
       push @event, "3:setpoint:$setpoint";
@@ -6140,10 +7523,11 @@ sub EnOcean_Parse($$)
           readingsSingleUpdate($hash, 'temperature', sprintf("%0.1f", $temperature), 1);
         }
       }
-      
+
       Log3 $name, 5, "EnOcean $name EnOcean_parse SPT: $setpointTemp SPTS: $setpointTempSet";
-        
+
       my $operationMode = ReadingsVal($name, "operationMode", 'setpointTemp');
+      my $setpointSummerMode = AttrVal($name, "setpointSummerMode", 0);
       my $summerMode = AttrVal($name, "summerMode", "off");
       my $timeDiff = EnOcean_TimeDiff(ReadingsTimestamp($name, 'wakeUpCycle', undef));
       my $waitingCmds = ReadingsVal($name, "waitingCmds", "no_change");
@@ -6152,29 +7536,64 @@ sub EnOcean_Parse($$)
       if ($summerMode eq 'off') {
         $summerMode = 0;
         if ($timeDiff == 0) {
-          $wakeUpCycle = 1200;        
+          $wakeUpCycle = 1200;
         } elsif ($timeDiff < 120) {
-          $wakeUpCycle = 120;        
-        } elsif ($timeDiff > 1200) {        
+          $wakeUpCycle = 120;
+        } elsif ($timeDiff > 1200) {
           $wakeUpCycle = 1200;
         } else {
           $wakeUpCycle = int($timeDiff);
         }
       } else {
         $summerMode = 8;
+        # ignore all commands
+        if ($waitingCmds ne "summerMode") {
+          $waitingCmds = "no_change";
+          CommandDeleteReading(undef, "$name waitingCmds");
+        }
         if ($manufID eq '049') {
-          $wakeUpCycle = 28800;        
+          $wakeUpCycle = 28800;
         } else {
           $wakeUpCycle = 3600;
         }
-      }      
+      }
       readingsSingleUpdate($hash, 'wakeUpCycle', $wakeUpCycle, 1);
       # set alarm timer
       CommandDeleteReading(undef, "$name alarm");
-      @{$hash->{helper}{alarmTimer}} = ($hash, 'alarm', 'no_response_from_actuator', 1, 3);
-      RemoveInternalTimer($hash->{helper}{alarmTimer});
-      InternalTimer(gettimeofday() + $wakeUpCycle * 1.1, "EnOcean_readingsSingleUpdate", $hash->{helper}{alarmTimer}, 0);
-      
+      RemoveInternalTimer($hash->{helper}{timer}{alarm}) if(exists $hash->{helper}{timer}{alarm});
+      @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'no_response_from_actuator', 1, 3);
+      InternalTimer(gettimeofday() + $wakeUpCycle * 1.1, "EnOcean_readingsSingleUpdate", $hash->{helper}{timer}{alarm}, 0);
+
+      my $actionCmd = AttrVal($name, "rcvRespAction", undef);
+      if (defined $actionCmd) {
+        my %specials = ("%ACTUATORSTATE" => (($db[2] & 1) ? "obstructed" : "ok"),
+                        "%BATTERY" => $battery,
+                        "%COVER" => (($db[2] & 8) ? "open" : "closed"),
+                        "%ENERGYINPUT" => (($db[2] & 0x40) ? "enabled" : "disabled"),
+                        "%ENERGYSTORAGE" => $energyStorage,
+                        "%MAINTENANCEMODE" => $maintenanceMode,
+                        "%NAME" => $name,
+                        "%OPERATIONMODE" => $operationMode,
+                        "%ROOMTEMP" => $roomTemp,
+                        "%SELFCTRL" => (($db[0] & 4) ? "on" : "off"),
+                        "%SETPOINT" => $setpoint,
+                        "%SETPOINTTEMP" => $setpointTemp,
+                        "%SUMMERMODE" => $summerMode,
+                        "%TEMPERATURE" => $temperature,
+                        "%WINDOW" => (($db[2] & 2) ? "open" : "closed"),
+                       );
+          # action exec
+          $actionCmd = EvalSpecials($actionCmd, %specials);
+          my $ret = AnalyzeCommandChain(undef, $actionCmd);
+          Log3 $name, 2, "Encean $name rcvRespAction ERROR: $ret" if($ret);
+          $maintenanceMode = ReadingsVal($name, "maintenanceMode", ($db[2] & 0x80) ? 'on' : 'off');
+          $operationMode = ReadingsVal($name, "operationMode", 'setpointTemp');
+          $setpointSet = ReadingsVal($name, "setpointSet", $setpoint);
+          $setpointTempSet = ReadingsVal($name, "setpointTempSet", $setpointTemp);
+          $temperature = ReadingsVal($name, 'temperature', $roomTemp);
+          $waitingCmds = ReadingsVal($name, "waitingCmds", "no_change");
+      }
+
       if ($waitingCmds eq "valveOpens") {
         # deactivate PID regulator
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
@@ -6198,8 +7617,8 @@ sub EnOcean_Parse($$)
           push @event, "3:maintenanceMode:runInit";
           push @event, "3:operationMode:off";
           $functionSelect = 1;
-          $waitingCmds = 0x80;          
-        } else {        
+          $waitingCmds = 0x80;
+        } else {
           $setpointSet = 0;
           $db[2] = 0x20;
           readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
@@ -6213,8 +7632,8 @@ sub EnOcean_Parse($$)
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
         CommandDeleteReading(undef, "$name setpointSet");
         CommandDeleteReading(undef, "$name setpointTemp");
-        CommandDeleteReading(undef, "$name setpointTempSet");       
-        
+        CommandDeleteReading(undef, "$name setpointTempSet");
+
       } elsif ($waitingCmds eq "runInit") {
         # deactivate PID regulator
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
@@ -6226,7 +7645,7 @@ sub EnOcean_Parse($$)
         push @event, "3:waitingCmds:$operationMode";
         #CommandDeleteReading(undef, "$name setpointSet");
         #CommandDeleteReading(undef, "$name setpointTemp");
-        #CommandDeleteReading(undef, "$name setpointTempSet");       
+        #CommandDeleteReading(undef, "$name setpointTempSet");
         #CommandDeleteReading(undef, "$name waitingCmds");
         $functionSelect = 1;
         $waitingCmds = 0x80;
@@ -6242,7 +7661,7 @@ sub EnOcean_Parse($$)
         push @event, "3:waitingCmds:$operationMode";
         #CommandDeleteReading(undef, "$name setpointSet");
         #CommandDeleteReading(undef, "$name setpointTemp");
-        #CommandDeleteReading(undef, "$name setpointTempSet");       
+        #CommandDeleteReading(undef, "$name setpointTempSet");
         #CommandDeleteReading(undef, "$name waitingCmds");
         $functionSelect = 1;
         $waitingCmds = 0x40;
@@ -6297,20 +7716,20 @@ sub EnOcean_Parse($$)
           push @event, "3:maintenanceMode:off";
           push @event, "3:operationMode:setpointTemp";
           CommandDeleteReading(undef, "$name waitingCmds");
-          $waitingCmds = 0;          
+          $waitingCmds = 0;
         }
 
       } elsif ($waitingCmds eq "summerMode") {
         # deactivate PID regulator
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
-        $setpointSet = 100;
+        $setpointSet = $setpointSummerMode;
         $db[2] = (40 - $temperature) * 255 / 40;
         readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
         push @event, "3:maintenanceMode:off";
         push @event, "3:operationMode:summerMode";
         #CommandDeleteReading(undef, "$name setpointSet");
         CommandDeleteReading(undef, "$name setpointTemp");
-        CommandDeleteReading(undef, "$name setpointTempSet");       
+        CommandDeleteReading(undef, "$name setpointTempSet");
         CommandDeleteReading(undef, "$name waitingCmds");
         $waitingCmds = 0;
 
@@ -6326,6 +7745,7 @@ sub EnOcean_Parse($$)
           $functionSelect = 1;
           $waitingCmds = 0x80;
         } else {
+          $db[2] = (40 - $temperature) * 255 / 40;
           push @event, "3:maintenanceMode:off";
           push @event, "3:operationMode:setpoint";
           $waitingCmds = 0;
@@ -6342,7 +7762,7 @@ sub EnOcean_Parse($$)
           push @event, "3:operationMode:setpointTemp";
           $functionSelect = 1;
           $waitingCmds = 0x80;
-        } else {        
+        } else {
           if (AttrVal($name, "pidCtrl", 'on') eq 'on') {
             # activate PID regulator
             ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'actuator', '');
@@ -6359,13 +7779,13 @@ sub EnOcean_Parse($$)
           push @event, "3:setpointTemp:" . sprintf("%.1f", $setpointTemp);
           push @event, "3:maintenanceMode:off";
           push @event, "3:operationMode:setpointTemp";
-          $waitingCmds = 0;          
+          $waitingCmds = 0;
         }
 
       } elsif ($operationMode eq "summerMode") {
         # deactivate PID regulator
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
-        $setpointSet = 100;
+        $setpointSet = $setpointSummerMode;
         $db[2] = (40 - $temperature) * 255 / 40;
         readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
         push @event, "3:maintenanceMode:off";
@@ -6397,11 +7817,11 @@ sub EnOcean_Parse($$)
         push @event, "3:operationMode:off";
         #CommandDeleteReading(undef, "$name setpointSet");
         #CommandDeleteReading(undef, "$name setpointTemp");
-        #CommandDeleteReading(undef, "$name setpointTempSet");       
+        #CommandDeleteReading(undef, "$name setpointTempSet");
         #CommandDeleteReading(undef, "$name waitingCmds");
         $functionSelect = 1;
         $waitingCmds = 0x10;
-        
+
       } else {
         $db[2] = (40 - $temperature) * 255 / 40;
         $waitingCmds = 0;
@@ -6426,6 +7846,7 @@ sub EnOcean_Parse($$)
       );
       my $battery = "ok";
       my %displayOrientation = (0 => 0, 90 => 1, 180 => 2, 270 => 3);
+      my $feedTemp = ReadingsVal($name, "feedTemp", 20);
       my $roomTemp = ReadingsVal($name, "roomTemp", 20);
       my $setpoint = $db[3];
       push @event, "3:setpoint:$setpoint";
@@ -6434,13 +7855,13 @@ sub EnOcean_Parse($$)
       my $setpointTempSet = ReadingsVal($name, "setpointTempSet", $setpointTemp);
       my $temperature = ReadingsVal($name, "temperature", $roomTemp);
       if ($db[0] & 2) {
-        if ($setpointTemp == $setpointTempSet) {          
+        if ($setpointTemp == $setpointTempSet) {
           $setpointTemp = sprintf "%0.1f", ($db[2] * 20 / 255 + 10);
           if ($setpointTemp != $setpointTempSet) {
             # setpointTempSet has been changed by actuator
             $setpointTempSet = $setpointTemp;
             readingsSingleUpdate($hash, 'setpointTempSet', $setpointTempSet, 1);
-          }        
+          }
         } else {
           # setpointTempSet has been changed by Fhem
           $setpointTemp = sprintf "%0.1f", ($db[2] * 20 / 255 + 10);
@@ -6452,7 +7873,8 @@ sub EnOcean_Parse($$)
           # temperature measurement inactive
           CommandDeleteReading(undef, "$name feedTemp");
         } else {
-          push @event, "3:feedTemp:" . sprintf("%0.1f", ($db[2] * 60 / 255 + 20));      
+          $feedTemp = $db[2] * 60 / 255 + 20;
+          push @event, "3:feedTemp:" . sprintf("%0.1f", $feedTemp);
         }
       }
       if ($db[0] & 1) {
@@ -6478,7 +7900,7 @@ sub EnOcean_Parse($$)
         if ($db[0] & 0x80) {
           # temperature measurement needed, activate temperature measurement
           $attr{$name}{measurementCtrl} = 'enable';
-          EnOcean_CommandSave(undef, undef);          
+          EnOcean_CommandSave(undef, undef);
         } else {
           $temperature = $roomTemp;
           readingsSingleUpdate($hash, 'temperature', $temperature, 1);
@@ -6487,16 +7909,20 @@ sub EnOcean_Parse($$)
       }
       push @event, "3:measurementState:" . ($db[0] & 0x80 ? "inactive" : "active");
       push @event, "3:blockKey:" . ($db[0] & 4 ? "yes" : "no");
-      push @event, "3:battery:$battery";
+      if (!exists($hash->{helper}{battery}) || $hash->{helper}{battery} ne $battery) {
+        push @event, "3:battery:$battery";
+        $hash->{helper}{battery} = $battery;
+      }
       #push @event, "3:state:T: $temperature SPT: $setpointTemp SP: $setpoint";
 
       if ($db[0] & 0x40) {
         # status request
-        # action needed?      
+        # action needed?
       }
 
       Log3 $name, 5, "EnOcean $name EnOcean_parse SPT: $setpointTemp SPTS: $setpointTempSet";
-        
+
+      my $activatePID = AttrVal($name, 'pidCtrl', 'on') eq 'on' ? 'actuator' : 'stop';
       my $blockKey = ((AttrVal($name, "blockKey", 'no') eq 'yes') ? 1 : 0) << 2;
       my $displayOrientation = $displayOrientation{AttrVal($name, "displayOrientation", 0)} << 4;
       my $maintenanceMode = ReadingsVal($name, "maintenanceMode", "off");
@@ -6508,12 +7934,42 @@ sub EnOcean_Parse($$)
       my $wakeUpCycle = $wakeUpCycle{AttrVal($name, "wakeUpCycle", 300)};
       if ($summerMode eq 'off' && $wakeUpCycle >= 50) {
         # set default Wake-up Cycle (300 s)
-        $wakeUpCycle = 9;      
+        $wakeUpCycle = 9;
       } elsif ($summerMode eq 'on') {
+        if ($waitingCmds ne "summerMode") {
+          $waitingCmds = "no_change";
+          CommandDeleteReading(undef, "$name waitingCmds");
+        }
         $setpointSet = 100;
         readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
         $wakeUpCycle = 50 if ($wakeUpCycle < 50);
-      }      
+      }
+
+      my $actionCmd = AttrVal($name, "rcvRespAction", undef);
+      if (defined $actionCmd) {
+        my %specials = ("%BATTERY" => $battery,
+                        "%FEEDTEMP" => $feedTemp,
+                        "%MAINTENANCEMODE" => $maintenanceMode,
+                        "%NAME" => $name,
+                        "%OPERATIONMODE" => $operationMode,
+                        "%ROOMTEMP" => $roomTemp,
+                        "%SETPOINT" => $setpoint,
+                        "%SETPOINTTEMP" => $setpointTemp,
+                        "%SUMMERMODE" => $summerMode,
+                        "%TEMPERATURE" => $temperature,
+                       );
+          # action exec
+          $actionCmd = EvalSpecials($actionCmd, %specials);
+          my $ret = AnalyzeCommandChain(undef, $actionCmd);
+          Log3 $name, 2, "EnOcean $name rcvRespAction ERROR: $ret" if($ret);
+          $maintenanceMode = ReadingsVal($name, "maintenanceMode", 'off');
+          $operationMode = ReadingsVal($name, "operationMode", ((AttrVal($name, 'pidCtrl', 'on') eq 'on') ? 'setpointTemp' : 'setpoint'));
+          $setpointSet = ReadingsVal($name, "setpointSet", $setpoint);
+          $setpointTempSet = ReadingsVal($name, "setpointTempSet", $setpointTemp);
+          $temperature = ReadingsVal($name, 'temperature', $roomTemp);
+          $waitingCmds = ReadingsVal($name, "waitingCmds", "no_change");
+      }
+
       if ($waitingCmds eq "valveOpens") {
         # deactivate PID regulator
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
@@ -6533,8 +7989,8 @@ sub EnOcean_Parse($$)
           readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
           push @event, "3:maintenanceMode:runInit";
           push @event, "3:operationMode:off";
-          $waitingCmds = 2;          
-        } else {        
+          $waitingCmds = 2;
+        } else {
           $setpointSet = 0;
           readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
           push @event, "3:maintenanceMode:valveClosed";
@@ -6546,8 +8002,8 @@ sub EnOcean_Parse($$)
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
         CommandDeleteReading(undef, "$name setpointSet");
         CommandDeleteReading(undef, "$name setpointTemp");
-        CommandDeleteReading(undef, "$name setpointTempSet");       
-        
+        CommandDeleteReading(undef, "$name setpointTempSet");
+
       } elsif ($waitingCmds eq "runInit") {
         # deactivate PID regulator
         ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'stop', '');
@@ -6557,7 +8013,7 @@ sub EnOcean_Parse($$)
         push @event, "3:operationMode:off";
         CommandDeleteReading(undef, "$name setpointSet");
         CommandDeleteReading(undef, "$name setpointTemp");
-        CommandDeleteReading(undef, "$name setpointTempSet");       
+        CommandDeleteReading(undef, "$name setpointTempSet");
         CommandDeleteReading(undef, "$name waitingCmds");
         $waitingCmds = 2;
 
@@ -6569,7 +8025,7 @@ sub EnOcean_Parse($$)
           readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
           push @event, "3:maintenanceMode:runInit";
           push @event, "3:operationMode:off";
-          $waitingCmds = 2;          
+          $waitingCmds = 2;
         } else {
           push @event, "3:maintenanceMode:off";
           push @event, "3:operationMode:setpoint";
@@ -6588,10 +8044,10 @@ sub EnOcean_Parse($$)
           readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
           push @event, "3:maintenanceMode:runInit";
           push @event, "3:operationMode:off";
-          $waitingCmds = 2;          
-        } else {        
+          $waitingCmds = 2;
+        } else {
           # activate PID regulator
-          ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'actuator', '');
+          ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, $activatePID, '');
           $setpointSet = ReadingsVal($name, "setpointSet", $setpoint);
           $setpointTemp = $setpointTempSet;
           push @event, "3:setpointTemp:$setpointTemp";
@@ -6612,7 +8068,7 @@ sub EnOcean_Parse($$)
         push @event, "3:operationMode:summerMode";
         #CommandDeleteReading(undef, "$name setpointSet");
         CommandDeleteReading(undef, "$name setpointTemp");
-        CommandDeleteReading(undef, "$name setpointTempSet");       
+        CommandDeleteReading(undef, "$name setpointTempSet");
         CommandDeleteReading(undef, "$name waitingCmds");
         $waitingCmds = 0;
 
@@ -6624,7 +8080,7 @@ sub EnOcean_Parse($$)
           readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
           push @event, "3:maintenanceMode:off";
           push @event, "3:operationMode:setpoint";
-          $waitingCmds = 2;          
+          $waitingCmds = 2;
         } else {
           push @event, "3:maintenanceMode:off";
           push @event, "3:operationMode:setpoint";
@@ -6643,10 +8099,10 @@ sub EnOcean_Parse($$)
           readingsSingleUpdate($hash, 'setpointSet', $setpointSet, 1);
           push @event, "3:maintenanceMode:off";
           push @event, "3:operationMode:setpointTemp";
-          $waitingCmds = 2;          
-        } else {        
+          $waitingCmds = 2;
+        } else {
           # activate PID regulator
-          ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, 'actuator', '');
+          ($err, $logLevel, $response) = EnOcean_setPID(undef, $hash, $activatePID, '');
           $setpointSet = ReadingsVal($name, "setpointSet", $setpointSet);
           push @event, "3:setpointTemp:$setpointTemp";
           push @event, "3:maintenanceMode:off";
@@ -6666,7 +8122,7 @@ sub EnOcean_Parse($$)
         push @event, "3:operationMode:summerMode";
         #CommandDeleteReading(undef, "$name setpointSet");
         #CommandDeleteReading(undef, "$name setpointTemp");
-        #CommandDeleteReading(undef, "$name setpointTempSet");       
+        #CommandDeleteReading(undef, "$name setpointTempSet");
         #CommandDeleteReading(undef, "$name waitingCmds");
         $waitingCmds = 0;
 
@@ -6677,10 +8133,10 @@ sub EnOcean_Parse($$)
       # sent message to the actuator
       $data = sprintf "%02X%02X%02X%02X", $setpointSet,
                                           ($setpointTempSet - 10) / 20 * 255,
-                                          $measurementCtrl | $wakeUpCycle,
+                                          (AttrVal($name, 'pidCtrl', 'on') eq 'on' ? 0 : 0x80) | $measurementCtrl | $wakeUpCycle,
                                           $displayOrientation | 8 | $blockKey | $waitingCmds;
       EnOcean_SndRadio(undef, $hash, $packetType, "A5", $data, $subDef, "00", $hash->{DEF});
-  
+
     } elsif ($st eq "hvac.10") {
       # Generic HVAC Interface (EEP A5-20-10)
       my %mode = (
@@ -6734,16 +8190,16 @@ sub EnOcean_Parse($$)
       }
       my $fanSpeed = $db[2] & 0x0F;
       if ($fanSpeed == 0) {
-        push @event, "3:fanSpeed:auto";      
+        push @event, "3:fanSpeed:auto";
       } elsif ($fanSpeed > 0 && $fanSpeed < 15) {
-        push @event, "3:fanSpeed:" . $fanSpeed;      
+        push @event, "3:fanSpeed:" . $fanSpeed;
       } else {
         push @event, "3:fanSpeed:unknown";
       }
       if ($db[1] == 255) {
-        push @event, "3:ctrl:auto";      
+        push @event, "3:ctrl:auto";
       } elsif ($db[1] >= 0 && $db[1] <= 100) {
-        push @event, "3:ctrl:" . $db[1];      
+        push @event, "3:ctrl:" . $db[1];
       } else {
         push @event, "3:ctrl:unknown";
       }
@@ -6759,7 +8215,7 @@ sub EnOcean_Parse($$)
       }
       push @event, "3:powerSwitch:" . ($db[0] & 1 ? "on" : "off");
       push @event, "3:state:" . ($db[0] & 1 ? "on" : "off");
-          
+
     } elsif ($st eq "hvac.11") {
       # Generic HVAC Interface - Error Control (EEP A5-20-11)
       push @event, "3:errorCode:" . hex(substr($data, 0, 4));
@@ -6771,17 +8227,6 @@ sub EnOcean_Parse($$)
       push @event, "3:window:" . ($db[0] & 2 ? "closed" : "opened");
       push @event, "3:alarm:" . ($db[0] & 1 ? "error" : "ok");
       push @event, "3:state:" . ($db[0] & 1 ? "error" : "ok");
-    
-    } elsif ($st eq "PM101") {
-      # Light and Presence Sensor [Omnio Ratio eagle-PM101]
-      # The sensor also sends switching commands (RORG F6) with the senderID-1
-      # $db[2] is the illuminance where 0x00 = 0 lx ... 0xFF = 1000 lx
-      my $channel2 = $db[0] & 2 ? "on" : "off";
-      push @event, "3:brightness:" . ($db[2] << 2);
-      push @event, "3:channel1:" . ($db[0] & 1 ? "on" : "off");
-      push @event, "3:channel2:" . $channel2;
-      push @event, "3:motion:" . $channel2;
-      push @event, "3:state:" . $channel2;
 
     } elsif ($st =~ m/^tempSensor/) {
       # Temperature Sensor with with different ranges (EEP A5-02-01 ... A5-02-1B)
@@ -6888,7 +8333,7 @@ sub EnOcean_Parse($$)
       push @event, "3:state:$rn";
 
     } elsif ($st eq "vocSensor.01") {
-      # Gas Sensor, VOC Sensor (EEP A5-09-05)
+      # Gas Sensor, VOC Sensor (EEP A5-09-05, A5-09-0C)
       # [untested]
       # $db[3]_bit_7 ... $db[2]_bit_0 is the VOC concentration where 0 = 0 ppb ... 65535 = 65535 ppb
       # $db[1] is the VOC identification
@@ -6931,6 +8376,15 @@ sub EnOcean_Parse($$)
         24 => "2-Butanol",
         25 => "2-Methylpropanol",
         26 => "Diethyl Ether",
+        27 => "Naphthalene",
+        28 => "4-Phenylcyclohexene",
+        29 => "Limonene",
+        30 => "Tricloroethylene",
+        31 => "Isovaleric Acid",
+        32 => "Indole",
+        33 => "Cadaverine",
+        34 => "Putrescine",
+        35 => "Caproic Acid",
         255 => "Ozone",
       );
       if (exists $vocID{$db[1]}) {
@@ -6939,6 +8393,7 @@ sub EnOcean_Parse($$)
         push @event, "3:vocName:unknown";
       }
       push @event, "3:concentration:$vocConc";
+      push @event, "3:concentrationUnit:" . $db[0] & 4 ? 'ug/m3' : 'ppb';
       push @event, "3:state:$vocConc";
 
     } elsif ($st eq "particlesSensor.01") {
@@ -7006,7 +8461,7 @@ sub EnOcean_Parse($$)
       } else {
         $scaleDecimals = "%d"
       }
-      $scaleMulti = $scaleMulti{$scaleMulti} if (exists $scaleMulti{$scaleMulti}); 
+      $scaleMulti = $scaleMulti{$scaleMulti} if (exists $scaleMulti{$scaleMulti});
       my %unit = (
         0 => "uSv/h",
         1 => "cpm",
@@ -7380,7 +8835,6 @@ sub EnOcean_Parse($$)
 
     } elsif ($st eq "roomSensorControl.22") {
       # Room Operation Panel (A5-10-22, A5-10-23)
-      # [untested]
       my $setpoint = $db[3];
       my $humi = sprintf "%d", $db[2] / 2.5;
       my $temp = sprintf "%0.1f", $db[1] * 40 / 250;
@@ -7391,7 +8845,7 @@ sub EnOcean_Parse($$)
         $fanSpeed = 2;
       } elsif ((($db[0] & 0xE0) >> 5) == 2) {
         $fanSpeed = 1;
-      } elsif ((($db[0] & 0xE0) >> 1) == 1){
+      } elsif ((($db[0] & 0xE0) >> 5) == 1){
         $fanSpeed = "off";
       } else {
         $fanSpeed = "auto";
@@ -7433,13 +8887,22 @@ sub EnOcean_Parse($$)
           $energyStorage = "full";
           $battery = "ok";
         }
-        push @event, "3:battery:$battery";
+        if (!exists($hash->{helper}{battery}) || $hash->{helper}{battery} ne $battery) {
+          push @event, "3:battery:$battery";
+          $hash->{helper}{battery} = $battery;
+        }
         push @event, "3:energyStorage:$energyStorage";
         push @event, "3:voltage:$voltage";
       }
       push @event, "3:state:T: $temp H: $humi B: $battery";
       push @event, "3:humidity:$humi";
       push @event, "3:temperature:$temp";
+      CommandDeleteReading(undef, "$name alarm");
+      if (AttrVal($name, "signOfLife", 'off') eq 'on') {
+        RemoveInternalTimer($hash->{helper}{timer}{alarm})  if(exists $hash->{helper}{timer}{alarm});
+        @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+        InternalTimer(gettimeofday() + AttrVal($name, "signOfLifeInterval", 3300), 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
+      }
 
     } elsif ($st eq "tempHumiSensor.03") {
       # Temperatur and Humidity Sensor(EEP A5-04-03)
@@ -7452,7 +8915,12 @@ sub EnOcean_Parse($$)
       push @event, "3:humidity:$humi";
       push @event, "3:temperature:$temp";
       push @event, "3:telegramType:" . ($db[0] & 1 ? "event" : "heartbeat");
-
+      CommandDeleteReading(undef, "$name alarm");
+      if (AttrVal($name, "signOfLife", 'off') eq 'on') {
+        RemoveInternalTimer($hash->{helper}{timer}{alarm})  if(exists $hash->{helper}{timer}{alarm});
+        @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+        InternalTimer(gettimeofday() + AttrVal($name, "signOfLifeInterval", 1540), 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
+      }
     } elsif ($st eq "baroSensor.01") {
       # Barometric Sensor(EEP A5-04-03)
       # [untested]
@@ -7549,8 +9017,24 @@ sub EnOcean_Parse($$)
         $battery = 'ok';
         push @event, "3:battery:ok";
         push @event, "3:energyStorage:$energyStorage";
-      } 
+      }
       push @event, "3:state:T: $temperature E: $brightness B: $battery";
+
+    } elsif ($st eq "lightSensor.05") {
+      # Light Sensor (EEP A5-06-05)
+      # $db[3] is the voltage where 0x00 = 0 V ... 0xFF = 5.1 V
+      # $db[2] is the illuminance (ILL2) where min 0x00 = 0 lx, max 0xFF = 5100 lx
+      # $db[1] is the illuminance (ILL1) where min 0x00 = 0 lx, max 0xFF = 1020000 lx
+      # $db[0]_bit_0 is Range select where 0 = ILL1, 1 = ILL2
+      my $lux;
+      if($db[0] & 1) {
+        $lux = sprintf "%d", $db[2] * 20;
+      } else {
+        $lux = sprintf "%d", $db[1] * 40;
+      }
+      push @event, "3:voltage:" . sprintf "%0.1f", $db[3] * 0.02;
+      push @event, "3:brightness:$lux";
+      push @event, "3:state:$lux";
 
     } elsif ($st eq "occupSensor.01") {
       # Occupancy Sensor (EEP A5-07-01)
@@ -7570,7 +9054,18 @@ sub EnOcean_Parse($$)
           push @event, "3:sensorType:wall";
         }
       }
-      push @event, "3:battery:" . ($db[3] * 0.02 > 2.9 ? "ok" : "low");
+      if ($model eq "tracker") {
+        RemoveInternalTimer($hash->{helper}{timer}{motion}) if(exists $hash->{helper}{timer}{motion});
+        RemoveInternalTimer($hash->{helper}{timer}{state}) if(exists $hash->{helper}{timer}{state});
+        @{$hash->{helper}{timer}{motion}} = ($hash, 'motion', 'off', 1, 5);
+        @{$hash->{helper}{timer}{state}} = ($hash, 'state', 'off', 1, 5);
+        InternalTimer(gettimeofday() + AttrVal($name, 'trackerWakeUpCycle', 30) * 1.1, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{motion}, 0);
+        InternalTimer(gettimeofday() + AttrVal($name, 'trackerWakeUpCycle', 30) * 1.1, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{state}, 0);
+      }
+      if (!exists($hash->{helper}{lastVoltage}) || $hash->{helper}{lastVoltage} != $db[3]) {
+        push @event, "3:battery:" . ($db[3] * 0.02 > 2.8 ? "ok" : "low");
+        $hash->{helper}{lastVoltage} = $db[3];
+      }
       push @event, "3:button:" . ($db[0] & 4 ? "released" : "pressed") if ($manufID eq "7FF");
       push @event, "3:motion:$motion";
       push @event, "3:state:$motion";
@@ -7857,7 +9352,7 @@ sub EnOcean_Parse($$)
         push @event, "3:workingMode:" . (($db[0] & 0x70) >> 4);
         push @event, "3:channel1:" . ($db[0] & 2 ? "on" : "off");
         push @event, "3:channel2:" . ($db[0] & 4 ? "on" : "off");
-        push @event, "3:state:1: " .  ($db[0] & 2 ? "on" : "off") . " 2: " . ($db[0] & 4 ? "on" : "off");        
+        push @event, "3:state:1: " .  ($db[0] & 2 ? "on" : "off") . " 2: " . ($db[0] & 4 ? "on" : "off");
       }
 
     } elsif ($st =~ m/^autoMeterReading\.0[0-3]$/ || $st eq "actuator.01" && $manufID eq "033") {
@@ -7960,7 +9455,6 @@ sub EnOcean_Parse($$)
         push @event, "3:weight:$weight";
         push @event, "3:state:T: $temperature W: $weight B: $battery";
 
-
       } elsif ($st eq "autoMeterReading.05") {
         # Automated meter reading (AMR), Temperature, Container (EEP A5-12-05)
         # $db[3] ... $db[2]_bit_6 is position sensor
@@ -7997,7 +9491,7 @@ sub EnOcean_Parse($$)
         push @event, "3:state:" . sprintf "$scaleDecimals", $meterReading;
       } else {
         # electric charge
-        push @event, "3:electricChange$channel:" . sprintf "$scaleDecimals", $meterReading;        
+        push @event, "3:electricChange$channel:" . sprintf "$scaleDecimals", $meterReading;
       }
 
     } elsif ($st eq "environmentApp") {
@@ -8033,6 +9527,32 @@ sub EnOcean_Parse($$)
         push @event, "3:sunWest:" . sprintf "%d", 1 + $db[3] * 149999 / 255;
         push @event, "3:sunSouth:" . sprintf "%d", 1 + $db[2] * 149999 / 255;
         push @event, "3:sunEast:" . sprintf "%d", 1 + $db[1] * 149999 / 255;
+      } elsif ($identifier == 3) {
+        # Date exchange (EEP A5-13-03)
+        push @event, "3:date:" .  ($db[1] + 2000) . '-' . $db[2] . '-' . $db[3];
+      } elsif ($identifier == 4) {
+        # Time und Day exchange (EEP A5-13-04)
+        my @day = ('', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday');
+        my $day = $db[3] >> 5;
+        push @event, "3:weekday:" . $day[$day];
+        if ($db[0] & 4) {
+          # 12 h time format
+          push @event, "3:time:" . ($db[3] & 0x1F) . ':' . $db[2] . ':' . $db[1] . ' ' . ($db[1] & 2 ? 'PM' : 'AM');
+        } else {
+          push @event, "3:time:" . ($db[3] & 0x1F) . ':' . $db[2] . ':' . $db[1];
+        }
+        push @event, "3:timeSource:" . ($db[0] & 1 ? 'GPS' : 'RTC');
+
+      } elsif ($identifier == 5) {
+        # Direction exchange (EEP A5-13-05)
+        push @event, "3:elevation:" . ($db[3] - 90);
+        push @event, "3:azimuth:" . hex(substr($data, 2, 4));
+
+      } elsif ($identifier == 6) {
+        # Geographic Position exchange (EEP A5-13-06)
+        push @event, "3:latitude:" . sprintf("%0.3f", hex(substr($data, 0, 1) . substr($data, 2, 2)) / 22.75 - 90);
+        push @event, "3:longitude:" . sprintf("%0.3f", hex(substr($data, 1, 1) . substr($data, 4, 2)) / 13.375 - 180);
+
       } elsif ($identifier == 7) {
         # Sun Position and Radiation (EEP A5-13-10)
         # $db[3]_bit_7 ... $db[3]_bit_1 is Sun Elevation where 0 = 0 ° ... 90 = 90 °
@@ -8052,6 +9572,25 @@ sub EnOcean_Parse($$)
         # EEP A5-13-03 ... EEP A5-13-06 not implemented
       }
 
+    } elsif ($st eq "windSensor.01") {
+      # Wind Sensor (EEP A5-13-07)
+      my @windDirection = ('NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW', 'N');
+      push @event, "3:battery:" . ($db[0] & 1 ? 'low' : 'ok');
+      push @event, "3:windDirection:" . $windDirection[$db[3]];
+      push @event, "3:windSpeedAverage:" . $db[2] / 1.275;
+      push @event, "3:windSpeedMax:" . $db[1] / 1.275;
+      push @event, "3:state:" . $db[2] / 1.275;
+
+    } elsif ($st eq "rainSensor.01") {
+      # Rain Sensor (EEP A5-13-08)
+      my $ras = ($db[3] & 0x40) >> 6;
+      my $rfa = ($db[3] & 0x3F) / 10;
+      my $rfc = hex(substr($data, 2, 4));
+      my $rain = $rfc * 0.6875 * (1 + $ras * $rfa / 100);
+      push @event, "3:battery:" . ($db[0] & 1 ? 'low' : 'ok');
+      push @event, "3:rain:$rain";
+      push @event, "3:state:$rain";
+
     } elsif ($st eq "multiFuncSensor") {
       # Multi-Func Sensor (EEP A5-14-01 ... A5-14-06)
       # $db[3] is the voltage where 0x00 = 0 V ... 0xFA = 5.0 V
@@ -8070,6 +9609,43 @@ sub EnOcean_Parse($$)
       push @event, "3:vibration:$vibration";
       push @event, "3:voltage:$voltage";
       push @event, "3:state:C: $contact V: $vibration E: $lux U: $voltage";
+
+    } elsif ($st eq "doorContact") {
+      # dual door contact (EEP A5-14-07, A5-14-08)
+      if (!exists($hash->{helper}{lastEvent}) || $hash->{helper}{lastEvent} ne $data) {
+        my $voltage = sprintf "%0.1f", $db[3] * 0.02;
+        my $doorContact = $db[0] & 4 ? 'open' : 'closed';
+        my $lockContact = $db[0] & 2 ? 'unlocked' : 'locked';
+        my $vibration = $db[0] & 1 ? 'on' : 'off';
+        push @event, "3:voltage:$voltage";
+        push @event, "3:contact:$doorContact";
+        push @event, "3:block:$lockContact";
+        push @event, "3:vibration:$vibration";
+        push @event, "3:state:C: $doorContact B: $lockContact V: $vibration U: $voltage";
+        $hash->{helper}{lastEvent} = $data;
+      }
+      CommandDeleteReading(undef, "$name alarm");
+      RemoveInternalTimer($hash->{helper}{timer}{alarm}) if(exists $hash->{helper}{timer}{alarm});
+      @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+      InternalTimer(gettimeofday() + 66, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
+
+    } elsif ($st eq "windowContact") {
+      # window contact (EEP A5-14-09, A5-14-0A)
+      if (!exists($hash->{helper}{lastEvent}) || $hash->{helper}{lastEvent} ne $data) {
+        my $voltage = sprintf "%0.1f", $db[3] * 0.02;
+        my %window = (0 => 'closed', 1 => 'tilt', 2 => 'reserved', 3 => 'open');
+        my $window = $window{(($db[0] & 6) >> 1)};
+        my $vibration = $db[0] & 1 ? 'on' : 'off';
+        push @event, "3:voltage:$voltage";
+        push @event, "3:window:$window";
+        push @event, "3:vibration:$vibration";
+        push @event, "3:state:W: $window V: $vibration U: $voltage";
+        $hash->{helper}{lastEvent} = $data;
+      }
+      CommandDeleteReading(undef, "$name alarm");
+      RemoveInternalTimer($hash->{helper}{timer}{alarm})  if(exists $hash->{helper}{timer}{alarm});
+      @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+      InternalTimer(gettimeofday() + 66, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
 
     } elsif ($st =~ m/^digitalInput\.0[12]$/) {
       # Digital Input (EEP A5-30-01, A5-30-02)
@@ -8092,19 +9668,32 @@ sub EnOcean_Parse($$)
 
     } elsif ($st eq "digitalInput.03") {
       # 4 digital inputs, wake, temperature (EEP A5-30-03)
-      my $in0 = $db[1] & 1;
-      my $in1 = ($db[1] & 2) > 1;
-      my $in2 = ($db[1] & 4) > 2;
-      my $in3 = ($db[1] & 8) > 3;
-      my $wake = ($db[1] & 16) > 4;
-      my $temperature = 40 - $db[2] * 40 / 255;
-      push @event, "3:in0:$in0";
-      push @event, "3:in1:$in1";
-      push @event, "3:in2:$in2";
-      push @event, "3:in3:$in3";
-      push @event, "3:wake:$wake";
+      my $temperature = sprintf "%0.1f", 40 - $db[2] * 40 / 255;
       push @event, "3:temperature:$temperature";
-      push @event, "3:state:T: $temperature I: " . $in0 . $in1 . $in2 . $in3 . " W: " . $wake;
+      if ($model eq 'Eltako_TF_RWB') {
+        # Eltako TF-RWB smoke detector
+        my $alarm = $db[1] & 16 ? 'off' : 'smoke-alarm';
+        if (!exists($hash->{helper}{lastEvent}) || $hash->{helper}{lastEvent} ne $alarm || ReadingsVal($name, 'alarm', '') eq 'dead_sensor') {
+          push @event, "3:alarm:$alarm";
+          $hash->{helper}{lastEvent} = $alarm;
+        }
+        push @event, "3:state:$alarm";
+        RemoveInternalTimer($hash->{helper}{timer}{alarm})  if(exists $hash->{helper}{timer}{alarm});
+        @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+        InternalTimer(gettimeofday() + 1980, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
+      } else {
+        my $in0 = $db[1] & 1;
+        my $in1 = ($db[1] & 2) > 1;
+        my $in2 = ($db[1] & 4) > 2;
+        my $in3 = ($db[1] & 8) > 3;
+        my $wake = $db[1] & 16 ? 'high' : 'low';
+        push @event, "3:in0:$in0";
+        push @event, "3:in1:$in1";
+        push @event, "3:in2:$in2";
+        push @event, "3:in3:$in3";
+        push @event, "3:wake:$wake";
+        push @event, "3:state:T: $temperature I: " . $in0 . $in1 . $in2 . $in3 . " W: " . $wake;
+      }
 
     } elsif ($st eq "digitalInput.04") {
       # 3 digital inputs, 1 digital input 8 bit (EEP A5-30-04)
@@ -8335,7 +9924,7 @@ sub EnOcean_Parse($$)
             } else {
               $anglePos = $angleMax;
             }
-            if($position > 100) {
+            if($position >= 100) {
               $anglePos = $angleMax;
               $position = 100;
               push @event, "3:endPosition:closed";
@@ -8359,6 +9948,17 @@ sub EnOcean_Parse($$)
         push @event, "3:state:Manufacturer Specific Application unknown";
       }
 
+    } elsif ($st eq "PM101") {
+      # Light and Presence Sensor [Omnio Ratio eagle-PM101]
+      # The sensor also sends switching commands (RORG F6) with the senderID-1
+      # $db[2] is the illuminance where 0x00 = 0 lx ... 0xFF = 1000 lx
+      my $channel2 = $db[0] & 2 ? "on" : "off";
+      push @event, "3:brightness:" . ($db[2] << 2);
+      push @event, "3:channel1:" . ($db[0] & 1 ? "on" : "off");
+      push @event, "3:channel2:" . $channel2;
+      push @event, "3:motion:" . $channel2;
+      push @event, "3:state:" . $channel2;
+
     } elsif ($st eq "radioLinkTest") {
       # Radio Link Test (EEP A5-3F-00)
       @{$hash->{helper}{rlt}{param}} = ('parse', $hash, $data, $subDef, 'master', $RSSI);
@@ -8380,532 +9980,9 @@ sub EnOcean_Parse($$)
       push @event, "3:D0:" . ($db[0] & 1 ? 1 : 0);
     }
 
-  } elsif ($rorg eq "D1") {
-    # MSC telegram
-    if ($st eq "actuator.01" && $manufID eq "033") {
-      if (substr($data, 3, 1) == 4) {
-        my $getParam = ReadingsVal($name, "getParam", 0);
-        if ($getParam == 8) {
-          push @event, "3:loadClassification:no";
-          push @event, "3:loadLink:" . ($db[1] & 16 ? "connected" : "disconnected");
-          push @event, "3:loadOperation:3-wire";
-          push @event, "3:loadState:" . ($db[1] & 64 ? "on" : "off");
-          CommandDeleteReading(undef, "$name getParam");
-        } elsif ($getParam == 7) {
-          if ($db[0] & 4) {
-            push @event, "3:devTempState:warning";
-          } elsif ($db[0] & 2) {
-            push @event, "3:devTempState:max";
-          } else {
-            push @event, "3:devTempState:ok";
-          }
-          push @event, "3:mainsPower:" . ($db[0] & 8 ? "failure" : "ok");
-          if ($db[1] == 0xFF) {
-            push @event, "3:devTemp:invalid";
-          } else {
-            push @event, "3:devTemp:" . $db[1];
-          }
-          CommandDeleteReading(undef, "$name getParam");
-        } elsif ($getParam == 9) {
-          push @event, "3:voltage:" . sprintf("%.2f", (hex(substr($data, 4, 4)) * 0.01));
-          CommandDeleteReading(undef, "$name getParam");
-        } elsif ($getParam == 0x81) {
-          $hash->{READINGS}{serialNumber}{VAL} = substr($data, 4, 4);
-          $hash->{READINGS}{getParam}{VAL} = 0x82;
-          EnOcean_SndRadio(undef, $hash, $packetType, "D1", "033182", AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
-        } elsif ($getParam == 0x82) {
-          push @event, "3:serialNumber:" . $hash->{READINGS}{serialNumber}{VAL} . substr($data, 4, 4);
-          CommandDeleteReading(undef, "$name getParam");
-        }
-      }
-
-    } elsif ($st eq "raw") {
-      # raw
-      push @event, "3:state:RORG: $rorg DATA: $data STATUS: $status ODATA: $odata";
-      push @event, "3:manufID:" . substr($data, 0, 3);
-      # display data bytes $db[0] ... $db[x]
-      for (my $dbCntr = 0; $dbCntr <= $#db; $dbCntr++) {
-        push @event, "3:DB_" . $dbCntr . " : " . $db[$dbCntr];
-      }
-    } else {
-      # unknown devices
-      if(AttrVal($name, "blockUnknownMSC", "no") eq "yes") {
-        push @event, "3:MSC:$data";
-      }
-    }
-
   } elsif ($rorg eq "D2") {
     # VLD telegram
-    if ($st eq "test") {
-      ### Test
-      push @event, "3:state:RORG: $rorg DATA: $data STATUS: $status ODATA: $odata";
-
-    } elsif ($st eq "actuator.01") {
-      # Electronic switches and dimmers with Energy Measurement and Local Control
-      # (D2-01-00 - D2-01-12)
-      my $channel = (hex substr($data, 2, 2)) & 0x1F;
-      if ($channel == 31) {$channel = "Input";}
-      my $cmd = hex substr($data, 1, 1);
-
-      if ($cmd == 4) {
-        # actuator status response
-        my $overCurrentOff;
-        my $error;
-        my $localControl;
-        my $dim;
-        push @event, "3:powerFailure" . $channel . ":" . ($db[2] & 0x80 ? "enabled" : "disabled");
-        push @event, "3:powerFailureDetection" . $channel . ":" . ($db[2] & 0x40 ? "detected" : "not_detected");
-        if (($db[1] & 0x80) == 0) {
-          $overCurrentOff = "ready";
-        } else {
-          $overCurrentOff = "executed";
-        }
-        push @event, "3:overCurrentOff" . $channel . ":" . $overCurrentOff;
-        if ((($db[1] & 0x60) >> 5) == 1) {
-          $error = "warning";
-        } elsif ((($db[1] & 0x60) >> 5) == 2) {
-          $error = "failure";
-        } elsif ((($db[1] & 0x60) >> 5) == 3) {
-          $error = "not_supported";
-        } else {
-          $error = "ok";
-        }
-        push @event, "3:error" . $channel . ":" . $error;
-        if (($db[0] & 0x80) == 0) {
-          $localControl = "disabled";
-        } else {
-          $localControl = "enabled";
-        }
-        push @event, "3:localControl" . $channel . ":" . $localControl;
-        my $dimValue = $db[0] & 0x7F;
-        if ($dimValue == 0) {
-          push @event, "3:channel" . $channel . ":off";
-          push @event, "3:state:off";
-        } else {
-          push @event, "3:channel" . $channel . ":on";
-          push @event, "3:state:on";
-        }
-        if ($channel ne "Input") {
-          push @event, "3:dim:" . $dimValue;
-          push @event, "3:dim" . $channel . ":" . $dimValue;
-        } else {
-          push @event, "3:dim" . $channel . ":" . $dimValue;
-        }
-
-      } elsif ($cmd == 7) {
-        # actuator measurement response
-        my $unit = $db[4] >> 5;
-        if ($unit == 1) {
-          #$unit = "Wh";
-          $unit = "KWh";
-          push @event, "3:energyUnit" . $channel . ":" . $unit;
-          push @event, "3:energy" . $channel . ":" . sprintf("%.3f", (hex substr($data, 4, 8)) / 1000);
-        } elsif ($unit == 2) {
-          $unit = "KWh";
-          push @event, "3:energyUnit" . $channel . ":" . $unit;
-          push @event, "3:energy" . $channel . ":" . hex substr($data, 4, 8);
-        } elsif ($unit == 3) {
-          $unit = "W";
-          push @event, "3:powerUnit" . $channel . ":" . $unit;
-          push @event, "3:power" . $channel . ":" . hex substr($data, 4, 8);
-        } elsif ($unit == 4) {
-          $unit = "KW";
-          push @event, "3:powerUnit" . $channel . ":" . $unit;
-          push @event, "3:power" . $channel . ":" . hex substr($data, 4, 8);
-        } else {
-          $unit = "Ws";
-          push @event, "3:engergyUnit" . $channel . ":" . $unit;
-          push @event, "3:energy" . $channel . ":" . hex substr($data, 4, 8);
-        }
-
-      } elsif ($cmd == 10) {
-        # pilot wire mode response
-        my $roomCtrlMode = $db[0] & 3;
-        my %roomCtrlMode = (
-          0 => "off",
-          1 => "comfort",
-          2 => "economy",
-          3 => "buildingProtection",
-          4 => "comfort-1",
-          5 => "comfort-2"
-        );
-        push @event, "3:roomCtrlMode" . $roomCtrlMode{$roomCtrlMode} if (exists $roomCtrlMode{$roomCtrlMode});
-
-      } elsif ($cmd == 13) {
-        # external interface settings
-        push @event, "3:autoOffTime" . $channel . ":" . sprintf("%0.1f", hex(substr($data, 4, 4)) * 0.1);
-        push @event, "3:delayOffTime" . $channel . ":" . sprintf("%0.1f", hex(substr($data, 8, 4)) * 0.1);
-        my $extSwitchMode = ($db[0] & 0xC0) >> 6;
-        my %extSwitchMode = (
-          0 => "unavailable",
-          1 => "switch",
-          2 => "pushbutton",
-          3 => "auto"
-        );
-        push @event, "3:extSwitchMode" . $extSwitchMode{$extSwitchMode} if (exists $extSwitchMode{$extSwitchMode});
-        push @event, "3:extSwitchType" . ($db[0] & 0x20 ? 'direction' : 'toggle');
-
-      } else {
-        # unknown response
-      }
-
-    } elsif ($st eq "switch.00" || $st eq "windowHandle.10") {
-      if ($db[0] == 1) {
-        push @event, "3:state:open_from_tilted";
-      } elsif ($db[0] == 2) {
-        push @event, "3:state:closed";
-      } elsif ($db[0] == 3) {
-        push @event, "3:state:open";
-      } elsif ($db[0] == 4) {
-        push @event, "3:state:tilted";
-      } elsif ($db[0] == 5) {
-        push @event, "3:state:AI,B0";
-        push @event, "3:channelA:AI";
-        push @event, "3:channelB:B0";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 6) {
-        CommandDeleteReading(undef, "$name channel.*");
-        push @event, "3:state:pressed34";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 7) {
-        push @event, "3:state:A0,B0";
-        push @event, "3:channelA:A0";
-        push @event, "3:channelB:B0";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 8) {
-        if (AttrVal($name, "sensorMode", "switch") eq "pushbutton") {
-          push @event, "3:state:pressed";
-        }
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 9) {
-        push @event, "3:state:AI,BI";
-        push @event, "3:channelA:AI";
-        push @event, "3:channelB:BI";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 10) {
-        push @event, "3:state:A0,BI";
-        push @event, "3:channelA:A0";
-        push @event, "3:channelB:BI";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 11) {
-        push @event, "3:state:BI";
-        push @event, "3:channelB:BI";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 12) {
-        push @event, "3:state:B0";
-        push @event, "3:channelB:B0";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 13) {
-        push @event, "3:state:AI";
-        push @event, "3:channelA:AI";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 14) {
-        push @event, "3:state:A0";
-        push @event, "3:channelA:A0";
-        push @event, "3:energyBow:pressed";
-      } elsif ($db[0] == 15) {
-        if (AttrVal($name, "sensorMode", "switch") eq "pushbutton") {
-          push @event, "3:state:released";
-        }
-        push @event, "3:energyBow:released";
-      }
-
-    } elsif ($st eq "blindsCtrl.00") {
-      # EEP D2-05-00
-      my $channel = ($db[0] & 0xF0) >> 4;
-      my $cmd = $db[0] & 0x0F;
-      if ($cmd == 4) {
-        # actuator status response
-        if ($db[3] == 0) {
-          push @event, "3:state:open";
-          push @event, "3:endPosition:open";
-          push @event, "3:position:" . $db[3];
-        } elsif ($db[3] == 100) {
-          push @event, "3:state:closed";
-          push @event, "3:endPosition:closed";
-          push @event, "3:position:" . $db[3];
-        } elsif ($db[3] == 127) {
-          push @event, "3:state:unknown";
-          push @event, "3:endPosition:unknown";
-          push @event, "3:position:unknown";
-        } else {
-          push @event, "3:state:" . $db[3];
-          push @event, "3:endPosition:not_reached";
-          push @event, "3:position:" . $db[3];
-        }
-        if ($db[2] == 127) {
-          push @event, "3:anglePos:unknown";
-        } else {
-          push @event, "3:anglePos:" . $db[2];
-        }
-        if ($db[1] == 0) {
-          push @event, "3:block:unlock";
-        } elsif ($db[1] == 1) {
-          push @event, "3:block:lock";
-        } elsif ($db[1] == 2) {
-          push @event, "3:block:alarm";
-        } else {
-          push @event, "3:block:reserved";
-        }
-
-      } else {
-        # unknown response
-      }
-
-    } elsif ($st eq "multisensor.01") {
-      #####
-      # Multisensor Windows Handle
-      # (D2-06-01)
-      # message type
-      my $msgType = hex(substr($data, 0, 2));
-      my $blinkInterval = 0;
-      my $updateInterval = 0;
-      if ($msgType == 0) {
-        # sensor values
-        my %onOffTrigger = (
-          0 => "off",
-          1 => "on",
-          14 => "invalid",
-          15 => "not_supported",
-        );
-        my $onOffTrigger = $db[8] >> 4;
-        if (exists $onOffTrigger{$onOffTrigger}) {
-          push @event, "3:burglaryAlarm:$onOffTrigger{$onOffTrigger}";
-        } else {
-          push @event, "3:burglaryAlarm:unknown";
-        }
-        $onOffTrigger = $db[8] & 15;
-        if (exists $onOffTrigger{$onOffTrigger}) {
-          push @event, "3:protectionAlarm:$onOffTrigger{$onOffTrigger}";
-        } else {
-          push @event, "3:protectionAlarm:unknown";
-        }
-        my %handlePosition = (
-          0 => "unknown",
-          1 => "up",
-          2 => "down",
-          3 => "left",
-          4 => "right",
-          14 => "invalid",
-          15 => "not_supported"
-        );
-        my %handleRPS = (
-          1 => 'D0',
-          2 => 'F0',
-          3 => 'C0',
-          4 => 'C0'
-        );
-        my $handlePosition = $db[7] >> 4;
-        if (exists $handlePosition{$handlePosition}) {
-          push @event, "3:handle:$handlePosition{$handlePosition}";
-        } else {
-          push @event, "3:handle:unknown";
-        }
-        # forward handle position (RPS telegam) 
-        if (exists($handleRPS{$handlePosition}) && defined(AttrVal($name, "subDefH", undef))) {
-          EnOcean_SndRadio(undef, $hash, $packetType, "F6", $handleRPS{$handlePosition}, AttrVal($name, "subDefH", "00000000"), '20', 'FFFFFFFF');
-        }        
-        my %windowState = (
-          0 => "undef",
-          1 => "not_tilted",
-          2 => "tilted",
-          14 => "invalid",
-          15 => "not_supported"
-        );
-        my %window1BS = (
-          1 => '01',
-          2 => '00'
-        );
-        my $windowState = $db[7] & 15;
-        if (exists $windowState{$windowState}) {
-          push @event, "3:window:$windowState{$windowState}";
-        } else {
-          push @event, "3:window:unknown";
-        }
-        # forward window state (1BS telegam) 
-        if (exists($window1BS{$windowState}) && defined(AttrVal($name, "subDefW", undef))) {
-          EnOcean_SndRadio(undef, $hash, $packetType, "D5", $window1BS{$windowState}, AttrVal($name, "subDefW", "00000000"), '00', 'FFFFFFFF');
-        }        
-        my %button = (
-          0 => "no_change",
-          1 => "pressed",
-          2 => "released",
-          14 => "invalid",
-          15 => "not_supported"
-        );
-        my $button = $db[6] >> 4;
-        if (exists $button{$button}) {
-          if ($button == 0 && ReadingsVal($name, "buttonRight", 'unknown') eq 'unknown') {
-            push @event, "3:buttonRight:unknown";
-          } elsif ($button == 0) {
-          } else {
-            push @event, "3:buttonRight:$button{$button}";
-          }
-        } else {
-          push @event, "3:buttonRight:unknown";
-        }
-        $button = $db[6] & 15;
-        if (exists $button{$button}) {
-          if ($button == 0 && ReadingsVal($name, "buttonLeft", 'unknown') eq 'unknown') {
-            push @event, "3:buttonLeft:unknown";
-          } elsif ($button == 0) {
-          } else {
-            push @event, "3:buttonLeft:$button{$button}";
-          }
-        } else {
-          push @event, "3:buttonLeft:unknown";
-        }
-        my $motion = $db[5] >> 4;
-        if (exists $onOffTrigger{$motion}) {
-          push @event, "3:motion:$onOffTrigger{$motion}";
-        } else {
-          push @event, "3:motion:unknown";
-        }
-        my %vacation = (
-          0 => "no_change",
-          1 => "absent",
-          2 => "present",
-          14 => "invalid",
-          15 => "not_supported"
-        );
-        my $vacation = $db[5] & 15;
-        if (exists $vacation{$vacation}) {
-          if ($vacation == 0 && ReadingsVal($name, "presence", 'unknown') eq 'unknown') {
-            push @event, "3:presence:unknown";
-          } elsif ($vacation == 0) {
-          } else {
-            push @event, "3:presence:$vacation{$vacation}";
-          }
-        } else {
-          push @event, "3:presence:unknown";
-        }
-        my $temperature;
-        if ($db[4] <= 250) {
-          $temperature = sprintf "%0.1f", $db[4] * 80 / 250 - 20;
-          push @event, "3:temperature:$temperature";
-        } elsif ($db[4] <= 254) {
-          $temperature = '-';
-          push @event, "3:temperature:invalid";        
-        } elsif ($db[4] <= 255) {
-          $temperature = '-';
-          push @event, "3:temperature:not_supported";        
-        } else {
-          $temperature = '-';
-          push @event, "3:temperature:unknown";
-        }
-        my $humidity;
-        if ($db[3] <= 200) {
-          $humidity = $db[3] / 2;
-          push @event, "3:humidity:$humidity";        
-        } elsif ($db[3] <= 254) {
-          $humidity = '-';
-          push @event, "3:humidity:invalid";        
-        } elsif ($db[3] <= 255) {
-          $humidity = '-';
-          push @event, "3:humidity:not_supported";        
-        } else {
-          $humidity = '-';
-          push @event, "3:humidity:unknown";
-        }
-        my $brightness = hex(substr($data, 14, 4));
-        if ($brightness <= 60000) {
-          push @event, "3:brightness:$brightness";        
-        } elsif ($brightness <= 60001) {
-          $brightness = '-';
-          push @event, "3:brightness:over_range";        
-        } elsif ($brightness <= 65534) {
-          $brightness = '-';
-          push @event, "3:brightness:invalid";        
-        } elsif ($brightness <= 65535) {
-          $brightness = '-';
-          push @event, "3:brightness:not_supported";        
-        } else {
-          $brightness = '-';
-          push @event, "3:brightness:unknown";
-        }
-        my $energyStorage = ($db[4] >> 3) * 5;
-        my $battery;
-        if ($energyStorage <= 5) {
-          $battery = 'low';
-          push @event, "3:battery:low";
-          push @event, "3:energyStorage:$energyStorage";
-        } elsif ($energyStorage <= 100) {
-          $battery = 'ok';
-          push @event, "3:battery:ok";
-          push @event, "3:energyStorage:$energyStorage";
-        } else {
-          $battery = '-';
-          push @event, "3:battery:-";
-          $energyStorage = '-';
-          push @event, "3:energyStorage:unknown";
-        }
-        
-        push @event, "3:state:T: $temperature H: $humidity E: $brightness M: $motion";
-
-      } elsif ($msgType == 0x10) {
-        # configuration report
-
-        push @event, "3:presence:" . ($db[3] & 0x80 ? 'present' : 'absent');
-        push @event, "3:handleClosedClick:" . ($db[3] & 0x40 ? 'enabled' : 'disabled');
-        push @event, "3:batteryLowClick:" . ($db[3] & 0x20 ? 'enabled' : 'disabled');
-        $updateInterval = hex(substr($data, 4, 4));
-        if ($updateInterval <= 4) {
-          $updateInterval = '-';
-          push @event, "3:updateInterval:unknown";        
-        } else {
-          push @event, "3:updateInterval:$updateInterval";
-        }
-        $blinkInterval = $db[0];
-        if ($blinkInterval <= 2) {
-          $blinkInterval = '-';
-          push @event, "3:blinkInterval:unknown";        
-        } else {
-          push @event, "3:blinkInterval:$blinkInterval";
-        }
-        
-      } elsif ($msgType == 0x20) {
-        # log data 01
-        push @event, "3:powerOns:" . substr($data, 2, 8);
-        push @event, "3:alarms:" . substr($data, 10, 8);
-
-      } elsif ($msgType == 0x21) {
-        # log data 02
-        push @event, "3:handleMoveClosed:" . substr($data, 2, 8);
-        push @event, "3:handleMoveOpend:" . substr($data, 10, 8);
-        push @event, "3:handleMoveTilted:" . substr($data, 18, 8);
-        
-      } elsif ($msgType == 0x22) {
-        # log data 03
-        push @event, "3:windowTilts:" . substr($data, 2, 8);
-        
-      } elsif ($msgType == 0x23) {
-        # log data 04
-        push @event, "3:buttonRightPresses:" . substr($data, 2, 8);
-        push @event, "3:buttonLeftPresses:" . substr($data, 10, 8);
-        
-      } else {      
-
-      }
-
-      my $waitingCmds = ReadingsVal($name, "waitingCmds", undef);
-      if (defined $waitingCmds) {
-        $updateInterval = 0;
-        $blinkInterval = 0;
-        if ($waitingCmds & 1) {
-          $waitingCmds &= 0xFE;
-          $updateInterval = ReadingsVal($name, "updateIntervalSet", 0);
-          $updateInterval = $updateInterval =~ m/^\d+$/ ? $updateInterval : 0;
-          $blinkInterval = ReadingsVal($name, "blinkIntervalSet", 0);          
-          $blinkInterval = $blinkInterval =~ m/^\d+$/ ? $blinkInterval : 0;
-          CommandDeleteReading(undef, "$name .*Set");
-        }
-        CommandDeleteReading(undef, "$name waitingCmds");
-        $data = sprintf "80%02X%04X%02X", $waitingCmds, $updateInterval, $blinkInterval;
-        EnOcean_SndRadio(undef, $hash, $packetType, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
-        #EnOcean_multisensor_01Snd($crtl, $hash, $packetType);
-      } 
-
-    } elsif ($st eq "roomCtrlPanel.00") {
+    if ($st eq "roomCtrlPanel.00") {
       # EEP D2-10-01 - D2-10-03
       my ($key, $val);
       # message identifier
@@ -9094,7 +10171,7 @@ sub EnOcean_Parse($$)
             my $displayContent = $db[4] >> 5;
             my %displayContent = (7 => "humidity",
                                   6 => "off",
-                                  5 => "setPointTemp",
+                                  5 => "setpointTemp",
                                   4 => "tempertureExtern",
                                   3 => "temperatureIntern",
                                   2 => "time",
@@ -9211,6 +10288,565 @@ sub EnOcean_Parse($$)
         ($err, $response) = EnOcean_roomCtrlPanel_00Snd(undef, $hash, $packetType, $mid, $mcf, undef, undef, undef);
       }
 
+    } elsif ($st eq "actuator.01") {
+      # Electronic switches and dimmers with Energy Measurement and Local Control
+      # (D2-01-00 - D2-01-12)
+      my $channel = (hex substr($data, 2, 2)) & 0x1F;
+      if ($channel == 31) {$channel = "Input";}
+      my $cmd = hex substr($data, 1, 1);
+
+      if ($cmd == 4) {
+        # actuator status response
+        my $overCurrentOff;
+        my $error;
+        my $localControl;
+        my $dim;
+        push @event, "3:powerFailure" . $channel . ":" . ($db[2] & 0x80 ? "enabled" : "disabled");
+        push @event, "3:powerFailureDetection" . $channel . ":" . ($db[2] & 0x40 ? "detected" : "not_detected");
+        if (($db[1] & 0x80) == 0) {
+          $overCurrentOff = "ready";
+        } else {
+          $overCurrentOff = "executed";
+        }
+        push @event, "3:overCurrentOff" . $channel . ":" . $overCurrentOff;
+        if ((($db[1] & 0x60) >> 5) == 1) {
+          $error = "warning";
+        } elsif ((($db[1] & 0x60) >> 5) == 2) {
+          $error = "failure";
+        } elsif ((($db[1] & 0x60) >> 5) == 3) {
+          $error = "not_supported";
+        } else {
+          $error = "ok";
+        }
+        push @event, "3:error" . $channel . ":" . $error;
+        if (($db[0] & 0x80) == 0) {
+          $localControl = "disabled";
+        } else {
+          $localControl = "enabled";
+        }
+        push @event, "3:localControl" . $channel . ":" . $localControl;
+        my $dimValue = $db[0] & 0x7F;
+        if ($dimValue == 0) {
+          push @event, "3:channel" . $channel . ":off";
+          push @event, "3:state:off";
+        } else {
+          push @event, "3:channel" . $channel . ":on";
+          push @event, "3:state:on";
+        }
+        if ($channel ne "Input") {
+          push @event, "3:dim:" . $dimValue;
+          push @event, "3:dim" . $channel . ":" . $dimValue;
+        } else {
+          push @event, "3:dim" . $channel . ":" . $dimValue;
+        }
+
+      } elsif ($cmd == 7) {
+        # actuator measurement response
+        my $unit = $db[4] >> 5;
+        if ($unit == 1) {
+          #$unit = "Wh";
+          $unit = "KWh";
+          push @event, "3:energyUnit" . $channel . ":" . $unit;
+          push @event, "3:energy" . $channel . ":" . sprintf("%.3f", (hex substr($data, 4, 8)) / 1000);
+        } elsif ($unit == 2) {
+          $unit = "KWh";
+          push @event, "3:energyUnit" . $channel . ":" . $unit;
+          push @event, "3:energy" . $channel . ":" . hex substr($data, 4, 8);
+        } elsif ($unit == 3) {
+          $unit = "W";
+          push @event, "3:powerUnit" . $channel . ":" . $unit;
+          push @event, "3:power" . $channel . ":" . hex substr($data, 4, 8);
+        } elsif ($unit == 4) {
+          $unit = "KW";
+          push @event, "3:powerUnit" . $channel . ":" . $unit;
+          push @event, "3:power" . $channel . ":" . hex substr($data, 4, 8);
+        } else {
+          $unit = "Ws";
+          push @event, "3:energyUnit" . $channel . ":" . $unit;
+          push @event, "3:energy" . $channel . ":" . hex substr($data, 4, 8);
+        }
+
+      } elsif ($cmd == 10) {
+        # pilot wire mode response
+        my $roomCtrlMode = $db[0] & 3;
+        my %roomCtrlMode = (
+          0 => "off",
+          1 => "comfort",
+          2 => "economy",
+          3 => "buildingProtection",
+          4 => "comfort-1",
+          5 => "comfort-2"
+        );
+        push @event, "3:roomCtrlMode" . $roomCtrlMode{$roomCtrlMode} if (exists $roomCtrlMode{$roomCtrlMode});
+
+      } elsif ($cmd == 13) {
+        # external interface settings
+        push @event, "3:autoOffTime" . $channel . ":" . sprintf("%0.1f", hex(substr($data, 4, 4)) * 0.1);
+        push @event, "3:delayOffTime" . $channel . ":" . sprintf("%0.1f", hex(substr($data, 8, 4)) * 0.1);
+        my $extSwitchMode = ($db[0] & 0xC0) >> 6;
+        my %extSwitchMode = (
+          0 => "unavailable",
+          1 => "switch",
+          2 => "pushbutton",
+          3 => "auto"
+        );
+        push @event, "3:extSwitchMode" . $extSwitchMode{$extSwitchMode} if (exists $extSwitchMode{$extSwitchMode});
+        push @event, "3:extSwitchType" . ($db[0] & 0x20 ? 'direction' : 'toggle');
+
+      } else {
+        # unknown response
+      }
+
+    } elsif ($st eq "switch.00" || $st eq "windowHandle.10") {
+      $db[0] &= 0x0F;
+      if ($db[0] == 1) {
+        push @event, "3:state:open_from_tilted";
+      } elsif ($db[0] == 2) {
+        push @event, "3:state:closed";
+      } elsif ($db[0] == 3) {
+        push @event, "3:state:open";
+      } elsif ($db[0] == 4) {
+        push @event, "3:state:tilted";
+      } elsif ($db[0] == 5) {
+        push @event, "3:state:AI,B0";
+        push @event, "3:channelA:AI";
+        push @event, "3:channelB:B0";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 6) {
+        CommandDeleteReading(undef, "$name channel.*");
+        push @event, "3:state:pressed34";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 7) {
+        push @event, "3:state:A0,B0";
+        push @event, "3:channelA:A0";
+        push @event, "3:channelB:B0";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 8) {
+        if (AttrVal($name, "sensorMode", "switch") eq "pushbutton") {
+          push @event, "3:state:pressed";
+        }
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 9) {
+        push @event, "3:state:AI,BI";
+        push @event, "3:channelA:AI";
+        push @event, "3:channelB:BI";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 10) {
+        push @event, "3:state:A0,BI";
+        push @event, "3:channelA:A0";
+        push @event, "3:channelB:BI";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 11) {
+        push @event, "3:state:BI";
+        push @event, "3:channelB:BI";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 12) {
+        push @event, "3:state:B0";
+        push @event, "3:channelB:B0";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 13) {
+        push @event, "3:state:AI";
+        push @event, "3:channelA:AI";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 14) {
+        push @event, "3:state:A0";
+        push @event, "3:channelA:A0";
+        push @event, "3:energyBow:pressed";
+      } elsif ($db[0] == 15) {
+        if (AttrVal($name, "sensorMode", "switch") eq "pushbutton") {
+          push @event, "3:state:released";
+        }
+        push @event, "3:energyBow:released";
+      }
+
+    } elsif ($st eq "switch.0A") {
+      # Push Button - Single Button EEP D2-03-0A
+      if (!exists($hash->{helper}{batteryPrecent}) || $hash->{helper}{batteryPrecent} != $db[1]) {
+        push @event, "3:batteryPrecent:$db[1]";
+        $hash->{helper}{batteryPrecent} = $db[1];
+      }
+      if ($db[0] == 1) {
+        push @event, "3:buttonS:on";
+        RemoveInternalTimer($hash->{helper}{timer}{buttonS}) if (exists $hash->{helper}{timer}{buttonS});
+        @{$hash->{helper}{timer}{buttonS}} = ($hash, 'buttonS', 'off', 1, 5);
+        InternalTimer(gettimeofday() + 0.5, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{buttonS}, 0);
+      } elsif ($db[0] == 2) {
+        push @event, "3:buttonD:on";
+        RemoveInternalTimer($hash->{helper}{timer}{buttonD}) if (exists $hash->{helper}{timer}{buttonD});
+        @{$hash->{helper}{timer}{buttonD}} = ($hash, 'buttonD', 'off', 1, 5);
+        InternalTimer(gettimeofday() + 0.5, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{buttonD}, 0);
+      } elsif ($db[0] == 3) {
+        push @event, "3:buttonL:on";
+        push @event, "3:state:on";
+      } elsif ($db[0] == 4) {
+        push @event, "3:buttonL:off";
+        push @event, "3:state:off";
+      }
+
+    } elsif ($st =~ m/^blindsCtrl\.0[01]$/) {
+      # EEP D2-05-0x
+      my $channel = (($db[0] & 0xF0) >> 4) + 1;
+      my $cmd = $db[0] & 0x0F;
+      if ($cmd == 4) {
+        # actuator status response
+        if ($db[3] == 0) {
+          push @event, "3:state:open";
+          push @event, "3:endPosition" . sprintf('%02d', $channel) . ":open";
+          push @event, "3:position" . sprintf('%02d', $channel) . ":" . $db[3];
+          push @event, "3:position:" . $db[3];
+        } elsif ($db[3] == 100) {
+          push @event, "3:state:closed";
+          push @event, "3:endPosition" . sprintf('%02d', $channel) . ":closed";
+          push @event, "3:position" . sprintf('%02d', $channel) . ":" . $db[3];
+          push @event, "3:position:" . $db[3];
+       } elsif ($db[3] == 127) {
+          push @event, "3:state:unknown";
+          push @event, "3:endPosition" . sprintf('%02d', $channel) . ":unknown";
+          push @event, "3:position" . sprintf('%02d', $channel) . ":unknown";
+          push @event, "3:position:" . $db[3];
+        } else {
+          push @event, "3:state:" . $db[3];
+          push @event, "3:endPosition" . sprintf('%02d', $channel) . ":not_reached";
+          push @event, "3:position" . sprintf('%02d', $channel) . ":" . $db[3];
+          push @event, "3:position:" . $db[3];
+        }
+        if ($db[2] == 127) {
+          push @event, "3:anglePos" . sprintf('%02d', $channel) . ":unknown";
+        } else {
+          push @event, "3:anglePos" . sprintf('%02d', $channel) . ":" . $db[2];
+          push @event, "3:anglePos:" . $db[2];
+        }
+        if ($db[1] == 0) {
+          push @event, "3:block" . sprintf('%02d', $channel) . ":unlock";
+        } elsif ($db[1] == 1) {
+          push @event, "3:block" . sprintf('%02d', $channel) . ":lock";
+        } elsif ($db[1] == 2) {
+          push @event, "3:block" . sprintf('%02d', $channel) . ":alarm";
+        } else {
+          push @event, "3:block" . sprintf('%02d', $channel) . ":reserved";
+        }
+
+      } else {
+        # unknown response
+      }
+
+    } elsif ($st eq "multisensor.01") {
+      # Multisensor Windows Handle
+      # (D2-06-01)
+      # message type
+      my $msgType = hex(substr($data, 0, 2));
+      my $blinkInterval = 0;
+      my $updateInterval = 0;
+      my $waitingCmds = ReadingsVal($name, "waitingCmds", undef);
+      if ($msgType == 0) {
+        # sensor values
+        my %onOffTrigger = (
+          0 => "off",
+          1 => "on",
+          14 => "invalid",
+          15 => "not_supported",
+        );
+        my $onOffTrigger = $db[8] >> 4;
+        if (exists $onOffTrigger{$onOffTrigger}) {
+          push @event, "3:burglaryAlarm:$onOffTrigger{$onOffTrigger}";
+        } else {
+          push @event, "3:burglaryAlarm:unknown";
+        }
+        $onOffTrigger = $db[8] & 15;
+        if (exists $onOffTrigger{$onOffTrigger}) {
+          push @event, "3:protectionAlarm:$onOffTrigger{$onOffTrigger}";
+        } else {
+          push @event, "3:protectionAlarm:unknown";
+        }
+        my %handlePosition = (
+          0 => "unknown",
+          1 => "up",
+          2 => "down",
+          3 => "left",
+          4 => "right",
+          14 => "invalid",
+          15 => "not_supported"
+        );
+        my %handleRPS = (
+          1 => 'D0',
+          2 => 'F0',
+          3 => 'E0',
+          4 => 'E0'
+        );
+        my $handlePosition = $db[7] >> 4;
+        if (exists $handlePosition{$handlePosition}) {
+          push @event, "3:handle:$handlePosition{$handlePosition}";
+        } else {
+          push @event, "3:handle:unknown";
+        }
+        # forward handle position (RPS telegam)
+        if (exists($handleRPS{$handlePosition}) && defined(AttrVal($name, "subDefH", undef))) {
+          EnOcean_SndRadio(undef, $hash, $packetType, "F6", $handleRPS{$handlePosition}, AttrVal($name, "subDefH", "00000000"), '20', 'FFFFFFFF');
+        }
+        my %windowState = (
+          0 => "undef",
+          1 => "not_tilted",
+          2 => "tilted",
+          14 => "invalid",
+          15 => "not_supported"
+        );
+        my %window1BS = (
+          1 => '09',
+          2 => '08'
+        );
+        my $windowState = $db[7] & 15;
+        if (exists $windowState{$windowState}) {
+          push @event, "3:window:$windowState{$windowState}";
+        } else {
+          push @event, "3:window:unknown";
+        }
+        # forward window state (1BS telegam)
+        if (exists($window1BS{$windowState}) && defined(AttrVal($name, "subDefW", undef))) {
+          EnOcean_SndRadio(undef, $hash, $packetType, "D5", $window1BS{$windowState}, AttrVal($name, "subDefW", "00000000"), '00', 'FFFFFFFF');
+        }
+        my %button = (
+          0 => "no_change",
+          1 => "pressed",
+          2 => "released",
+          14 => "invalid",
+          15 => "not_supported"
+        );
+        my $button = $db[6] >> 4;
+        if (exists $button{$button}) {
+          if ($button == 0 && ReadingsVal($name, "buttonRight", 'unknown') eq 'unknown') {
+            push @event, "3:buttonRight:unknown";
+          } elsif ($button == 0) {
+          } else {
+            push @event, "3:buttonRight:$button{$button}";
+          }
+        } else {
+          push @event, "3:buttonRight:unknown";
+        }
+        $button = $db[6] & 15;
+        if (exists $button{$button}) {
+          if ($button == 0 && ReadingsVal($name, "buttonLeft", 'unknown') eq 'unknown') {
+            push @event, "3:buttonLeft:unknown";
+          } elsif ($button == 0) {
+          } else {
+            push @event, "3:buttonLeft:$button{$button}";
+          }
+        } else {
+          push @event, "3:buttonLeft:unknown";
+        }
+        my $motion = $db[5] >> 4;
+        if (exists $onOffTrigger{$motion}) {
+          push @event, "3:motion:$onOffTrigger{$motion}";
+        } else {
+          push @event, "3:motion:unknown";
+        }
+        my %vacation = (
+          0 => "no_change",
+          1 => "absent",
+          2 => "present",
+          14 => "invalid",
+          15 => "not_supported"
+        );
+        my $vacation = $db[5] & 15;
+        if (exists $vacation{$vacation}) {
+          if ($vacation == 0 && ReadingsVal($name, "presence", 'unknown') eq 'unknown') {
+            push @event, "3:presence:unknown";
+          } elsif ($vacation == 0) {
+          } else {
+            push @event, "3:presence:$vacation{$vacation}";
+          }
+        } else {
+          push @event, "3:presence:unknown";
+        }
+        my $temperature;
+        if ($db[4] <= 250) {
+          $temperature = sprintf "%0.1f", $db[4] * 80 / 250 - 20;
+          push @event, "3:temperature:$temperature";
+        } elsif ($db[4] <= 254) {
+          $temperature = '-';
+          push @event, "3:temperature:invalid";
+        } elsif ($db[4] <= 255) {
+          $temperature = '-';
+          push @event, "3:temperature:not_supported";
+        } else {
+          $temperature = '-';
+          push @event, "3:temperature:unknown";
+        }
+        my $humidity;
+        if ($db[3] <= 200) {
+          $humidity = $db[3] / 2;
+          push @event, "3:humidity:$humidity";
+        } elsif ($db[3] <= 254) {
+          $humidity = '-';
+          push @event, "3:humidity:invalid";
+        } elsif ($db[3] <= 255) {
+          $humidity = '-';
+          push @event, "3:humidity:not_supported";
+        } else {
+          $humidity = '-';
+          push @event, "3:humidity:unknown";
+        }
+        my $brightness = hex(substr($data, 14, 4));
+        if ($brightness <= 60000) {
+          push @event, "3:brightness:$brightness";
+        } elsif ($brightness == 60001) {
+          $brightness = '-';
+          push @event, "3:brightness:over_range";
+        } elsif ($brightness == 65534) {
+          $brightness = '-';
+          push @event, "3:brightness:invalid";
+        } elsif ($brightness == 65535) {
+          $brightness = '-';
+          push @event, "3:brightness:not_supported";
+        } else {
+          $brightness = '-';
+          push @event, "3:brightness:unknown";
+        }
+        my $energyStorage = ($db[0] >> 3) * 5;
+        my $battery;
+        if ($energyStorage <= 5) {
+          $battery = 'low';
+          push @event, "3:battery:low";
+          push @event, "3:energyStorage:$energyStorage";
+        } elsif ($energyStorage <= 100) {
+          $battery = 'ok';
+          push @event, "3:battery:ok";
+          push @event, "3:energyStorage:$energyStorage";
+        } else {
+          $battery = '-';
+          push @event, "3:battery:-";
+          $energyStorage = '-';
+          push @event, "3:energyStorage:unknown";
+        }
+
+        push @event, "3:state:T: $temperature H: $humidity E: $brightness M: $onOffTrigger{$motion}";
+
+      } elsif ($msgType == 0x10) {
+        # configuration report
+        if (defined $waitingCmds) {
+           $waitingCmds = $db[3] & 0x80 ? $waitingCmds & 0xDF | 32 : $waitingCmds & 0xDF;
+        }
+        push @event, "3:presence:" . ($db[3] & 0x80 ? 'absent' : 'present');
+        push @event, "3:handleClosedClick:" . ($db[3] & 0x40 ? 'enabled' : 'disabled');
+        push @event, "3:batteryLowClick:" . ($db[3] & 0x20 ? 'enabled' : 'disabled');
+        $updateInterval = hex(substr($data, 4, 4));
+        if ($updateInterval <= 4) {
+          $updateInterval = '-';
+          push @event, "3:updateInterval:unknown";
+        } else {
+          push @event, "3:updateInterval:$updateInterval";
+        }
+        $blinkInterval = $db[0];
+        if ($blinkInterval <= 2) {
+          $blinkInterval = '-';
+          push @event, "3:blinkInterval:unknown";
+        } else {
+          push @event, "3:blinkInterval:$blinkInterval";
+        }
+
+      } elsif ($msgType == 0x20) {
+        # log data 01
+        push @event, "3:powerOns:" . substr($data, 2, 8);
+        push @event, "3:alarms:" . substr($data, 10, 8);
+
+      } elsif ($msgType == 0x21) {
+        # log data 02
+        push @event, "3:handleMoveClosed:" . substr($data, 2, 8);
+        push @event, "3:handleMoveOpend:" . substr($data, 10, 8);
+        push @event, "3:handleMoveTilted:" . substr($data, 18, 8);
+
+      } elsif ($msgType == 0x22) {
+        # log data 03
+        push @event, "3:windowTilts:" . substr($data, 2, 8);
+
+      } elsif ($msgType == 0x23) {
+        # log data 04
+        push @event, "3:buttonRightPresses:" . substr($data, 2, 8);
+        push @event, "3:buttonLeftPresses:" . substr($data, 10, 8);
+
+      } else {
+
+      }
+
+      if (defined $waitingCmds) {
+        $updateInterval = 0;
+        $blinkInterval = 0;
+        if ($waitingCmds & 1) {
+          $waitingCmds &= 0xFE;
+          $updateInterval = ReadingsVal($name, "updateIntervalSet", 0);
+          $updateInterval = $updateInterval =~ m/^\d+$/ ? $updateInterval : 0;
+          $blinkInterval = ReadingsVal($name, "blinkIntervalSet", 0);
+          $blinkInterval = $blinkInterval =~ m/^\d+$/ ? $blinkInterval : 0;
+          CommandDeleteReading(undef, "$name .*Set");
+        }
+        CommandDeleteReading(undef, "$name waitingCmds");
+        $data = sprintf "80%02X%04X%02X", $waitingCmds, $updateInterval, $blinkInterval;
+        EnOcean_SndRadio(undef, $hash, $packetType, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
+        #EnOcean_multisensor_01Snd($crtl, $hash, $packetType);
+      }
+
+    } elsif ($st eq "roomCtrlPanel.01") {
+      # Room Control Panel
+      # (D2-11-01 - D2-11-08)
+      my $msgType = hex(substr($data, 1, 1));
+      my $setpointType = ReadingsVal($name, "setpointType", 'setpointShift');
+      my $waitingCmds = ReadingsVal($name, "waitingCmds", 0);
+      if (($waitingCmds & 0x80) == 0) {
+        $setpointType = hex(substr($data, 0, 1)) & 8 ? 'setpointTemp' : 'setpointShift';
+        push @event, "3:setpointType:$setpointType";
+      }
+      if ($msgType == 2) {
+        my $trigger = ($db[5] & 0x60) >> 5;
+        my %trigger = (0 => 'heartbeat', 1 => 'sensor', 2 => 'input');
+        push @event, "3:trigger:" . $trigger{$trigger};
+        my $temperature = sprintf "%0.1f", $db[4] / 255 * 40;
+        push @event, "3:temperature:$temperature";
+        my $humidity = sprintf "%d", $db[3] / 2.5;
+        push @event, "3:humidity:$humidity";
+        my $setpointShiftMax = ($db[0] & 0xF0) >> 4;
+        push @event, "3:setpointShiftMax:$setpointShiftMax";
+        my $setpointShift = int(0.5 + $db[2] * $setpointShiftMax / 128 * 10) / 10 - $setpointShiftMax;
+        push @event, "3:setpointShift:" . sprintf "%0.1f", $setpointShift;
+        push @event, "3:setpointBase:$db[1]";
+        push @event, "3:setpointTemp:" . sprintf "%0.1f", ($db[1] + $setpointShift);
+        my %fanSpeed = (0 => 'auto', 1 => 'off', 2 => 1, 3 => 2, 4 => 3);
+        my $fanSpeed = ($db[0] & 0xE) >> 1;
+        push @event, "3:fanSpeed:" . $fanSpeed{$fanSpeed};
+        push @event, "3:occupancy:" . ($db[0] & 1 ? 'occupied' : 'unoccupied');
+        push @event, "3:state:T: $temperature H: $humidity SPT: " . ($db[1] + $setpointShift) . " F: " . $fanSpeed{$fanSpeed};
+      }
+      CommandDeleteReading(undef, "$name waitingCmds");
+
+    } elsif ($st eq "multiFuncSensor.30") {
+      # Sensor for Smoke, Air quality, Hygrothermal comfort, Temperature and Humidity
+      # (D2-14-30)
+      my @airQuality = ('optimal', 'air_dry', 'humidity_high', 'temperature_humidity_high', '', '', 'error');
+      my @comfort = ('good', 'medium', 'bad', 'error');
+      my @energyStorage = ('ok', 'medium', 'low', 'critical');
+      my $alarm = ($db[5] & 0x80) == 0 ? 'off' : 'smoke-alarm';
+      my $battery = $energyStorage[($db[4] & 6) >> 1];
+      if (!exists($hash->{helper}{lastAlarm}) || $hash->{helper}{lastAlarm} ne $alarm || ReadingsVal($name, 'alarm', '') eq 'dead_sensor') {
+        push @event, "3:alarm:" . $alarm;
+      }
+      if (!exists($hash->{helper}{lastBattery}) || $hash->{helper}{lastBattery} ne $battery) {
+        push @event, "3:battery:" . $battery;
+      }
+      push @event, "3:sensorFaultMode:" . (($db[5] & 0x40) == 0 ? 'off' : 'on');
+      push @event, "3:smokeAlarmMaintenance:" . (($db[5] & 0x20) == 0 ? 'ok' : 'not_done');
+      push @event, "3:smokeAlarmHumidity:" . (($db[5] & 0x10) == 0 ? 'ok' : 'not_ok');
+      push @event, "3:smokeAlarmTemperature:" . (($db[5] & 8) == 0 ? 'ok' : 'not_ok');
+      push @event, "3:maintenanceLast:" . (($db[5] & 7) << 5 | $db[4] >> 3);
+      push @event, "3:endOffLife:" . (($db[4] & 1) << 7 | $db[3] >> 1);
+      push @event, "3:temperature:" . sprintf "%0.1f", (($db[3] & 1) << 7 | $db[2] >> 1) / 5;
+      push @event, "3:humidity:" . sprintf "%0.1f", (($db[2] & 1) << 7 | $db[1] >> 1) / 2;
+      push @event, "3:hygrothermalComfort:" . $comfort[(($db[1] & 1) << 1 | $db[0] >> 7)];
+      push @event, "3:airQuality:" . $airQuality[($db[0] & 0x70) >> 4];
+      push @event, "3:state:" . $alarm;
+      $hash->{helper}{lastAlarm} = $alarm;
+      $hash->{helper}{lastBattery} = $battery;
+      RemoveInternalTimer($hash->{helper}{timer}{alarm}) if (exists $hash->{helper}{timer}{alarm});
+      @{$hash->{helper}{timer}{alarm}} = ($hash, 'alarm', 'dead_sensor', 1, 5);
+      InternalTimer(gettimeofday() + 1440, 'EnOcean_readingsSingleUpdate', $hash->{helper}{timer}{alarm}, 0);
+
     } elsif ($st eq "fanCtrl.00") {
       # Fan Control
       # (D2-20-00 - D2-20-02)
@@ -9301,7 +10937,7 @@ sub EnOcean_Parse($$)
           push @event, "3:state:I1: " . sprintf "%0.1f", $current1;
         } else {
           push @event, "3:current1:" . $current1;
-          push @event, "3:state:I1: " . $current1;        
+          push @event, "3:state:I1: " . $current1;
         }
       }
 
@@ -9382,7 +11018,7 @@ sub EnOcean_Parse($$)
       }
       my $occupancy = ($db[1] & 0x18) >> 3;
       if ($occupancy == 0) {
-        push @event, "3:occupany:not_occupied";
+        push @event, "3:occupany:unoccupied";
       } elsif ($occupancy == 1) {
         push @event, "3:occupany:occupied";
       } else {
@@ -9417,7 +11053,7 @@ sub EnOcean_Parse($$)
       }
       my $occupancy = ($db[3] & 0x18) >> 3;
       if ($occupancy == 0) {
-        push @event, "3:occupany:not_occupied";
+        push @event, "3:occupany:unoccupied";
       } elsif ($occupancy == 1) {
         push @event, "3:occupany:occupied";
       } else {
@@ -9456,6 +11092,7 @@ sub EnOcean_Parse($$)
           13 => "supplyAir",
           14 => "exhaustAir"
         );
+        $ventilation = $db[13] & 15;
         $ventilation = $ventilation{$ventilation} if (exists $ventilation{$ventilation});
         push @event, "3:ventilation:$ventilation";
         push @event, "3:fireplaceSafetyMode:" . ($db[12] & 8 ? 'enabled' : 'disabled');
@@ -9475,33 +11112,37 @@ sub EnOcean_Parse($$)
         if ($airQuatity <= 100) {
           push @event, "3:airQuality1:$airQuatity";
         } else {
-          CommandDeleteReading(undef, "$name airQuality1");        
-        }        
+          CommandDeleteReading(undef, "$name airQuality1");
+        }
         push @event, "3:deviceMode:" . ($db[9] & 0x80 ? 'slave' : 'master');
         $airQuatity = $db[9] & 0x7F;
         if ($airQuatity <= 100) {
           push @event, "3:airQuality2:$airQuatity";
         } else {
-          CommandDeleteReading(undef, "$name airQuality2");        
-        }    
+          CommandDeleteReading(undef, "$name airQuality2");
+        }
         my $outdoorTemp = ($db[8] & 0xFE) >> 1;
-        $outdoorTemp -= $outdoorTemp if ($outdoorTemp & 0x40);
+        #$outdoorTemp -= $outdoorTemp if ($outdoorTemp & 0x40);
+        $outdoorTemp -= 64;
         push @event, "3:outdoorTemp:$outdoorTemp";
         my $supplyTemp = ($db[8] & 1) << 6 | ($db[7] & 0xFC) >> 2;
-        $supplyTemp -= $supplyTemp if ($supplyTemp & 0x40);
+        #$supplyTemp -= $supplyTemp if ($supplyTemp & 0x40);
+        $supplyTemp -= 64;
         push @event, "3:supplyTemp:$supplyTemp";
         my $roomTemp = ($db[7] & 3) << 5 | ($db[6] & 0xF8) >> 3;
-        $roomTemp -= $roomTemp if ($roomTemp & 0x40);
+        #$roomTemp -= $roomTemp if ($roomTemp & 0x40);
+        $roomTemp -= 64;
         push @event, "3:roomTemp:$roomTemp";
         my $exhaustTemp = ($db[6] & 7) << 4 | ($db[5] & 0xF0) >> 4;
-        $exhaustTemp -= $exhaustTemp if ($exhaustTemp & 0x40);
+        #$exhaustTemp -= $exhaustTemp if ($exhaustTemp & 0x40);
+        $exhaustTemp -= 64;
         push @event, "3:exhaustTemp:$exhaustTemp";
         push @event, "3:supplyAirFlow:". (($db[5] & 0x0F) << 2 | ($db[4] & 0xFC) >> 2);
         push @event, "3:exhaustAirFlow:" . (($db[4] & 3) << 8 | $db[3]);
         push @event, "3:supplyFanSpeed:". ($db[2] << 4 | ($db[1] & 0xF0) >> 4);
         push @event, "3:exhaustFanSpeed:" . (($db[1] & 0x0F) << 8 | $db[0]);
         push @event, "3:state:$ventilation";
-      
+
       } elsif ($msgType == 3) {
         push @event, "3:SWVersion:" . (($db[13] & 0x0F) << 8 | $db[12]);
         push @event, "3:operationHours:" . (($db[11] << 8 | $db[10]) * 3);
@@ -9509,7 +11150,7 @@ sub EnOcean_Parse($$)
         push @event, "3:output:" . sprintf("%02b %02b", $db[7], $db[6]);
         push @event, "3:info:" . sprintf("%02b %02b", $db[5], $db[4]);
         push @event, "3:fault:" . sprintf("%02b %02b %02b %02b", $db[3], $db[2], $db[1], $db[0]);
-      
+
       }
 
     } elsif ($st eq "valveCtrl.00") {
@@ -9544,6 +11185,10 @@ sub EnOcean_Parse($$)
         }
       }
 
+    } elsif ($st eq "liquidLeakage.51") {
+      # liquid leakage sensor
+      push @event, "3:state:" . $db[0] & 3 ? 'wet' : 'dry';
+
     } elsif ($st eq "raw") {
       # raw
       push @event, "3:state:RORG: $rorg DATA: $data STATUS: $status ODATA: $odata";
@@ -9551,9 +11196,142 @@ sub EnOcean_Parse($$)
       for (my $dbCntr = 0; $dbCntr <= $#db; $dbCntr++) {
         push @event, "3:DB_" . $dbCntr . ":" . $db[$dbCntr];
       }
+
     } else {
       # unknown devices
       push @event, "3:state:$data";
+    }
+
+  } elsif ($rorg eq "D1") {
+    # MSC telegram
+    if ($st eq "actuator.01") {
+      if ($manufID eq "033") {
+        if (substr($data, 3, 1) == 4) {
+          my $getParam = ReadingsVal($name, "getParam", 0);
+          if ($getParam == 8) {
+            push @event, "3:loadClassification:no";
+            push @event, "3:loadLink:" . ($db[1] & 16 ? "connected" : "disconnected");
+            push @event, "3:loadOperation:3-wire";
+            push @event, "3:loadState:" . ($db[1] & 64 ? "on" : "off");
+            CommandDeleteReading(undef, "$name getParam");
+          } elsif ($getParam == 7) {
+            if ($db[0] & 4) {
+              push @event, "3:devTempState:warning";
+            } elsif ($db[0] & 2) {
+              push @event, "3:devTempState:max";
+            } else {
+              push @event, "3:devTempState:ok";
+            }
+            push @event, "3:mainsPower:" . ($db[0] & 8 ? "failure" : "ok");
+            if ($db[1] == 0xFF) {
+              push @event, "3:devTemp:invalid";
+            } else {
+              push @event, "3:devTemp:" . $db[1];
+            }
+            CommandDeleteReading(undef, "$name getParam");
+          } elsif ($getParam == 9) {
+            push @event, "3:voltage:" . sprintf("%.2f", (hex(substr($data, 4, 4)) * 0.01));
+            CommandDeleteReading(undef, "$name getParam");
+          } elsif ($getParam == 0x81) {
+            $hash->{READINGS}{serialNumber}{VAL} = substr($data, 4, 4);
+            $hash->{READINGS}{getParam}{VAL} = 0x82;
+            EnOcean_SndRadio(undef, $hash, $packetType, "D1", "033182", AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
+          } elsif ($getParam == 0x82) {
+            push @event, "3:serialNumber:" . $hash->{READINGS}{serialNumber}{VAL} . substr($data, 4, 4);
+            CommandDeleteReading(undef, "$name getParam");
+          }
+        }
+      } elsif ($manufID eq "046") {
+        my $cmd = hex(substr($data, 4, 2));
+        if ($cmd == 3) {
+          push @event, "3:firmwareVersion:" . substr($data, 6, 6);
+        } elsif ($cmd == 5) {
+          push @event, "3:taughtInDevNum:$db[0]";
+        } elsif ($cmd == 7) {
+          CommandDeleteReading(undef, "$name taughtInDevID.*");
+          push @event, "3:taughtInDevID" . sprintf('%02d', $db[4]) . ":" . substr($data, 8, 8);
+        }
+      }
+
+    } elsif ($st eq "raw") {
+      # raw
+      push @event, "3:state:RORG: $rorg DATA: $data STATUS: $status ODATA: $odata";
+      push @event, "3:manufID:" . substr($data, 0, 3);
+      # display data bytes $db[0] ... $db[x]
+      for (my $dbCntr = 0; $dbCntr <= $#db; $dbCntr++) {
+        push @event, "3:DB_" . $dbCntr . ":" . $db[$dbCntr];
+      }
+    } else {
+      # unknown devices
+      if(AttrVal($name, "blockUnknownMSC", "no") eq "yes") {
+        push @event, "3:MSC:$data";
+      }
+    }
+
+  } elsif ($rorg eq "D0") {
+    # Signal Telegram
+    my $signalMID = hex(substr($data, 0, 2));
+    if ($signalMID == 1) {
+      push @event, "3:smartAckMailbox:empty";
+    } elsif ($signalMID == 2) {
+      push @event, "3:smartAckMailbox:not_exits";
+    } elsif ($signalMID == 3) {
+      push @event, "3:smartAckMailbox:reset";
+    } elsif ($signalMID == 4) {
+      my $responseID = $subDef eq $hash->{DEF} ? $iohash->{ChipID} : $subDef;
+      if ($db[0] == 0) {
+      } elsif ($db[0] == 1) {
+        # send MID 0x06
+        EnOcean_SndRadio(undef, $hash, 1, 'D0', '0664', $responseID, '00', 'F' x 8);
+      } elsif ($db[0] == 2) {
+        # send MID 0x07
+        my $swVersion = sprintf("%s", AttrVal('global', 'featurelevel', '99.99')) . '.00.00';
+        #my @revision = split(/\./, $swVersion);
+        $swVersion =~ /^(.*)\.(.*)\.(..)\.(..)$/;
+        EnOcean_SndRadio(undef, $hash, 1, 'D0', sprintf("07%02X%02X%02X%02X00000000", $1, $2, $3, $4), $responseID, '00', 'F' x 8);
+      } elsif ($db[0] == 3) {
+        # send MID 0x0A
+        if (exists($hash->{LASTInputDev}) && exists($hash->{"$hash->{LASTInputDev}_RSSI"}) &&
+            exists($hash->{"$hash->{LASTInputDev}_RepeatingCounter"}) && exists($hash->{"$hash->{LASTInputDev}_SubTelNum"})) {
+            my $data = '0A' . $iohash->{ChipID} . sprintf("%02X%02X%01X%01X", 127 - $hash->{"$hash->{LASTInputDev}_RSSI"},
+                                                                              127 - $hash->{"$hash->{LASTInputDev}_RSSI"},
+                                                                              $hash->{"$hash->{LASTInputDev}_SubTelNum"},
+                                                                              $hash->{"$hash->{LASTInputDev}_RepeatingCounter"});
+          EnOcean_SndRadio(undef, $hash, 1, 'D0', $data, $responseID, '00', 'F' x 8);
+        }
+      } elsif ($db[0] == 4) {
+        # send MID 0x0D
+        EnOcean_SndRadio(undef, $hash, 1, 'D0', '0D00', $responseID, '00', 'F' x 8);
+      }
+    } elsif ($signalMID == 5) {
+      $hash->{Dev_ACK} = 'signal';
+      DoTrigger($name, "SIGNAL: Dev_ACK", 1);
+    } elsif ($signalMID == 6) {
+      push @event, "3:batteryPrecent:$db[0]";
+    } elsif ($signalMID == 7) {
+      push @event, "3:hwVersion:" . substr($data, 10, 8);
+      push @event, "3:swVersion:" . substr($data, 2, 8);
+    } elsif ($signalMID == 8) {
+      push @event, "3:trigger:heartbeat";
+    } elsif ($signalMID == 9) {
+      DoTrigger($name, "SIGNAL: RX_WINDOW_OPEN", 1);
+    } elsif ($signalMID == 10) {
+      $hash->{Dev_EURID} = substr($data, 2, 8);
+      if ($db[1] < 255) {$hash->{Dev_RSSImax} = 127 - $db[1]};
+      if ($db[2] < 255) {$hash->{Dev_RSSImin} = 127 - $db[2]};
+      my $subTelNum = $db[0] >> 4;
+      if ($subTelNum > 0) {$hash->{Dev_SubTelNum} = $subTelNum};
+      my $repeatingCounter = $db[0] & 0x0F;
+      if ($repeatingCounter < 0x0F) {$hash->{Dev_RepeatingCounter} = $repeatingCounter};
+    } elsif ($signalMID == 11) {
+      DoTrigger($name, "SIGNAL: DUTYCYCLE_LIMIT: " . ($db[0] >> 4 == 1 ? 'released' : 'reached'), 1);
+      Log3 $name, 2, "EnOcean $name SIGNAL DUTYCYCLE_LIMIT: " . ($db[0] >> 4 == 1 ? 'released' : 'reached');
+    } elsif ($signalMID == 12) {
+      DoTrigger($name, "SIGNAL: Dev_CHANGED", 1);
+      Log3 $name, 2, "EnOcean $name SIGNAL Dev_CHANGED";
+    } elsif ($signalMID == 13) {
+      my @harvester = ('very_good', 'good', 'average', 'bad', 'very_bad');
+      push @event, "3:harvester:" . $harvester[$db[0]];
     }
 
   } elsif ($rorg eq "B2") {
@@ -9563,7 +11341,7 @@ sub EnOcean_Parse($$)
     my @gpDef = split("[ \t][ \t]*", $gpDef);
     my ($readingFormat, $readingName, $readingType, $readingUnit, $readingValue, $valueType);
     $data = EnOcean_convHexToBit($data);
-    
+
     while (defined $gpDef[$channel]) {
       ($channelName, undef, undef, undef, undef, $resolution, undef, undef, undef, undef) = split(':', $gpDef[$channel]);
       $resolution = 0 if (!defined $resolution);
@@ -9592,10 +11370,10 @@ sub EnOcean_Parse($$)
     my $header = hex $1;
     $data = substr(EnOcean_convHexToBit($data), 4);
     #Log3 $name, 2, "EnOcean $name parse GPSD header: $header data: $data start";
-      
+
     for (my $cntr = 1; $cntr <= $header; $cntr ++) {
       $data =~ m/^(.{6})(.*)$/;
-      ($channel, $data) = (unpack('C', pack('B8', '00' . $1)), $2);      
+      ($channel, $data) = (unpack('C', pack('B8', '00' . $1)), $2);
       #Log3 $name, 2, "EnOcean $name parse GPSD channel: $channel data: $data";
       if (defined $gpDef[$channel]) {
         ($channelName, undef, undef, undef, undef, $resolution, undef, undef, undef, undef) = split(':', $gpDef[$channel]);
@@ -9623,8 +11401,10 @@ sub EnOcean_Parse($$)
     if ($purpose == 0 || ($purpose == 2 && AttrVal($name, "subType", "") ne "genericProfile")) {
       # teach-in request
       $attr{$name}{comMode} = $header & 16 ? "biDir" : "uniDir";
+      $attr{$name}{eep} = "B0-00-00";
       $attr{$name}{manufID} = sprintf "%03X", ($header & 0xFFE0) >> 5;
       $attr{$name}{subType} = "genericProfile";
+      $attr{$name}{teachMethod} = 'GP';
       my $channel = 0;
       my $channelDir = "I";
       my $channelDef;
@@ -9645,7 +11425,7 @@ sub EnOcean_Parse($$)
         $signalType = unpack('C', pack('B8', $2));
         $data = $3;
         #Log3 $name, 2, "EnOcean $name parse GPTI channel: $channel channelType: $channelType signalType: $signalType data: $data";
-        
+
         if ($channelType == 0) {
           # teach-in information
           if ($signalType == 1) {
@@ -9665,9 +11445,9 @@ sub EnOcean_Parse($$)
         } elsif ($channelType == 1) {
           # data
           $data =~ m/^(..)(....)(.{8})(....)(.{8})(....)(.*)$/;
-          $channelDef = $channelDir . ':' . $channelType . ':' . $signalType . ':' . 
+          $channelDef = $channelDir . ':' . $channelType . ':' . $signalType . ':' .
                         unpack('C', pack('B8', '000000' . $1)) . ':' . unpack('C', pack('B8', '0000' . $2)) . ':' .
-                        unpack('c', pack('B8', $3)) . ':' . unpack('C', pack('B8', '0000' . $4)) . ':' . 
+                        unpack('c', pack('B8', $3)) . ':' . unpack('C', pack('B8', '0000' . $4)) . ':' .
                         unpack('c', pack('B8', $5)) . ':' . unpack('C', pack('B8', '0000' . $6));
           $data = $7;
           if (defined $EnO_gpValueData{$signalType}{name}) {
@@ -9695,7 +11475,7 @@ sub EnOcean_Parse($$)
         } elsif ($channelType == 3) {
           # enumeration
           $data =~ m/^(..)(....)(.*)$/;
-          $channelDef = $channelDir . ':' .$channelType . ':' . $signalType . ':' . 
+          $channelDef = $channelDir . ':' .$channelType . ':' . $signalType . ':' .
                         unpack('C', pack('B8', '000000' . $1)) . ':' . unpack('C', pack('B8', '0000' . $2));
           $data = $3;
           if (defined $EnO_gpValueEnum{$signalType}{name}) {
@@ -9743,12 +11523,12 @@ sub EnOcean_Parse($$)
     $data = $2;
     my $mid = sprintf "%03X", ($header & 0xFFE0) >> 5;
     my $purpose = ($header & 24) >> 3;
-    
+
     if (exists $hash->{IODev}{helper}{gpRespWait}{$destinationID}) {
-    
+
       if ($purpose == 0) {
         # teach-in rejected generally
-        if ($hash->{IODev}{helper}{gpRespWait}{$destinationID}{teachInReq} eq "in") {      
+        if ($hash->{IODev}{helper}{gpRespWait}{$destinationID}{teachInReq} eq "in") {
           push @event, "3:teach:GP teach-in rejected";
           Log3 $name, 2, "EnOcean $name GP teach-in rejected by $senderID";
         }
@@ -9764,7 +11544,7 @@ sub EnOcean_Parse($$)
           $hash->{DEF} = $senderID;
           $modules{EnOcean}{defptr}{$senderID} = $hash;
           delete $modules{EnOcean}{defptr}{$destinationID};
-          EnOcean_CommandSave(undef, undef);          
+          EnOcean_CommandSave(undef, undef);
           $mid = $EnO_manuf{$mid} if($EnO_manuf{$mid});
           push @event, "3:teach:GP teach-in accepted Manufacturer: $mid";
           Log3 $name, 2, "EnOcean $name GP teach-in accepted by $senderID";
@@ -9781,7 +11561,7 @@ sub EnOcean_Parse($$)
             $modules{EnOcean}{defptr}{$hash->{DEF}} = $hash;
             delete $attr{$name}{subDef};
             EnOcean_CommandSave(undef, undef);
-          }      
+          }
           push @event, "3:teach:GP teach-out accepted";
           Log3 $name, 2, "EnOcean $name GP teach-out accepted";
         }
@@ -9815,12 +11595,15 @@ sub EnOcean_Parse($$)
     my $mid = sprintf "%03X", ((($db[3] & 7) << 8) | $db[4]);
     my $devChannel = $db[5];
     my $comMode = $db[6] & 0x80 ? "biDir" : "uniDir";
+    my $comModeUTE = AttrVal($hash->{IODev}{NAME}, "comModeUTE", "auto");
+    $comMode = $comModeUTE if ($comModeUTE ne 'auto');
     my $subType = "$rorg.$func.$type";
     if (($db[6] & 0xF) == 0) {
       # Teach-In Query telegram received
       my $teachInReq = ($db[6] & 0x30) >> 4;
       if ($teachInReq == 0 || $teachInReq == 2) {
         # Teach-In Request
+        $attr{$name}{teachMethod} = 'UTE';
         if(exists $EnO_eepConfig{$subType}) {
           # Teach-In EEP supported
           foreach my $attrCntr (keys %{$EnO_eepConfig{$subType}{attr}}) {
@@ -9873,7 +11656,7 @@ sub EnOcean_Parse($$)
         }
         # store attr subType, manufID ...
         EnOcean_CommandSave(undef, undef);
-        
+
       } elsif ($teachInReq == 1) {
         # Teach-In Deletion Request
         $deleteDevice = $name;
@@ -9942,7 +11725,7 @@ sub EnOcean_Parse($$)
                 delete $modules{EnOcean}{defptr}{$hash->{DEF}};
                 $hash->{DEF} = $attr{$name}{subDef};
                 $modules{EnOcean}{defptr}{$hash->{DEF}} = $hash;
-                delete $attr{$name}{subDef};            
+                delete $attr{$name}{subDef};
                 EnOcean_CommandSave(undef, undef);
               }
             } else {
@@ -9959,7 +11742,7 @@ sub EnOcean_Parse($$)
       } else {
         # teach-in request unknown, delete response device, no action
         $deleteDevice = $name;
-        Log3 $name, 2, "EnOcean $name UTE teach-in request unknown, device $name deleted";
+        Log3 $name, 2, "EnOcean $name UTE teach-in request unknown";
       }
     }
 
@@ -9974,141 +11757,497 @@ sub EnOcean_Parse($$)
     EnOcean_CommandSave(undef, undef);
     return "";
 
-  } elsif ($rorg eq "C5" && $packetType == 1) {
-    # remote management
-    ###
-    $data =~ m/^(..)(.*)$/;
-    my $seq = (hex($1) & 192) >> 6;
-    my $idx = hex($1) & 63;
-    $data = $2;
-    # save telegrams of the message
-    if ($idx == 0) {
-      $data =~ m/^(........)(........)$/;
-      delete $hash->{helper}{sysEx}{$seq};
-      $hash->{helper}{sysEx}{$seq}{dataLength} = (hex($1) & 0xFF800000) >> 23;
-      $hash->{helper}{sysEx}{$seq}{dataLengthCntr} = 4;
-      $hash->{helper}{sysEx}{$seq}{manufID} = (hex($1) & 0x7FF000) >> 12;
-      $hash->{helper}{sysEx}{$seq}{fnNumber} = (hex($1) & 0xFFF);
-      $hash->{helper}{sysEx}{$seq}{data}{$idx} = $2;
-    } else {
-      if (defined $hash->{helper}{sysEx}{data}{$idx}) {
-        # receiving error > delete all massage parts
-        Log3 $name, 2, "EnOcean $name RMCC/RPC message SEQ: " . $hash->{helper}{sysEx}{$seq} . " wrong.";
-        delete $hash->{helper}{sysEx}{$seq};
-      } else {
-        $hash->{helper}{sysEx}{$seq}{dataLengthCntr} += 8;
-        $hash->{helper}{sysEx}{$seq}{data}{$idx} = $data;
-      }
-    }
-    # merge telegrams and decode messsage
-    if (defined($hash->{helper}{sysEx}{$seq}{dataLength}) &&
-        $hash->{helper}{sysEx}{$seq}{dataLengthCntr} >= $hash->{helper}{sysEx}{$seq}{dataLength}) {
-      $data = undef;
-      for (my $cntr = 0; $cntr < int($hash->{helper}{sysEx}{$seq}{dataLength} / 8) + 1; $cntr++) {
-        $data .= $hash->{helper}{sysEx}{$seq}{data}{$cntr};
-      }
-      $data = substr($data, 0, $hash->{helper}{sysEx}{$seq}{dataLength} * 2);
-
-      if ($hash->{helper}{sysEx}{$seq}{fnNumber} == 0x604 || $hash->{helper}{sysEx}{$seq}{fnNumber} == 0x606) {
-        # query ID answer, Ping answer
-        my $eep = hex(substr($data, 0, 6)) >> 3;
-        my $rorg = sprintf "%02X", ($eep >> 13);
-        my $func = sprintf "%02X", (($eep & 0x1F80) >> 7);
-        my $type = sprintf "%02X", ($eep & 127);
-        my $mid = $hash->{helper}{sysEx}{$seq}{manufID};
+  } elsif ($rorg eq "C6" && $smartAckLearn) {
+    # Smart Ack Learn Request
+    $data =~ m/^(....)(..)(..)(..)(..)(........)$/;
+    my $subType = "$2.$3.$4";
+    my $postmasterID = '0' x 8;
+    my $mid = '7FF';
+    my $responseTime = 150;
+    my $sendData = '';
+    if (exists $EnO_eepConfig{$subType}) {
+      if (($db[9] & 0xF8) == 0xF8) {
+        # Smart Ack send by sensor
+        $attr{$name}{subType} = $EnO_eepConfig{$subType}{attr}{subType};
+        $attr{$name}{eep} = "$3-$4-$5";
+        $mid = substr(sprintf("%04X", hex($1) & 0x7FF), 1);
         $attr{$name}{manufID} = $mid;
-        $mid = $EnO_manuf{$mid} if($EnO_manuf{$mid});
-        $attr{$name}{eep} = "$rorg-$func-$type";
-        my $subType = "$rorg.$func.$type";
-        $attr{$name}{subType} = $EnO_eepConfig{$subType}{attr}{subType} if($EnO_manuf{$subType});
-        if ($hash->{helper}{sysEx}{$seq}{fnNumber} == 0x606) {
-          $hash->{RSSI} = - substr($data, 6, 2);
+        $mid = $EnO_manuf{$mid} if(exists $EnO_manuf{$mid});
+        $attr{$name}{repeaterID} = $6;
+        $postmasterID = $6;
+        $attr{$name}{postmasterID} = $postmasterID;
+        $attr{$name}{teachMethod} = 'smartAck';
+        $hash->{SmartAckRSSI} = - hex($db[4]);
+        foreach my $attrCntr (keys %{$EnO_eepConfig{$subType}{attr}}) {
+          if ($attrCntr ne "subDef") {
+            $attr{$name}{$attrCntr} = $EnO_eepConfig{$subType}{attr}{$attrCntr};
+          }
         }
-        push @event, "3:teach:RMCC teach-in accepted EEP $rorg-$func-$type Manufacturer: $mid";
-        Log3 $name, 2, "EnOcean $name RMCC teach-in accepted EEP $rorg-$func-$type Manufacturer: $mid";
+        if (defined AttrVal($name, 'subDef', undef)) {
+          $subDef = $attr{$name}{subDef};
+        } else {
+          $subDef = EnOcean_CheckSenderID('getNextID', $hash->{IODev}{NAME}, "00000000");
+          $attr{$name}{subDef} = $subDef;
+        }
+        # create mailbox
+        $sendData =  sprintf "03%04X00%04X%04X", $responseTime, $postmasterID, $hash->{DEF};
+        EnOcean_SndRadio(undef, $hash, 6, $rorg, $sendData, $subDef, '00', $hash->{DEF});
+        # next commands will be sent with a delay
+        #usleep($responseTime * 1000);
+        # send learn reply
+        $sendData =  sprintf "01%04X00%04X", $responseTime, $hash->{DEF};
+        EnOcean_SndRadio(undef, $hash, 1, 'C7', $sendData, $subDef, '00', $hash->{DEF});
+        push @event, "3:teach:Smart Ack teach-in accepted EEP " . $attr{$name}{eep} . " Manufacturer: $mid";
+        Log3 $name, 2, "EnOcean $name Smart Ack teach-in accepted EEP " . $attr{$name}{eep} . " Manufacturer: $mid";
         EnOcean_CommandSave(undef, undef);
-
-      } elsif ($hash->{helper}{sysEx}{$seq}{fnNumber} == 0x607) {
-        # functions list answer
-        my ($fnList, $mid);
-        for (my $cntr = 0; $cntr < $hash->{helper}{sysEx}{$seq}{dataLength} / 4; $cntr++) {
-          $funcNumber = substr($data, $cntr * 4, 2);
-          $mid = sprintf "%02X", substr($data, $cntr * 4 + 4, 2);
-          $fnList .= "$funcNumber:$mid ";
-        }
-        chop($fnList);
-        push @event, "3:remoteFunct:$fnList";
-        Log3 $name, 2, "EnOcean $name RMCC Answer Remote Functions: $fnList";
-
-      } elsif ($hash->{helper}{sysEx}{$seq}{fnNumber} == 0x608) {
-        # last function
-        $data =~ m/^(.)(.)(.)(...)(..)$/;
-        my $codeSetFlag = $1 >> 3;
-        my $seqLast = $2;
-        my $fnNumberLast = $4;
-        my $fnRetCode = $5;
-        Log3 $name, 2, "EnOcean $name RMCC Answer Status: Code Set Flag: $codeSetFlag
-                        SEQ: $seqLast Function Number: $fnNumberLast Return Code $fnRetCode";
-      } else {
-        Log3 $name, 2, "EnOcean $name RMCC/RPC Function Number " .
-                        sprintf ("%04X", $hash->{helper}{sysEx}{$seq}{fnNumber}) . " not supported.";
       }
-      delete $hash->{helper}{sysEx}{$seq};
+    } else {
+      # EEP not supported
+      # send learn reply
+      $sendData = sprintf "01%04X10%04X", $responseTime, $hash->{DEF};
+      EnOcean_SndRadio(undef, $hash, 1, 'C7', $sendData, '0' x 8, '00', $hash->{DEF});
+      CommandDelete(undef, $name);
+      Log3 $name, 2, "EnOcean $name Smart Ack teach-in not accepted EEP " . $attr{$name}{eep} . " Manufacturer: $mid";
     }
+
   } elsif ($packetType == 7) {
-    if ($funcNumber == 1) {
-      Log3 $name, 2, "EnOcean $name RMCC Unlock Request with ManufacturerID: $manufID";
+    # packet type REMOTE_MAN_COMMAND
+    my $remoteCode = AttrVal($name, 'remoteCode', '0' x 8);
+    my $remoteLastStatusReturnCode = $manufID eq '7FF' ? '00' : '04';
+    my $remoteManagement = AttrVal($name, "remoteManagement", "off");
+    my $sendData = '';
+    push @event, "3:remoteLastFunctionNumber:" . sprintf("%03X", $funcNumber);
 
-    } elsif ($funcNumber == 2) {
-      Log3 $name, 2, "EnOcean $name RMCC Lock Request with ManufacturerID: $manufID";
+    if ($funcNumber == 1 && $remoteManagement eq 'client') {
+      # unlock
+      if ($data eq uc($remoteCode) && !exists($hash->{RemoteClientUnlockFailed})) {
+        $hash->{RemoteClientUnlock} = 1;
+        #my %functionHash = (hash => $hash, param => 'RemoteClientUnlock');
+        #RemoveInternalTimer(\%functionHash);
+        #InternalTimer(gettimeofday() + 1800, 'EnOcean_cdmClearHashVal', \%functionHash, 0);
+        RemoveInternalTimer($hash->{helper}{timer}{RemoteClientUnlock}) if(exists $hash->{helper}{timer}{RemoteClientUnlock});
+        $hash->{helper}{timer}{RemoteClientUnlock} = {hash => $hash, param => 'RemoteClientUnlock'};
+        InternalTimer(gettimeofday() + 1800, 'EnOcean_cdmClearHashVal', $hash->{helper}{timer}{RemoteClientUnlock}, 0);
+        Log3 $name, 2, "EnOcean $name RMCC unlock request executed.";
+      } else {
+        $remoteLastStatusReturnCode = '02';
+        $hash->{RemoteClientUnlockFailed} = 1;
+        #my %functionHash = (hash => $hash, param => 'RemoteClientUnlockFailed');
+        #RemoveInternalTimer(\%functionHash);
+        #InternalTimer(gettimeofday() + 30, 'EnOcean_cdmClearHashVal', \%functionHash, 0);
+        RemoveInternalTimer($hash->{helper}{timer}{RemoteClientUnlockFailed}) if(exists $hash->{helper}{timer}{RemoteClientUnlockFailed});
+        $hash->{helper}{timer}{RemoteClientUnlockFailed} = {hash => $hash, param => 'RemoteClientUnlockFailed'};
+        InternalTimer(gettimeofday() + 30, 'EnOcean_cdmClearHashVal', $hash->{helper}{timer}{RemoteClientUnlockFailed}, 0);
+        Log3 $name, 2, "EnOcean $name RMCC unlock request not executed, remote Code $data wrong.";
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
 
-    } elsif ($funcNumber == 3) {
-      Log3 $name, 2, "EnOcean $name RMCC Set code Request with ManufacturerID: $manufID";
+    } elsif ($funcNumber == 2 && $remoteManagement eq 'client') {
+      # lock
+      if ($hash->{RemoteClientUnlock} && $data eq uc($remoteCode)) {
+        delete $hash->{RemoteClientUnlock};
+        RemoveInternalTimer($hash->{helper}{timer}{RemoteClientUnlock}) if(exists $hash->{helper}{timer}{RemoteClientUnlock});
+        Log3 $name, 2, "EnOcean $name RMCC lock request executed.";
+      } else {
+        $remoteLastStatusReturnCode = '02';
+        Log3 $name, 2, "EnOcean $name RMCC lock request not executed.";
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
 
-    } elsif ($funcNumber == 4) {
-      my $eep = hex(substr($data, 0, 6)) >> 3;
-      my $rorg = sprintf "%02X", ($eep >> 13);
-      my $func = sprintf "%02X", (($eep & 0x1F80) >> 7);
-      my $type = sprintf "%02X", ($eep & 127);
-      Log3 $name, 2, "EnOcean $name RMCC Query ID with EEP $rorg-$func-$type ManufacturerID: $manufID";
+    } elsif ($funcNumber == 3 && $remoteManagement eq 'client') {
+      # set code
+      if ($hash->{RemoteClientUnlock} && $data =~ m/^[A-Fa-f0-9]{8}$/ && uc($data) ne 'FFFFFFFF') {
+        $attr{$name}{remoteCode} = $data;
+        EnOcean_CommandSave(undef, undef);
+        Log3 $name, 2, "EnOcean $name RMCC set code request executed.";
+      } else {
+        $remoteLastStatusReturnCode = '05';
+        Log3 $name, 2, "EnOcean $name RMCC set code request not executed.";
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
 
-    } elsif ($funcNumber == 5) {
-      Log3 $name, 2, "EnOcean $name RMCC Action Request with ManufacturerID: $manufID";
+    } elsif ($funcNumber == 4 && $remoteManagement eq 'client') {
+      # query ID
+      if ($hash->{RemoteClientUnlock}) {
+        my $eepRcv = hex(substr($data, 0, 6)) >> 3;
+        my $rorg = sprintf "%02X", ($eepRcv >> 13);
+        my $func = sprintf "%02X", (($eepRcv & 0x1F80) >> 7);
+        my $type = sprintf "%02X", ($eepRcv & 127);
+        $eepRcv = "$rorg-$func-$type";
+        if ($hash->{RemoteClientUnlock} && $eep eq $eepRcv) {
+          $sendData = '06040' . AttrVal($name, 'manufID', '7FF') . substr($data, 0, 4) . sprintf("%02X", hex(substr($data, 4, 2)) & 0xF8);
+          EnOcean_SndRadio(undef, $hash, $packetType, $rorg, $sendData, '0' x 8, '0F', $senderID);
+          Log3 $name, 2, "EnOcean $name RMCC query ID answer sent.";
+        } else {
+          $remoteLastStatusReturnCode = '03';
+          Log3 $name, 2, "EnOcean $name RMCC query ID request not executed, EEP $eepRcv wrong or client locked.";
+        }
+      } else {
+        $remoteLastStatusReturnCode = '07';
+        Log3 $name, 2, "EnOcean $name RMCC query ID request not executed.";
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
 
-    } elsif ($funcNumber == 6) {
-      Log3 $name, 2, "EnOcean $name RMCC Ping Request with ManufacturerID: $manufID";
+    } elsif ($funcNumber == 5 && $remoteManagement eq 'client') {
+      # action
+      if ($hash->{RemoteClientUnlock}) {
+        Log3 $name, 2, "EnOcean $name RMCC action request executed";
+      } else {
+        $remoteLastStatusReturnCode = '01';
+        Log3 $name, 2, "EnOcean $name RMCC action request not executed.";
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
 
-    } elsif ($funcNumber == 7) {
-      Log3 $name, 2, "EnOcean $name RMCC Query remote functions with ManufacturerID: $manufID";
+    } elsif ($funcNumber == 6 && $remoteManagement eq 'client') {
+      # ping
+      my $eep = AttrVal($name, "eep", "C5-00-00");
+      if ($eep =~ m/^([A-Fa-f0-9]{2})-([A-Fa-f0-9]{2})-([A-Fa-f0-9]{2})$/i) {
+        $eep = (((hex($1) << 6) | hex($2)) << 7) | hex($3);
+      } else {
+        $eep = (((hex("C5") << 6) | hex("00")) << 7) | hex("00");
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      push @event, "3:remoteRSSI:" . -$RSSI;
+      $sendData = '06060' . AttrVal($name, 'manufID', '7FF') . sprintf("%04X%02X", $eep << 3, $RSSI);
+      EnOcean_SndRadio(undef, $hash, $packetType, $rorg, $sendData, '0' x 8, '0F', $senderID);
+      Log3 $name, 2, "EnOcean $name RMCC ping answer executed";
 
-    } elsif ($funcNumber == 8) {
-      Log3 $name, 2, "EnOcean $name RMCC Query status with ManufacturerID: $manufID";
+    } elsif ($funcNumber == 7 && $remoteManagement eq 'client') {
+      # query function
+      if ($hash->{RemoteClientUnlock}) {
+        $sendData = '06070' . AttrVal($name, 'manufID', '7FF') . '020107FF';
+        EnOcean_SndRadio(undef, $hash, $packetType, $rorg, $sendData, '0' x 8, '0F', $senderID);
+        Log3 $name, 2, "EnOcean $name RMCC query function answer sent.";
+      } else {
+        $remoteLastStatusReturnCode = '07';
+        Log3 $name, 2, "EnOcean $name RMCC query function request not executed.";
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+
+    } elsif ($funcNumber == 8 && $remoteManagement eq 'client') {
+      # query status
+      if ($hash->{RemoteClientUnlock}) {
+        $sendData = '06080' . AttrVal($name, 'manufID', '7FF') . '000' . ReadingsVal($name, "remoteLastFunctionNumber", "000") .
+                    ReadingsVal($name, "$remoteLastStatusReturnCode", '00');
+        EnOcean_SndRadio(undef, $hash, $packetType, $rorg, $sendData, '0' x 8, '0F', $senderID);
+        Log3 $name, 2, "EnOcean $name RMCC query status answer sent.";
+      } else {
+        $remoteLastStatusReturnCode = '07';
+        Log3 $name, 2, "EnOcean $name RMCC query status request not executed.";
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
 
     } elsif ($funcNumber == 0x201) {
       $data =~ m/^(..)(..)(..)(..)$/;
       my ($rorg, $func, $type, $flag) = ($1, $2, $3, hex($4));
-      Log3 $name, 2, "EnOcean $name RPC Remote Learn with EEP $rorg-$func-$type ManufacturerID: $manufID Flag: $flag";
+      if ($flag == 1) {
+        # learn in
+        if (exists $EnO_eepConfig{"$rorg.$func.$type"}) {
+          $attr{$name}{eep} = "$rorg-$func-$type";
+          #$attr{$name}{remoteID} = $remoteID if (defined $remoteID);
+          $attr{$name}{remoteManagement} = "client";
+          $attr{$name}{teachMethod} = 'RPC';
+          foreach my $attrCntr (keys %{$EnO_eepConfig{"$rorg.$func.$type"}{attr}}) {
+            if ($attrCntr eq "subDef") {
+              if (!exists $attr{$name}{$attrCntr}) {
+                $attr{$name}{$attrCntr} = EnOcean_CheckSenderID($EnO_eepConfig{"$rorg.$func.$type"}{attr}{$attrCntr}, $hash->{IODev}{NAME}, "00000000");
+              }
+            } else {
+              $attr{$name}{$attrCntr} = $EnO_eepConfig{"$rorg.$func.$type"}{attr}{$attrCntr};
+            }
+          }
+          EnOcean_CreateSVG(undef, $hash, $attr{$name}{eep});
+          push @event, "3:teach:RPC teach-in accepted EEP $rorg-$func-$type Manufacturer: " .
+                        (exists($EnO_manuf{$manufID}) ? $EnO_manuf{$manufID} : $manufID);
+          Log3 $name, 2, "EnOcean $name RPC teach-in with EEP $rorg-$func-$type ManufacturerID: $manufID accepted.";
+        } else {
+          Log3 $name, 2, "EnOcean $name RPC teach-in with EEP $rorg-$func-$type ManufacturerID: $manufID not supported.";
+        }
 
-    } elsif ($funcNumber == 0x604 || $funcNumber == 0x606) {
+      } elsif ($flag == 3) {
+        # learn out
+        #Log3 $name, 2, "EnOcean $name device $name deleted";
+        CommandDelete(undef, $name);
+        Log3 $name, 2, "EnOcean $name RPC teach-out with EEP $rorg-$func-$type ManufacturerID: $manufID executed.";
+        EnOcean_CommandSave(undef, undef);
+      } else {
+
+        Log3 $name, 2, "EnOcean $name RPC learn function $flag not supported";
+      }
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+
+    } elsif ($funcNumber == 0x240 && $remoteManagement eq 'manager') {
+      # acknowledge
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RPC acknowledge received";
+
+    } elsif ($funcNumber == 0x604 && $remoteManagement eq 'manager') {
+      # query id answer
       my $eep = hex(substr($data, 0, 6)) >> 3;
       my $rorg = sprintf "%02X", ($eep >> 13);
       my $func = sprintf "%02X", (($eep & 0x1F80) >> 7);
       my $type = sprintf "%02X", ($eep & 127);
-      $attr{$name}{manufID} = $manufID;
+      $attr{$name}{remoteManufID} = $manufID;
       $manufID = $EnO_manuf{$manufID} if($EnO_manuf{$manufID});
-      $attr{$name}{eep} = "$rorg-$func-$type";
+      $attr{$name}{remoteEEP} = "$rorg-$func-$type";
       my $subType = "$rorg.$func.$type";
-      $attr{$name}{subType} = $EnO_eepConfig{$subType}{attr}{subType} if($EnO_manuf{$subType});
-      if ($funcNumber == 0x606) {
-        $hash->{RSSI} = - substr($data, 6, 2);
-      }
-      push @event, "3:teach:RMCC teach-in accepted EEP $rorg-$func-$type Manufacturer: $manufID";
-      Log3 $name, 2, "EnOcean $name RMCC teach-in accepted EEP $rorg-$func-$type Manufacturer: $manufID";
+      #$attr{$name}{subType} = $EnO_eepConfig{$subType}{attr}{subType} if($EnO_manuf{$subType});
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RMCC query ID answer received EEP $rorg-$func-$type Manufacturer: $manufID";
       EnOcean_CommandSave(undef, undef);
 
+    } elsif ($funcNumber == 0x606 && $remoteManagement eq 'manager') {
+      # ping answer
+      my $eep = hex(substr($data, 0, 6)) >> 3;
+      my $rorg = sprintf "%02X", ($eep >> 13);
+      my $func = sprintf "%02X", (($eep & 0x1F80) >> 7);
+      my $type = sprintf "%02X", ($eep & 127);
+      $attr{$name}{remoteManufID} = $manufID;
+      $manufID = $EnO_manuf{$manufID} if($EnO_manuf{$manufID});
+      $attr{$name}{remoteEEP} = "$rorg-$func-$type";
+      my $subType = "$rorg.$func.$type";
+      #$attr{$name}{subType} = $EnO_eepConfig{$subType}{attr}{subType} if($EnO_manuf{$subType});
+      push @event, "3:remoteRSSI:" . -$RSSI;
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RMCC ping answer received EEP $rorg-$func-$type Manufacturer: $manufID";
+      EnOcean_CommandSave(undef, undef);
+
+    } elsif ($funcNumber == 0x607 && $remoteManagement eq 'manager') {
+      # query function answer
+      CommandDeleteReading(undef, "$name remoteFunction.*");
+      my $count = 1;
+      my $len = length($data);
+      while ($len > 0) {
+        $data =~ m/^.(...).(...)(.*)$/;
+        push @event, "3:remoteFunction" . sprintf("%02d", $count) . ":$1:$2:" . (exists($EnO_extendedRemoteFunctionCode{hex($1)}) ? $EnO_extendedRemoteFunctionCode{hex($1)} : '-');
+        $count ++;
+        $data = $3;
+        $len -= 8;
+      }
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RMCC query function answer received";
+
+    } elsif ($funcNumber == 0x608 && $remoteManagement eq 'manager') {
+      # query status answer
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastFunctionNumber:" . substr($data, 3, 3);
+      push @event, "3:remoteLastStatusReturnCode:" . substr($data, 6, 2);
+      Log3 $name, 2, "EnOcean $name RMCC query status answer received LastFunction: " . substr($data, 3, 3) .
+                      " LastFunctionCode: " . substr($data, 6, 2);
+
+    } elsif ($funcNumber == 0x810 && $remoteManagement eq 'manager') {
+      # teach-in supported link tables response
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      my $supportFlags = hex(substr($data, 0, 2));
+      my $linkTableInCurrent = substr($data, 6, 2) && $supportFlags & 0x10 ? substr($data, 6, 2) : '00';
+      my $linkTableInMax = substr($data, 8, 2) && $supportFlags & 0x10 ? substr($data, 8, 2) : '00';
+      my $linkTableOutCurrent = substr($data, 2, 2) && $supportFlags & 0x20 ? substr($data, 2, 2) : '00';
+      my $linkTableOutMax = substr($data, 4, 2) && $supportFlags & 0x20 ? substr($data, 4, 2) : '00';
+      push @event, "3:remoteLearn:" . ($supportFlags & 0x80 ? 'supported' : 'not_supported');
+      push @event, "3:remoteLinkTableIn:" . ($supportFlags & 0x10 ? 'supported' : 'not_supported');
+      push @event, "3:remoteLinkTableOut:" . ($supportFlags & 0x20 ? 'supported' : 'not_supported');
+      push @event, "3:remoteLinkTableInCurrent:" . $linkTableInCurrent if ($supportFlags & 0x10);
+      push @event, "3:remoteLinkTableInMax:" . $linkTableInMax if ($supportFlags & 0x10);
+      push @event, "3:remoteLinkTableOutCurrent:" . $linkTableOutCurrent if ($supportFlags & 0x20);
+      push @event, "3:remoteLinkTableOutMax:" . $linkTableOutMax if ($supportFlags & 0x20);
+      push @event, "3:remoteTeach:" . ($supportFlags & 0x40 ? 'supported' : 'not_supported');
+      Log3 $name, 2, "EnOcean $name RPC teach-in supported link tables response received Data: $data";
+      # request outbound table
+      #$hash->{IODev}{helper}{remoteAnswerWait}{0x821}{hash} = $hash;
+      #$hash->{IODev}{helper}{remoteLinkTableStartRef} = 0;
+      #my %functionHash = (hash => $hash, param => 0x821);
+      #RemoveInternalTimer(\%functionHash);
+      #InternalTimer(gettimeofday() + 2.5, 'EnOcean_cdmClearRemoteWait', \%functionHash, 0);
+      #$sendData = '022107FF';
+      #EnOcean_SndRadio(undef, $hash, $packetType, $rorg, $sendData, '0' x 8, '0F', $senderID);
+      #Log3 $name, 2, "EnOcean $name RPC request teach-in outbound table";
+
+    } elsif ($funcNumber == 0x811 && $remoteManagement eq 'manager') {
+      # link table response
+      CommandDeleteReading(undef, "$name remoteLinkTableDesc.*");
+      $data =~ m/^(..)(.*)$/;
+      my $direction = hex($1) & 0x80 ? 'Out' : 'In';
+      $data = $2;
+      while (length($data) > 0) {
+        $data =~ m/^(..)(........)(..)(..)(..)(..)(.*)$/;
+        push @event, "3:remoteLinkTableDesc" . $direction . "$1:S2:S3-S4-$5:$6";
+        $data = $7;
+      }
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RPC link table response received";
+
+    } elsif ($funcNumber == 0x813 && $remoteManagement eq 'manager') {
+      # link table GP response
+      CommandDeleteReading(undef, "$name remoteLinkTableGPDesc.*");
+      $data =~ m/^(..)(.*)$/;
+      my $direction = hex($1) & 0x80 ? 'Out' : 'In';
+      $data = $2;
+      my $channel = 0;
+      my $channelDir = hex($1) & 0x80 ? 'O' : 'I';
+      my $channelDef;
+      my $channelName;
+      my $channelType;
+      my $dataOutboundDefLen = 0;
+      my $gpData;
+      my @gpDef;
+      my $gpIdx;
+      my $signalType;
+      while (length($data) > 0) {
+        $data =~ m/^(..)(.{12})(.*)$/;
+        $gpIdx = $1;
+        $gpData = EnOcean_convHexToBit($2);
+        $data = $3;
+        $gpData =~ m/^(..)(.{8})(.*)$/;
+        $channelType = unpack('C', pack('B8', '000000' . $1));
+        $signalType = unpack('C', pack('B8', $2));
+        $data = $3;
+        #Log3 $name, 2, "EnOcean $name parse RPC link table GP idx: $gpIdx channelType: $channelType signalType: $signalType data: $data";
+
+        if ($channelType == 0) {
+          # teach-in information
+          if ($signalType == 1) {
+            # outbound channel description
+
+          } elsif ($signalType == 2) {
+            # produkt ID
+          }
+
+        } elsif ($channelType == 1) {
+          # data
+          $gpData =~ m/^(..)(....)(.{8})(....)(.{8})(....)(.*)$/;
+          $channelDef = $channelDir . ':' . $channelType . ':' . $signalType . ':' .
+                        unpack('C', pack('B8', '000000' . $1)) . ':' . unpack('C', pack('B8', '0000' . $2)) . ':' .
+                        unpack('c', pack('B8', $3)) . ':' . unpack('C', pack('B8', '0000' . $4)) . ':' .
+                        unpack('c', pack('B8', $5)) . ':' . unpack('C', pack('B8', '0000' . $6));
+          if (defined $EnO_gpValueData{$signalType}{name}) {
+            $channelName = $EnO_gpValueData{$signalType}{name};
+          } else {
+            $channelName = "none";
+          }
+          $gpDef[$channel] = $channelName . ':' . $channelDef;
+
+        } elsif ($channelType == 2) {
+          # flag
+          $gpData =~ m/^(..)(.*)$/;
+          $channelDef = $channelDir . ':' .$channelType . ':' . $signalType . ':' .
+                        unpack('C', pack('B8', '000000' . $1));
+          if (defined $EnO_gpValueFlag{$signalType}{name}) {
+            $channelName = $EnO_gpValueFlag{$signalType}{name};
+          } else {
+            $channelName = "none";
+          }
+          $gpDef[$channel] = $channelName . ':' . $channelDef;
+
+        } elsif ($channelType == 3) {
+          # enumeration
+          $gpData =~ m/^(..)(....)(.*)$/;
+          $channelDef = $channelDir . ':' .$channelType . ':' . $signalType . ':' .
+                        unpack('C', pack('B8', '000000' . $1)) . ':' . unpack('C', pack('B8', '0000' . $2));
+          if (defined $EnO_gpValueEnum{$signalType}{name}) {
+            $channelName = $EnO_gpValueEnum{$signalType}{name};
+          } else {
+            $channelName = "none";
+          }
+          $gpDef[$channel] = $channelName . ':' . $channelDef;
+        }
+        push @event, "3:remoteLinkTableGPDesc" . $direction . "$gpIdx:$gpDef[0]";
+      }
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RPC link table GP response received";
+
+    } elsif ($funcNumber == 0x827 && $remoteManagement eq 'manager') {
+      # product ID answer
+      $manufID = substr($data, 1, 3);
+      $attr{$name}{remoteManufID} = $manufID;
+      $manufID = $EnO_manuf{$manufID} if($EnO_manuf{$manufID});
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      $sendData = '024007FF';
+      EnOcean_SndRadio(undef, $hash, $packetType, $rorg, $sendData, '0' x 8, '0F', $senderID);
+      push @event, "3:remoteProductID:" . substr($data, 4, 8);
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RPC Product ID answer received ProductID: " . substr($data, 4, 8) . " Manufacturer: $manufID";
+      Log3 $name, 2, "EnOcean $name RPC acknowledge sent";
+      EnOcean_CommandSave(undef, undef);
+
+    } elsif ($funcNumber == 0x830 && $remoteManagement eq 'manager') {
+      # device config response
+      CommandDeleteReading(undef, "$name remoteDevCfg.*");
+      my $idx;
+      my $valueLen;
+      while (length($data) > 0) {
+        $data =~ m/^(....)(..)(.*)$/;
+        $idx = $1;
+        $valueLen = hex($2) * 2;
+        $data = $3;
+        $data =~ m/^(.{$valueLen})(.*)$/;
+        push @event, "3:remoteDevCfg$idx:S1";
+        $data = $2;
+      }
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RPC device configuration response received";
+
+    } elsif ($funcNumber == 0x832 && $remoteManagement eq 'manager') {
+      # link based configuration response
+      $data =~ m/^(..)(..)(.*)$/;
+      my $direction = hex($1) & 0x80 ? 'Out' : 'In';
+      my $linkTableIdx = $2;
+      CommandDeleteReading(undef, "$name remoteLinkCfg$direction$linkTableIdx.*");
+      $data = $3;
+      my $idx;
+      my $valueLen;
+      while (length($data) > 0) {
+        $data =~ m/^(....)(..)(.*)$/;
+        $idx = $1;
+        $valueLen = hex($2) * 2;
+        $data = $3;
+        $data =~ m/^(.{$valueLen})(.*)$/;
+        push @event, "3:remoteLinkCfg$direction$linkTableIdx:$idx:S1";
+        $data = $2;
+      }
+      $remoteLastStatusReturnCode = '00';
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      push @event, "3:remoteLastStatusReturnCode:$remoteLastStatusReturnCode";
+      Log3 $name, 2, "EnOcean $name RPC link table response received";
+
+    } elsif ($funcNumber == 0x850 && $remoteManagement eq 'manager') {
+      # query status answer
+      delete $iohash->{helper}{remoteAnswerWait}{$funcNumber}{hash};
+      my $repeaterFunction = 'off';
+      if (($db[0] & 0xC0) == 0) {
+        $repeaterFunction = 'off';
+      } elsif (($db[0] & 0xC0) == 0x40) {
+        $repeaterFunction = 'on';
+      } elsif (($db[0] & 0xC0) == 0x80) {
+        $repeaterFunction = 'filter';
+      }
+      push @event, "3:remoteRepeaterFunction:$repeaterFunction";
+      push @event, "3:remoteRepeaterLevel:" . (($db[0] & 0x30) == 0x20 ? 2 : 1);
+      push @event, "3:remoteRepeaterFilter:" . ($db[0] & 8 ? 'OR' : 'AND');
+      Log3 $name, 2, "EnOcean $name RPC repeater functions response received";
+
     } else {
-      Log3 $name, 2, "EnOcean $name RMCC/RPC Function Number " . sprintf("%04X", $funcNumber) . " not supported.";
+      Log3 $name, 2, "EnOcean $name RMCC/RPC function number " . sprintf("%03X", $funcNumber) . " not supported.";
     }
+
+  } elsif ($rorg eq "C5" && $packetType == 1) {
+    # remote management >> packetType = 7
+    return $name;
   }
 
   readingsBeginUpdate($hash);
@@ -10149,21 +12288,31 @@ sub EnOcean_Attr(@)
   my $waitingCmds = AttrVal($name, "waitingCmds", 0);
 
   if ($attrName eq "angleTime") {
+    my $channel;
     my $data;
     if (!defined $attrVal) {
-      if (AttrVal($name, "subType", "") eq "blindsCtrl.00") {
+      if (AttrVal($name, "subType", "") =~ m/^blindsCtrl\.0[01]$/) {
         # no rotation
-        $data = "7FFF000705";
+        $data = "7FFF0007F5";
         EnOcean_SndRadio(undef, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
       }
-    } elsif (AttrVal($name, "subType", "") eq "blindsCtrl.00" && $attrVal =~ m/^[+-]?\d+(\.\d+)?$/ && $attrVal >= 0 && $attrVal <= 2.54) {
-      if ($attrVal < 1) {
-        $attrVal = 0;
-      } else {
-        $attrVal = int($attrVal * 10);
+
+    } elsif (AttrVal($name, "subType", "") =~ m/^blindsCtrl\.0[01]$/) {
+      my @attrVal = split(':', $attrVal);
+      for (my $channel = 0; $channel <= $#attrVal && $channel < 4; $channel ++) {
+        if ($attrVal[$channel] =~ m/^\d+(\.\d+)?$/ && $attrVal[$channel] >= 0 && $attrVal[$channel] <= 2.54) {
+          if ($attrVal[$channel] < 0.01) {
+            $attrVal[$channel] = 0;
+          } else {
+            $attrVal[$channel] = int($attrVal[$channel] * 100);
+          }
+          $data = sprintf "7FFF%02X07%02X", $attrVal[$channel], $channel << 4 | 5;
+          EnOcean_SndRadio(0.2 + $channel * 0.5, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
+        } else {
+          $err = "attribute-value [$attrName] = $attrVal wrong";
+        }
       }
-      $data = sprintf "7FFF%02X0705", $attrVal;
-      EnOcean_SndRadio(undef, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
+
     } elsif (AttrVal($name, "subType", "") eq "manufProfile" && AttrVal($name, "manufID", "") eq "00D" &&
              $attrVal =~ m/^[+-]?\d+?$/ && $attrVal >= 1 && $attrVal <= 6) {
 
@@ -10176,26 +12325,35 @@ sub EnOcean_Attr(@)
   } elsif ($attrName eq "alarmAction") {
     my $data;
     if (!defined $attrVal) {
-      if (AttrVal($name, "subType", "") eq "blindsCtrl.00") {
+      if (AttrVal($name, "subType", "") =~ m/^blindsCtrl\.0[01]$/) {
         # no alarm action
-        $data = "7FFFFF0005";
+        $data = "7FFFFF00F5";
         EnOcean_SndRadio(undef, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
       }
-    } elsif ($attrVal =~ m/(no|stop|opens|closes)$/) {
-      if (AttrVal($name, "subType", "") eq "blindsCtrl.00") {
-        my $alarmAction;
-        if ($attrVal eq "no") {
-          $alarmAction = 0;
-        } elsif ($attrVal eq "stop") {
-          $alarmAction = 1;
-        } elsif ($attrVal eq "opens") {
-          $alarmAction = 2;
-        } elsif ($attrVal eq "closes") {
-          $alarmAction = 3;
+
+    } elsif (AttrVal($name, "subType", "") =~ m/^blindsCtrl\.0[01]$/) {
+      my @attrVal = split(':', $attrVal);
+      for (my $channel = 0; $channel <= $#attrVal && $channel < 4; $channel ++) {
+        if ($attrVal =~ m/no|stop|opens|closes$/) {
+          my $alarmAction = 0;
+          if ($attrVal[$channel] eq "no") {
+            $alarmAction = 0;
+          } elsif ($attrVal[$channel] eq "stop") {
+            $alarmAction = 1;
+          } elsif ($attrVal[$channel] eq "opens") {
+            $alarmAction = 2;
+          } elsif ($attrVal[$channel] eq "closes") {
+            $alarmAction = 3;
+          } else {
+            $err = "attribute-value [$attrName] = $attrVal wrong";
+          }
+          $data = sprintf "7FFFFF%02X%02X", $alarmAction, $channel << 4 | 5;
+          EnOcean_SndRadio(0.2 + $channel * 0.5, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
+        } else {
+          $err = "attribute-value [$attrName] = $attrVal wrong";
         }
-        $data = sprintf "7FFFFF%02X05", $alarmAction;
-        EnOcean_SndRadio(undef, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
       }
+
     } else {
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
@@ -10245,6 +12403,40 @@ sub EnOcean_Attr(@)
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
+  } elsif ($attrName eq "defaultChannel") {
+    my $defaultChannel = '';
+    my $subType = AttrVal($name, "subType", "");
+    if ($subType eq "actuator.01") {
+      $defaultChannel = join("|", @EnO_defaultChannel);
+    } elsif ($subType =~ m/^blindsCtrl\.0[01]$/) {
+      $defaultChannel = '[1234]|all';
+    }
+
+    if (!defined $attrVal){
+
+    } elsif ($attrVal !~ m/^($defaultChannel)$/) {
+      $err = "attribute-value [$attrName] = $attrVal wrong";
+    }
+
+  } elsif ($attrName eq "demandRespAction") {
+    if (!defined $attrVal){
+
+    } else {
+      my %specials = ("%TARGETNAME" => $name,
+                      "%NAME" => $name,
+                      "%TARGETTYPE" => '',
+                      "%TYPE" => '',
+                      "%LEVEL" => '',
+                      "%SETPOINT" => '',
+                      "%POWERUSAGE" => '',
+                      "%POWERUSAGESCALE" => '',
+                      "%POWERUSAGELEVEL" => '',
+                      "%TARGETSTATE" => '',
+                      "%STATE" => ''
+                     );
+      $err = perlSyntaxCheck($attrVal, %specials);
+    }
+
   } elsif ($attrName eq "demandRespRandomTime") {
     if (!defined $attrVal) {
 
@@ -10271,7 +12463,7 @@ sub EnOcean_Attr(@)
     if (!defined $attrVal){
 
     } elsif ($attrVal =~ m/^[\dA-Fa-f]{2}$/) {
-      # actions see EnOcean_Notify, global ATTR 
+      # actions see EnOcean_Notify, global ATTR
 
     } elsif ($attrVal =~ m/^\d+$/ && $attrVal >= 0 && $attrVal <= 255) {
 
@@ -10303,12 +12495,12 @@ sub EnOcean_Attr(@)
   } elsif ($attrName eq "displayContent") {
     if (!defined $attrVal){
 
-    } elsif ($attrVal =~ m/^(humidity|off|setPointTemp|tempertureExtern|temperatureIntern|time|default|no_change)$/) {
+    } elsif ($attrVal =~ m/^(humidity|off|setpointTemp|tempertureExtern|temperatureIntern|time|default|no_change)$/) {
       if (AttrVal($name, "subType", "") eq "roomCtrlPanel.00") {
         $waitingCmds |= 64;
         readingsSingleUpdate($hash, "waitingCmds", $waitingCmds, 0);
       }
-    } else {													
+    } else {
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
@@ -10319,11 +12511,47 @@ sub EnOcean_Attr(@)
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
-  } elsif ($attrName eq "eep") {
+  } elsif ($attrName eq "eep" || $attrName eq "remoteEEP") {
     if (!defined $attrVal){
 
     } elsif ($attrVal !~ m/^[\dA-Fa-f]{2}-[\dA-Fa-f]{2}-[\dA-Fa-f]{2}$/) {
       $err = "attribute-value [$attrName] = $attrVal wrong";
+    }
+
+  } elsif ($attrName eq "model") {
+    if (!defined $attrVal){
+
+    } else {
+      # set model specific attributes
+      foreach my $attrCntr (keys %{$EnO_models{$attrVal}{attr}}) {
+        if ($attrCntr eq "remoteID") {
+          if (exists $hash->{DEF}) {
+            $attr{$name}{$attrCntr} = $hash->{DEF};
+          } else {
+            $attr{$name}{$attrCntr} = EnOcean_CheckSenderID($EnO_models{$attrVal}{attr}{$attrCntr}, $hash->{IODev}{NAME}, "00000000");
+          }
+        } else {
+          $attr{$name}{$attrCntr} = $EnO_models{$attrVal}{attr}{$attrCntr};
+        }
+      }
+      if (exists $EnO_models{$attrVal}{xml}) {
+        # read xml device description to $hash->{helper}
+        if ($xmlFunc == 1) {
+          my $xmlFile = $attr{global}{modpath} . $EnO_models{$attrVal}{xml}{xmlDescrLocation};
+          if (-e -f -r $xmlFile) {
+            $hash->{helper} = $xml->XMLin($xmlFile);
+            if (exists $hash->{helper}{Device}) {
+
+            } else {
+              Log3 $name, 2, "EnOcean $name <attr> Device Description not defined";
+            }
+          } else {
+            Log3 $name, 2, "EnOcean $name <attr> Device Description file $xmlFile not exists";
+          }
+        } else {
+          Log3 $name, 2, "EnOcean $name <attr> XML functions are not available";
+        }
+      }
     }
 
   } elsif ($attrName eq "gpDef") {
@@ -10379,7 +12607,7 @@ sub EnOcean_Attr(@)
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
-  } elsif ($attrName eq "manufID") {
+  } elsif ($attrName eq "manufID" || $attrName eq "remoteManufID") {
     if (!defined $attrVal){
 
     } elsif ($attrVal !~ m/^[0-7][\dA-Fa-f]{2}$/) {
@@ -10405,6 +12633,18 @@ sub EnOcean_Attr(@)
 
     } elsif ($attrVal !~ m/^[1-5]$/) {
       $err = "attribute-value [$attrName] = $attrVal wrong";
+    }
+
+  } elsif ($attrName eq "observeErrorAction") {
+    if (!defined $attrVal){
+
+    } else {
+      my %specials = ("%NAME" => $name,
+                      "%FAILEDDEV" => '',
+                      "%TYPE"  => '',
+                      "%EVENT" => ''
+                     );
+      $err = perlSyntaxCheck($attrVal, %specials);
     }
 
   } elsif ($attrName eq "observeInterval") {
@@ -10447,9 +12687,9 @@ sub EnOcean_Attr(@)
     }
 
   } elsif ($attrName eq "pidDeltaTreshold") {
-    my $reFloatpos = '^([\\+]?\\d+\\.?\d*$)';  
+    my $reFloatpos = '^([\\+]?\\d+\\.?\d*$)';
     if (!defined $attrVal) {
-    
+
     } elsif ($attrVal !~ m/$reFloatpos/) {
       $err = "attribute-value [$attrName] = $attrVal is not a integer number or not valid";
     }
@@ -10469,7 +12709,7 @@ sub EnOcean_Attr(@)
     }
 
   } elsif ($attrName =~ m/^pidFactor_.$/) {
-    my $reFloatpos = '^([\\+]?\\d+\\.?\d*$)';  
+    my $reFloatpos = '^([\\+]?\\d+\\.?\d*$)';
     if (!defined $attrVal) {
 
     } elsif ($attrVal !~ m/$reFloatpos/) {
@@ -10522,17 +12762,65 @@ sub EnOcean_Attr(@)
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
+  } elsif ($attrName eq "rcvRespAction") {
+    if (!defined $attrVal){
+
+    } elsif (AttrVal($name, "subType", "") eq "hvac.01") {
+      my %specials = ("%ACTUATORSTATE" => '',
+                      "%BATTERY" => '',
+                      "%COVER" => '',
+                      "%ENERGYINPUT" => '',
+                      "%ENERGYSTORAGE" => '',
+                      "%MAINTENANCEMODE" => '',
+                      "%NAME" => $name,
+                      "%OPERATIONMODE" => '',
+                      "%ROOMTEMP" => '',
+                      "%SELFCTRL" => '',
+                      "%SETPOINT" => '',
+                      "%SETPOINTTEMP" => '',
+                      "%SUMMERMODE" => '',
+                      "%TEMPERATURE" => '',
+                      "%WINDOW" => ''
+                     );
+      $err = perlSyntaxCheck($attrVal, %specials);
+    } elsif (AttrVal($name, "subType", "") eq "hvac.04") {
+      my %specials = ("%BATTERY" => '',
+                      "%FEEDTEMP" => '',
+                      "%MAINTENANCEMODE" => '',
+                      "%NAME" => $name,
+                      "%OPERATIONMODE" => '',
+                      "%ROOMTEMP" => '',
+                      "%SETPOINT" => '',
+                      "%SETPOINTTEMP" => '',
+                      "%SUMMERMODE" => '',
+                      "%TEMPERATURE" => ''
+                     );
+      $err = perlSyntaxCheck($attrVal, %specials);
+    }
+
+  } elsif ($attrName eq "remoteID") {
+    if (!defined $attrVal){
+      # delete old pointer
+      delete $modules{EnOcean}{defptr}{$attr{$name}{$attrName}} if (exists($attr{$name}{$attrName}) && $attr{$name}{$attrName} ne $hash->{DEF});
+    } elsif ($attrVal =~ m/^[\dA-F]{8}$/) {
+      # delete old pointer
+      delete $modules{EnOcean}{defptr}{$attr{$name}{$attrName}} if (exists($attr{$name}{$attrName}) && $attr{$name}{$attrName} ne $hash->{DEF});
+      $modules{EnOcean}{defptr}{$attrVal} = $hash;
+    } else {
+      $err = "attribute-value [$attrName] = $attrVal wrong";
+    }
+
   } elsif ($attrName eq "remoteManagement") {
     if (!defined $attrVal){
 
-    } elsif ($attrVal !~ m/^(off|on)$/) {
+    } elsif ($attrVal !~ m/^client|manager|off$/) {
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
   } elsif ($attrName eq "reposition") {
     if (!defined $attrVal){
 
-    } elsif ($attrVal !~ m/^(directly|opens|closes)$/) {
+    } elsif ($attrVal !~ m/^directly|opens|closes$/) {
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
@@ -10572,12 +12860,12 @@ sub EnOcean_Attr(@)
     if (!defined $attrVal){
 
     } elsif ($attrVal =~ m/^\d+?$/ && $attrVal >= 16 && $attrVal <= 256) {
-    
+
     } else {
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
-  } elsif ($attrName eq "secCode") {
+  } elsif ($attrName eq "remoteCode") {
     if (!defined $attrVal){
 
     } elsif ($attrVal !~ m/^[\dA-Fa-f]{8}$/ || $attrVal eq "00000000" || uc($attrVal) eq "FFFFFFFF") {
@@ -10619,18 +12907,39 @@ sub EnOcean_Attr(@)
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
+  } elsif ($attrName eq "setpointSummerMode") {
+    if (!defined $attrVal){
+
+    } elsif ($attrVal !~ m/^\d+$/ && $attrVal >= 0 && $attrVal <= 100) {
+      $err = "attribute-value [$attrName] = $attrVal wrong";
+    }
+
+  } elsif ($attrName eq "settingAccuracy") {
+    if (!defined $attrVal){
+
+    } elsif ($attrVal !~ m/^high|low$/) {
+      $err = "attribute-value [$attrName] = $attrVal wrong";
+    }
+
   } elsif ($attrName eq "shutTime") {
     my $data;
     if (!defined $attrVal) {
-      if (AttrVal($name, "subType", "") eq "blindsCtrl.00") {
+      if (AttrVal($name, "subType", "") =~ m/^blindsCtrl\.0[01]$/) {
         # set shutTime to max
-        $data = "7530FF0705";
+        $data = "7530FF07F5";
         EnOcean_SndRadio(undef, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
       }
-    } elsif (AttrVal($name, "subType", "") eq "blindsCtrl.00" && $attrVal =~ m/^[+-]?\d+$/ && $attrVal >= 5 && $attrVal <= 300) {
-      $attrVal = int($attrVal * 100);
-      $data = sprintf "%04XFF0705", $attrVal;
-      EnOcean_SndRadio(undef, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
+    } elsif (AttrVal($name, "subType", "") =~ m/^blindsCtrl\.0[01]$/) {
+      my @attrVal = split(':', $attrVal);
+      for (my $channel = 0; $channel <= $#attrVal && $channel < 4; $channel ++) {
+        if ($attrVal[$channel] =~ m/^\d+$/ && $attrVal[$channel] >= 5 && $attrVal[$channel] <= 300) {
+          $attrVal[$channel] = int($attrVal[$channel] * 100);
+          $data = sprintf "%04XFF07%02X", $attrVal[$channel], $channel << 4 | 5;
+          EnOcean_SndRadio(0.2 + $channel * 0.5, $hash, 1, "D2", $data, AttrVal($name, "subDef", "00000000"), "00", $hash->{DEF});
+        } else {
+          $err = "attribute-value [$attrName] = $attrVal wrong";
+        }
+      }
     } elsif (AttrVal($name, "subType", "") eq "manufProfile" && AttrVal($name, "manufID", "") eq "00D" &&
              $attrVal =~ m/^[+-]?\d+$/ && $attrVal >= 1 && $attrVal <= 255) {
 
@@ -10638,21 +12947,52 @@ sub EnOcean_Attr(@)
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
+  } elsif ($attrName eq "signal") {
+    if (!defined $attrVal){
+
+    } elsif ($attrVal !~ m/^off|on$/) {
+      $err = "attribute-value [$attrName] = $attrVal wrong";
+    }
+
+  } elsif ($attrName eq "signOfLife") {
+    if (!defined $attrVal) {
+
+    } elsif ($attrVal !~ m/^off|on$/) {
+      $err = "attribute-value [$attrName] = $attrVal is not a integer number or not valid";
+    }
+
+  } elsif ($attrName eq "signOfLifeInterval") {
+    if (!defined $attrVal) {
+
+    } elsif ($attrVal !~ m/^\d+?$/ || $attrVal < 1 || $attrVal > 65535) {
+      $err = "attribute-value [$attrName] = $attrVal is not a integer number or not valid";
+    }
+
   } elsif ($attrName eq "summerMode") {
     if (!defined $attrVal){
 
     } elsif ($attrVal eq 'on') {
       if (AttrVal($name, 'subType', '') =~ m/^hvac\.0(1|4)$/ && AttrVal($name, 'summerMode', 'off') eq 'off') {
-        readingsSingleUpdate($hash, 'waitingCmds', 'summerMode', 0);
+        readingsBeginUpdate($hash);
+        readingsBulkUpdate($hash, 'waitingCmds', 'summerMode');
+        readingsBulkUpdate($hash, 'operationModeRestore', ReadingsVal($name, 'operationMode', 'setpoint'));
+        readingsBulkUpdate($hash, 'setpointTempRestore', ReadingsVal($name, 'setpointTemp', 20));
+        readingsBulkUpdate($hash, 'operationMode', 'setpoint');
+        readingsEndUpdate($hash, 0);
 
       } else {
         # attr not changed
-      
+
       }
     } elsif ($attrVal eq 'off') {
       if (AttrVal($name, 'subType', '') =~ m/^hvac\.0(1|4)$/ && AttrVal($name, 'summerMode', 'off') eq 'on') {
-        readingsSingleUpdate($hash, 'waitingCmds', 'runInit', 0);        
-      
+        readingsBeginUpdate($hash);
+        readingsBulkUpdate($hash, 'waitingCmds', 'runInit');
+        readingsBulkUpdate($hash, 'operationMode', ReadingsVal($name, 'operationModeRestore', 'setpoint'));
+        readingsBulkUpdate($hash, 'setpointTemp', ReadingsVal($name, 'setpointTempRestore', 20));
+        readingsEndUpdate($hash, 0);
+        CommandDeleteReading(undef, "$name .*Restore");
+
       } else {
        # attr not changed
       }
@@ -10660,11 +13000,11 @@ sub EnOcean_Attr(@)
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
-  } elsif ($attrName =~ m/^subDef.?/) {
+  } elsif ($attrName =~ m/^subDef.?|postmasterID/) {
     if (!defined $attrVal){
 
     } elsif ($attrVal eq "getNextID") {
-      # actions see EnOcean_Notify, global ATTR 
+      # actions see EnOcean_Notify, global ATTR
 
     } elsif ($attrVal !~ m/^[\dA-Fa-f]{8}$/) {
       $err = "attribute-value [$attrName] = $attrVal wrong";
@@ -10678,6 +13018,13 @@ sub EnOcean_Attr(@)
     } else {
       #RemoveInternalTimer($hash);
       $err = "attribute-value [$attrName] = $attrVal is not a valid number";
+    }
+
+  } elsif ($attrName eq "teachMethod") {
+    if (!defined $attrVal){
+
+    } elsif ($attrVal !~ m/^1BS|4BS|confirm|GP|RPS|smartAck|STE|UTE$$/) {
+      $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
   } elsif ($attrName eq "temperatureScale") {
@@ -10724,6 +13071,13 @@ sub EnOcean_Attr(@)
       $err = "attribute-value [$attrName] = $attrVal wrong";
     }
 
+  } elsif ($attrName eq "trackerWakeUpCycle") {
+    if (!defined $attrVal){
+
+    } elsif ($attrVal !~ m/^10|20|30|40|60|120|180|240|3600|86400$/) {
+      $err = "attribute-value [$attrName] = $attrVal wrong";
+    }
+
   } elsif ($attrName eq "updateState") {
     if (!defined $attrVal){
 
@@ -10746,11 +13100,11 @@ sub EnOcean_Attr(@)
       if ($attrVal >= 1500 && AttrVal($name, 'wakeUpCycle', 300) < 1500) {
         # switch to summer mode
         $attr{$name}{summerMode} = 'on';
-        readingsSingleUpdate($hash, 'waitingCmds', 'summerMode', 0);        
+        readingsSingleUpdate($hash, 'waitingCmds', 'summerMode', 0);
       } elsif ($attrVal < 1500 && AttrVal($name, 'wakeUpCycle', 300) >= 1500) {
         # runInit necessary before switch to operation mode
         $attr{$name}{summerMode} = 'off';
-        readingsSingleUpdate($hash, 'waitingCmds', 'runInit', 0);        
+        readingsSingleUpdate($hash, 'waitingCmds', 'runInit', 0);
       }
     } else {
       $err = "attribute-value [$attrName] = $attrVal wrong";
@@ -10766,7 +13120,6 @@ sub EnOcean_Notify(@)
   my $name = $hash->{NAME};
   my $devName = $dev->{NAME};
   return undef if (AttrVal($name ,"disable", 0) > 0);
-  #return undef if ($devName eq $name);
 
   my $max = int(@{$dev->{CHANGED}});
   for (my $i = 0; $i < $max; $i++) {
@@ -10775,12 +13128,11 @@ sub EnOcean_Notify(@)
 
     if ($devName eq $name) {
       my @parts = split(/: | /, $s);
-#####
       if (exists($hash->{helper}{stopped}) && !$hash->{helper}{stopped} && $parts[0] eq "temperature") {
         # PID regulator: calc gradient for delta as base for d-portion calculation
         my $setpointTemp = ReadingsVal($name, "setpointTemp", undef);
         my $temperature = $parts[1];
-        # ---- build difference current - old value 
+        # ---- build difference current - old value
         # calc difference of delta/deltaOld
         my $delta = $setpointTemp - $temperature if (defined($setpointTemp));
         my $deltaOld = ($hash->{helper}{deltaOld} + 0) if (defined($hash->{helper}{deltaOld}));
@@ -10801,7 +13153,7 @@ sub EnOcean_Notify(@)
         $hash->{helper}{deltaOldTS} = TimeNow();
         Log3 $name, 5, "EnOcean $name <notify> $devName $s";
       }
-      
+
     } elsif ($devName eq "global" && $s =~ m/^RENAMED ([^ ]*) ([^ ]*)$/) {
       if (defined AttrVal($name, "temperatureRefDev", undef)) {
         if (AttrVal($name, "temperatureRefDev", undef) eq $1) {
@@ -10862,7 +13214,7 @@ sub EnOcean_Notify(@)
     } elsif ($devName eq "global" && $s =~ m/^DEFINED ([^ ]*)$/) {
       my $definedName = $1;
       if ($name eq $definedName) {
-        if (exists($attr{$name}{subType}) && $attr{$name}{subType} eq "hvac.04") {
+        if (exists($attr{$name}{subType}) && $attr{$name}{subType} =~ m/^hvac\.0(1|4)$/) {
           # control PID regulatior
           if (AttrVal($name, 'pidCtrl', 'on') eq 'on' && ReadingsVal($name, 'maintenanceMode', 'off') eq 'off') {
             EnOcean_setPID(undef, $hash, 'start', ReadingsVal($name, "setpoint", ''));
@@ -10876,10 +13228,14 @@ sub EnOcean_Notify(@)
       #Log3($name, 2, "EnOcean $name <notify> DEFINED $definedName");
 
     } elsif ($devName eq "global" && $s =~ m/^INITIALIZED$/) {
+      # assign remote management defptr
+      if (exists $attr{$name}{remoteID}) {
+        $modules{EnOcean}{defptr}{$attr{$name}{remoteID}} = $hash;
+      }
       if (AttrVal($name ,"subType", "") eq "roomCtrlPanel.00") {
         CommandDeleteReading(undef, "$name waitingCmds");
       }
-      if (exists($attr{$name}{subType}) && $attr{$name}{subType} eq "hvac.04") {
+      if (exists($attr{$name}{subType}) && $attr{$name}{subType} =~ m/^hvac\.0(1|4)$/) {
         # control PID regulatior
         if (AttrVal($name, 'pidCtrl', 'on') eq 'on' && ReadingsVal($name, 'maintenanceMode', 'off') eq 'off') {
           EnOcean_setPID(undef, $hash, 'start', ReadingsVal($name, "setpoint", ''));
@@ -10889,15 +13245,20 @@ sub EnOcean_Notify(@)
       }
       if (exists($attr{$name}{subType}) && $attr{$name}{subType} eq "switch.05") {
         my @getCmd = ($name, 'state');
-        EnOcean_Get($hash, @getCmd);      
+        EnOcean_Get($hash, @getCmd);
       }
+      EnOcean_ReadDevDesc(undef, $hash);
       #Log3($name, 2, "EnOcean $name <notify> INITIALIZED");
 
     } elsif ($devName eq "global" && $s =~ m/^REREADCFG$/) {
+      # assign remote management defptr
+      if (exists $attr{$name}{remoteID}) {
+        $modules{EnOcean}{defptr}{$attr{$name}{remoteID}} = $hash;
+      }
       if (AttrVal($name ,"subType", "") eq "roomCtrlPanel.00") {
         CommandDeleteReading(undef, "$name waitingCmds");
       }
-      if (exists($attr{$name}{subType}) && $attr{$name}{subType} eq "hvac.04") {
+      if (exists($attr{$name}{subType}) && $attr{$name}{subType} =~ m/^hvac\.0(1|4)$/) {
         # control PID regulatior
         if (AttrVal($name, 'pidCtrl', 'on') eq 'on' && ReadingsVal($name, 'maintenanceMode', 'off') eq 'off') {
           EnOcean_setPID(undef, $hash, 'start', ReadingsVal($name, "setpoint", ''));
@@ -10906,6 +13267,7 @@ sub EnOcean_Notify(@)
         }
       }
 
+      EnOcean_ReadDevDesc(undef, $hash);
       #Log3($name, 2, "EnOcean $name <notify> REREADCFG");
 
     } elsif ($devName eq "global" && $s =~ m/^ATTR ([^ ]*) ([^ ]*) ([^ ]*)$/) {
@@ -10914,7 +13276,7 @@ sub EnOcean_Notify(@)
       if ($name eq $sdev && $attrName =~ m/^subDef.?/ && $attrVal eq "getNextID") {
         $attr{$name}{$attrName} = '0' x 8;
         $attr{$name}{$attrName} = EnOcean_CheckSenderID("getNextID", $defs{$name}{IODev}{NAME}, "00000000");
-        Log3 $name, 2, "EnOcean set $name attribute $attrName to " . $attr{$name}{$attrName};      
+        Log3 $name, 2, "EnOcean set $name attribute $attrName to " . $attr{$name}{$attrName};
       } elsif ($attrName eq "devChannel" && $attrVal =~ m/^[\dA-Fa-f]{2}$/) {
         # convert old format
         $attr{$name}{$attrName} = hex $attrVal;
@@ -10925,7 +13287,7 @@ sub EnOcean_Notify(@)
 
     } elsif ($devName eq "global" && $s =~ m/^MODIFIED ([^ ]*)$/) {
       #Log3($name, 5, "EnOcean $name <notify> MODIFIED");
-      
+
     } elsif ($devName eq "global" && $s =~ m/^SAVE$/) {
       #Log3($name, 5, "EnOcean $name <notify> SAVE");
 
@@ -10960,22 +13322,22 @@ sub EnOcean_Notify(@)
           if (defined $actionCmd) {
             if ($parts[0] =~ m/^on|off$/) {
               #Log3($name, 3, "EnOcean $name <notify> demandRespRefDev: $devName Cmd: set $parts[0]");
-              my %specials= ("%TARGETNAME" => $name,
-                             "%NAME" => $devName,
-                             "%TARGETTYPE" => $hash->{TYPE},
-                             "%TYPE" => $dev->{TYPE},
-                             "%LEVEL" => ReadingsVal($devName, "level", 15),
-                             "%SETPOINT"  => ReadingsVal($devName, "setpoint", 255),
-                             "%POWERUSAGE"  => ReadingsVal($devName, "powerUsage", 100),
-                             "%POWERUSAGESCALE"  => ReadingsVal($devName, "powerUsageScale", "max"),
-                             "%POWERUSAGELEVEL"  => ReadingsVal($devName, "powerUsageLevel", "max"),
-                             "%TARGETSTATE" => ReadingsVal($name, "state", ""),
-                             "%STATE" => ReadingsVal($devName, "state", "off")
-                            );
+              my %specials = ("%TARGETNAME" => $name,
+                              "%NAME" => $devName,
+                              "%TARGETTYPE" => $hash->{TYPE},
+                              "%TYPE" => $dev->{TYPE},
+                              "%LEVEL" => ReadingsVal($devName, "level", 15),
+                              "%SETPOINT" => ReadingsVal($devName, "setpoint", 255),
+                              "%POWERUSAGE" => ReadingsVal($devName, "powerUsage", 100),
+                              "%POWERUSAGESCALE" => ReadingsVal($devName, "powerUsageScale", "max"),
+                              "%POWERUSAGELEVEL" => ReadingsVal($devName, "powerUsageLevel", "max"),
+                              "%TARGETSTATE" => ReadingsVal($name, "state", ""),
+                              "%STATE" => ReadingsVal($devName, "state", "off")
+                             );
               # action exec
               $actionCmd = EvalSpecials($actionCmd, %specials);
               my $ret = AnalyzeCommandChain(undef, $actionCmd);
-              Log3 $name, 2, "$name: $ret" if($ret);
+              Log3 $name, 2, "EnOcean $name demandRespAction ERROR: $ret" if($ret);
             }
 
           } elsif (AttrVal($name, "subType", "") =~ m/^switch.*$/ || AttrVal($name, "subTypeSet", "") =~ m/^switch.*$/) {
@@ -11088,7 +13450,7 @@ sub EnOcean_Notify(@)
       #Log3 $name, 2, "EnOcean $name <notify> $devName $s";
       }
 
-      if (defined(AttrVal($name, "temperatureRefDev", undef)) && 
+      if (defined(AttrVal($name, "temperatureRefDev", undef)) &&
           $devName eq AttrVal($name, "temperatureRefDev", "") &&
           $parts[0] eq "temperature") {
         if (AttrVal($name, "subType", "") eq "hvac.01") {
@@ -11101,7 +13463,7 @@ sub EnOcean_Notify(@)
         }
       }
 
-      if (defined(AttrVal($name, "setpointRefDev", undef)) && 
+      if (defined(AttrVal($name, "setpointRefDev", undef)) &&
           $devName eq AttrVal($name, "setpointRefDev", "") &&
           $parts[0] eq "setpoint") {
         if (AttrVal($name, "subType", '') =~ m/^hvac\.0(1|4)$/) {
@@ -11111,7 +13473,7 @@ sub EnOcean_Notify(@)
         }
       }
 
-      if (defined(AttrVal($name, "setpointTempRefDev", undef)) && 
+      if (defined(AttrVal($name, "setpointTempRefDev", undef)) &&
           $devName eq AttrVal($name, "setpointTempRefDev", "") &&
           $parts[0] eq "setpointTemp") {
         if (AttrVal($name, "subType", '') =~ m/^hvac\.0(1|4)$/) {
@@ -11149,9 +13511,9 @@ sub EnOcean_setPID($$$) {
   @{$hash->{helper}{calcPID}} = (undef, $hash, $cmd);
   if ($cmd eq 'stop' || AttrVal($name, 'pidCtrl', 'on') eq 'off') {
     $hash->{helper}{stopped} = 1;
-    readingsSingleUpdate($hash, "pidState", 'stoped', 0);
+    readingsSingleUpdate($hash, "pidState", 'stopped', 0);
     RemoveInternalTimer($hash->{helper}{calcPID});
-    $response = 'stoped';
+    $response = 'stopped';
   } elsif ($cmd eq 'start' || $cmd eq 'actuator') {
     $hash->{helper}{stopped} = 0;
     $hash->{helper}{adjust}  = $adjust;
@@ -11167,25 +13529,20 @@ sub EnOcean_calcPID($) {
   my ($crtl, $hash, $cmd) = @$pidParam;
   my $name = $hash->{NAME};
   my ($err, $response, $logLevel, $setpoint) = (undef, $cmd, 5, 0);
-#####  
-
   my $reUINT     = '^([\\+]?\\d+)$';               # uint without whitespaces
   my $re01       = '^([0,1])$';                    # only 0,1
   my $reINT      = '^([\\+,\\-]?\\d+$)';           # int
   my $reFloatpos = '^([\\+]?\\d+\\.?\d*$)';        # gleitpunkt positiv float
   my $reFloat    = '^([\\+,\\-]?\\d+\\.?\d*$)';    # float
-
   my $sensor  = $name;
   my $reading = 'temperature';
   my $regexp  = $reFloat;
-  
   my $DEBUG_Sensor    = AttrVal( $name, 'pidDebugSensor',    '0' ) eq '1';
   my $DEBUG_Actuation = AttrVal( $name, 'pidDebugActuation', '0' ) eq '1';
   my $DEBUG_Delta     = AttrVal( $name, 'pidDebugDelta',     '0' ) eq '1';
   my $DEBUG_Calc      = AttrVal( $name, 'pidDebugCalc',      '0' ) eq '1';
   my $DEBUG_Update    = AttrVal( $name, 'pidDebugUpdate',    '0' ) eq '1';
   my $DEBUG = $DEBUG_Sensor || $DEBUG_Actuation || $DEBUG_Calc || $DEBUG_Delta || $DEBUG_Update;
-
   my $actuation        = "";
   my $actuationDone    = ReadingsVal( $name, 'setpointSet', ReadingsVal( $name, 'setpoint', ""));
   my $actuationCalc    = ReadingsVal( $name, 'setpointCalc', "" );
@@ -11194,14 +13551,11 @@ sub EnOcean_calcPID($) {
     ( $hash->{helper}{actorTimestamp} )
     ? $hash->{helper}{actorTimestamp}
     : FmtDateTime( gettimeofday() - 3600 * 24 );
-    
   my $desired = '';
-
   my $sensorStr = ReadingsVal($name, 'temperature',"");
   my $sensorValue = "";
   my $sensorTS = ReadingsTimestamp($name, 'temperature', undef);
   my $sensorIsAlive = 0;
-
   my $iPortion = ReadingsVal( $name, 'p_i',   0 );
   my $pPortion = ReadingsVal( $name, 'p_p',   "" );
   my $dPortion = ReadingsVal( $name, 'p_d',   "" );
@@ -11479,7 +13833,7 @@ sub EnOcean_calcPID($) {
       # execute command
       my $ret;
       #$ret = fhem $cmd;
-      
+
       $setpoint = $actuation;
       $actuationDone = $actuation;
 
@@ -11533,7 +13887,7 @@ sub EnOcean_calcPID($) {
   Log3($name, 5, "EnOcean $name EnOcean_calcPID Cmd: $cmd pidState: $stateStr T: $sensorValue SP: $setpoint SPT: $desired");
   @{$hash->{helper}{calcPID}} = (undef, $hash, 'periodic');
   RemoveInternalTimer($hash->{helper}{calcPID});
-  InternalTimer(gettimeofday() + $hash->{helper}{calcInterval} * 1.02, "EnOcean_calcPID", $hash->{helper}{calcPID}, 0);  
+  InternalTimer(gettimeofday() + $hash->{helper}{calcInterval} * 1.02, "EnOcean_calcPID", $hash->{helper}{calcPID}, 0);
   return ($err, $logLevel, $response);
 }
 
@@ -11612,7 +13966,6 @@ EnOcean_roomCtrlPanel_00Snd($$$$$$$$)
       # feetback
 
     }
-
 
   } elsif ($mid == 1) {
     # data message
@@ -11741,7 +14094,7 @@ EnOcean_roomCtrlPanel_00Cmd($$$$)
       my $displayContentVal = 0;
       my %displayContent = ("humidity" => 7,
                             "off" => 6,
-                            "setPointTemp" => 5,
+                            "setpointTemp" => 5,
                             "tempertureExtern" => 4,
                             "temperatureIntern" => 3,
                             "time" => 2,
@@ -12041,7 +14394,7 @@ sub EnOcean_CreateSVG($$$)
         CommandDelete(undef, $weblinkName);
         Log3 $hash->{NAME}, 5, "EnOcean_CreateSVG: device $weblinkName deleted";
       }
-    }   
+    }
   }
   if (!defined(AttrVal($autocreateName, "disable", undef)) && exists($defs{$filelogName})) {
     if (exists $EnO_eepConfig{$eep}{GPLOT}) {
@@ -12078,7 +14431,7 @@ sub EnOcean_CreateSVG($$$)
             last;
           }
         }
-      } 
+      }
     }
   }
   return undef;
@@ -12112,8 +14465,8 @@ sub EnOcean_readingsSingleUpdate($) {
   return;
 }
 
-sub EnOcean_4BSRespWait($$$) {          
-  my ($ctrl, $hash, $subDef) = @_;        
+sub EnOcean_4BSRespWait($$$) {
+  my ($ctrl, $hash, $subDef) = @_;
   my $IODev = $hash->{IODev}{NAME};
   my $IOHash = $defs{$IODev};
   $hash->{IODev}{helper}{"4BSRespWait"}{$subDef}{teachInReq} = "out";
@@ -12121,9 +14474,9 @@ sub EnOcean_4BSRespWait($$$) {
   if (!exists($hash->{IODev}{Teach})) {
     # enable teach-in receiving for 3 sec
     $hash->{IODev}{Teach} = 1;
-    my %timeoutHash = (hash => $IOHash, function => "4BSRespTimeout", helper => "4BSRespWait");
-    RemoveInternalTimer(\%timeoutHash);
-    InternalTimer(gettimeofday() + 3, "EnOcean_RespTimeout", \%timeoutHash, 0);
+    RemoveInternalTimer($hash->{helper}{timer}{"4BSRespTimeout"}) if(exists $hash->{helper}{timer}{"4BSRespTimeout"});
+    $hash->{helper}{timer}{"4BSRespTimeout"} = {hash => $IOHash, function => "4BSRespTimeout", helper => "4BSRespWait"};
+    InternalTimer(gettimeofday() + 3, 'EnOcean_RespTimeout', $hash->{helper}{timer}{"4BSRespTimeout"}, 0);
   }
   return;
 }
@@ -12296,7 +14649,7 @@ sub EnOcean_SndCdm($$$$$$$$)
   my ($seq, $idx, $len, $dataPart, $dataPartLen) = (0, 0, length($data) / 2, undef, 14);
   # split telelegram with optional data
   $dataPartLen = 9 if ($destinationID ne "FFFFFFFF");
-  if ($len > $dataPartLen) {
+  if ($packetType == 1 && $len > $dataPartLen) {
     # first CDM telegram
     if ($dataPartLen == 14) {
       $data =~ m/^(....................)(.*)$/;
@@ -12370,6 +14723,13 @@ sub EnOcean_SndRadio($$$$$$$$)
     $header = sprintf "%04X%02X%02X", (length($data) / 2 + 6), $odataLength, $packetType;
     Log3 $hash->{NAME}, 4, "EnOcean $hash->{NAME} sent PacketType: $packetType RORG: $rorg DATA: $data SenderID: $senderID STATUS: $status ODATA: $odata";
     $data = $rorg . $data . $senderID . $status . $odata;
+
+  } elsif ($packetType == 2 || $packetType == 6) {
+    # smart ack commands
+    # Data Length:4 Optional Length:2 Packet Type:2
+    $header = sprintf "%04X%02X%02X", length($data) / 2, 0, $packetType;
+    Log3 $hash->{NAME}, 4, "EnOcean $hash->{NAME} sent PacketType: $packetType DATA: $data";
+
   } elsif ($packetType == 7) {
     my $delay = 0;
     $delay = 1 if ($destinationID eq "FFFFFFFF");
@@ -12379,9 +14739,24 @@ sub EnOcean_SndRadio($$$$$$$$)
     $odataLength = 10;
     # Data Length:4 Optional Length:2 Packet Type:2
     $header = sprintf "%04X%02X%02X", (length($data) / 2), $odataLength, $packetType;
-    Log3 $hash->{NAME}, 3, "EnOcean $hash->{NAME} sent PacketType: $packetType DATA: $data ODATA: $odata";
+    Log3 $hash->{NAME}, 4, "EnOcean $hash->{NAME} sent PacketType: $packetType DATA: $data ODATA: $odata";
     $data .= $odata;
   }
+  if (defined $ctrl) {
+    # sent telegram delayed
+    my @param = ($hash, $header, $data);
+    InternalTimer(gettimeofday() + $ctrl, 'EnOcean_IOWriteTimer', \@param, 0);
+  } else {
+    IOWrite($hash, $header, $data);
+  }
+  return;
+}
+
+#
+sub EnOcean_IOWriteTimer($)
+{
+  my ($ioParam) = @_;
+  my ($hash, $header, $data) = @$ioParam;
   IOWrite($hash, $header, $data);
   return;
 }
@@ -12435,12 +14810,12 @@ sub EnOcean_InternalTimer($$$$$)
   if ($modifier eq "") {
     $mHash = $hash;
   } else {
-    if (exists ($hash->{helper}{TIMER}{$timerName})) {
-      $mHash = $hash->{helper}{TIMER}{$timerName};
+    if (exists ($hash->{helper}{timer}{$timerName})) {
+      $mHash = $hash->{helper}{timer}{$timerName};
       Log3 $hash->{NAME}, 5, "EnOcean_InternalTimer setting mHash with stored $timerName";
    } else {
       $mHash = {HASH => $hash, NAME => $timerName, MODIFIER => $modifier};
-      $hash->{helper}{TIMER}{$timerName} = $mHash;
+      $hash->{helper}{timer}{$timerName} = $mHash;
       Log3 $hash->{NAME}, 5, "EnOcean_InternalTimer setting mHash with $timerName";
     }
   }
@@ -12458,9 +14833,9 @@ sub EnOcean_RemoveInternalTimer($$)
   if ($modifier eq "") {
     RemoveInternalTimer($hash);
   } else {
-    $mHash = $hash->{helper}{TIMER}{$timerName};
+    $mHash = $hash->{helper}{timer}{$timerName};
     if (defined($mHash)) {
-      delete $hash->{helper}{TIMER}{$timerName};
+      delete $hash->{helper}{timer}{$timerName};
       RemoveInternalTimer($mHash);
     }
   }
@@ -12498,11 +14873,10 @@ sub EnOcean_observeInit($$@)
     $hash->{helper}{observeCmds}{$cmdValue[1]} = $cmdValue[1];
   }
   $hash->{helper}{observeCntr} = 1;
-  #CommandDeleteReading(undef, "$name observeFailedDev");
   readingsSingleUpdate($hash, "observeFailedDev", "", 0);
-  my %functionHash = (hash => $hash, function => "observe");
-  RemoveInternalTimer(\%functionHash);
-  InternalTimer(gettimeofday() + AttrVal($name, "observeInterval", 1), "EnOcean_observeRepeat", \%functionHash, 0);
+  RemoveInternalTimer($hash->{helper}{timer}{observe}) if(exists $hash->{helper}{timer}{observe});
+  $hash->{helper}{timer}{observe} = {hash => $hash, function => "observe"};
+  InternalTimer(gettimeofday() + AttrVal($name, "observeInterval", 1), "EnOcean_observeRepeat", $hash->{helper}{timer}{observe}, 0);
   Log3 $name, 4, "EnOcean set " . join(" ", @cmdValue) . " observing started";
   return ($err, $ctrl);
 }
@@ -12532,9 +14906,8 @@ sub EnOcean_observeParse($$@)
     delete $hash->{helper}{observeRefDev};
     delete $hash->{helper}{lastCmdFunction};
     delete $hash->{helper}{lastCmdValue};
-    my %functionHash = (hash => $hash, function => "observe");
-    RemoveInternalTimer(\%functionHash);
-    Log3 $name, 4, "EnOcean $name < $devName $cmd " . join(" ", @cmdValue) . " observing stoped";
+    RemoveInternalTimer($hash->{helper}{timer}{observe}) if(exists $hash->{helper}{timer}{observe});
+    Log3 $name, 4, "EnOcean $name < $devName $cmd " . join(" ", @cmdValue) . " observing stopped";
   } else {
     # remove the device that has sent a telegram
     Log3 $name, 4, "EnOcean $name < observeRefDev " . $hash->{helper}{observeRefDev}[$observeRefDevIdx] . " removed";
@@ -12552,9 +14925,8 @@ sub EnOcean_observeParse($$@)
       delete $hash->{helper}{observeRefDev};
       delete $hash->{helper}{lastCmdFunction};
       delete $hash->{helper}{lastCmdValue};
-      my %functionHash = (hash => $hash, function => "observe");
-      RemoveInternalTimer(\%functionHash);
-      Log3 $name, 4, "EnOcean $name < $devName $cmd " . join(" ", @cmdValue) . " observing stoped";
+      RemoveInternalTimer($hash->{helper}{timer}{observe}) if(exists $hash->{helper}{timer}{observe});
+      Log3 $name, 4, "EnOcean $name < $devName $cmd " . join(" ", @cmdValue) . " observing stopped";
     }
   }
 
@@ -12593,15 +14965,14 @@ sub EnOcean_observeRepeat($)
     my $actionCmd = AttrVal($name, "observeErrorAction", undef);
     if (defined $actionCmd) {
       # error action exec
-      my %specials= (
-                "%NAME" => shift(@{$hash->{helper}{lastCmdValue}}),
-                "%FAILEDDEV" => join(" ", @{$hash->{helper}{observeRefDev}}),
-                "%TYPE"  => $hash->{TYPE},
-                "%EVENT" => ReplaceEventMap($name, join(" ", @{$hash->{helper}{lastCmdValue}}), 1)
-      );
+      my %specials = ("%NAME" => shift(@{$hash->{helper}{lastCmdValue}}),
+                      "%FAILEDDEV" => join(" ", @{$hash->{helper}{observeRefDev}}),
+                      "%TYPE"  => $hash->{TYPE},
+                      "%EVENT" => ReplaceEventMap($name, join(" ", @{$hash->{helper}{lastCmdValue}}), 1)
+                     );
       $actionCmd = EvalSpecials($actionCmd, %specials);
       my $ret = AnalyzeCommandChain(undef, $actionCmd);
-      Log3 $name, 2, "$name: $ret" if($ret);
+      Log3 $name, 2, "EnOcean $name observeErrorAction ERROR: $ret" if($ret);
     }
     readingsSingleUpdate($hash, "observeFailedDev", join(" ", @{$hash->{helper}{observeRefDev}}), 1);
     delete $hash->{helper}{observeCmds};
@@ -12614,7 +14985,6 @@ sub EnOcean_observeRepeat($)
   return;
 }
 
-#####
 sub EnOcean_RLT($) {
   # Radio Link Test
   my ($rltParam) = @_;
@@ -12626,7 +14996,7 @@ sub EnOcean_RLT($) {
   my $rltType = AttrVal($name, 'rltType', '4BS');
 
   if ($rltType eq '1BS') {
-    $msgID = $hash->{helper}{rlt}{cntr} & 0x3F if (exists($hash->{helper}{rlt}{cntr}));    
+    $msgID = $hash->{helper}{rlt}{cntr} & 0x3F if (exists($hash->{helper}{rlt}{cntr}));
     $dataTx = sprintf("%02X", ($msgID & 0x3C) << 2 | 8 | ($msgID & 3) << 1);
     $rorg = 'D5';
   } else {
@@ -12639,8 +15009,8 @@ sub EnOcean_RLT($) {
     $hash->{helper}{rlt}{param}[0] = 'periodic';
     readingsSingleUpdate($hash, 'state', 'active', 1);
     EnOcean_SndRadio(undef, $hash, 1, $rorg, $dataTx, $subDef, "00", $def);
-    InternalTimer(gettimeofday() + 0.15, "EnOcean_RLT", $hash->{helper}{rlt}{param}, 0); 
-    
+    InternalTimer(gettimeofday() + 0.15, "EnOcean_RLT", $hash->{helper}{rlt}{param}, 0);
+
   } elsif ($ctrl eq 'parse') {
     $hash->{helper}{rlt}{param}[0] = 'periodic';
     if ($hash->{helper}{rlt}{cntr} < $rltCntrMax) {
@@ -12655,7 +15025,7 @@ sub EnOcean_RLT($) {
       }
     } else {
       RemoveInternalTimer($hash->{helper}{rlt}{param});
-      readingsSingleUpdate($hash, 'state', 'stoped', 1);
+      readingsSingleUpdate($hash, 'state', 'stopped', 1);
       EnOcean_RLTResult(undef, $hash, $rltType, $rltCntrMax);
       if (exists $hash->{helper}{rlt}{oldDev}) {
         # activate old device subType
@@ -12664,14 +15034,14 @@ sub EnOcean_RLT($) {
         my $oldDef = $hash->{helper}{rlt}{oldDev}[2];
         CommandModify(undef, "$oldName $oldDef");
         $modules{EnOcean}{defptr}{$oldDef} = $oldHash;
-      }    
+      }
       delete $hash->{helper}{rlt};
       # delete deviceID
       CommandModify(undef, "$name 00000000");
       delete $modules{EnOcean}{defptr}{$def};
-      
+
     }
-    
+
   } elsif ($ctrl eq 'periodic') {
     RemoveInternalTimer($hash->{helper}{rlt}{param});
     if ($hash->{helper}{rlt}{cntr} < $rltCntrMax - 1) {
@@ -12687,10 +15057,10 @@ sub EnOcean_RLT($) {
       InternalTimer(gettimeofday() + 0.15, "EnOcean_RLT", $hash->{helper}{rlt}{param}, 0);
 
     }
-  
+
   } elsif ($ctrl eq 'waiting') {
-    readingsSingleUpdate($hash, 'state', 'stoped', 1);
-    EnOcean_RLTResult(undef, $hash, $rltType, $rltCntrMax);    
+    readingsSingleUpdate($hash, 'state', 'stopped', 1);
+    EnOcean_RLTResult(undef, $hash, $rltType, $rltCntrMax);
     if (exists $hash->{helper}{rlt}{oldDev}) {
       # activate old device subType
       my $oldHash = $hash->{helper}{rlt}{oldDev}[0];
@@ -12698,12 +15068,12 @@ sub EnOcean_RLT($) {
       my $oldDef = $hash->{helper}{rlt}{oldDev}[2];
       CommandModify(undef, "$oldName $oldDef");
       $modules{EnOcean}{defptr}{$oldDef} = $oldHash;
-    }    
+    }
     delete $hash->{helper}{rlt};
     # delete deviceID
     CommandModify(undef, "$name 00000000");
     delete $modules{EnOcean}{defptr}{$def};
-      
+
   } elsif ($ctrl eq 'standby') {
     RemoveInternalTimer($hash->{helper}{rlt}{param});
     delete $hash->{helper}{rlt};
@@ -12711,7 +15081,7 @@ sub EnOcean_RLT($) {
     # delete deviceID
     CommandModify(undef, "$name 00000000");
     delete $modules{EnOcean}{defptr}{$def};
-    
+
   } elsif ($ctrl eq 'stop') {
     RemoveInternalTimer($hash->{helper}{rlt}{param});
     if (exists $hash->{helper}{rlt}{oldDev}) {
@@ -12721,14 +15091,14 @@ sub EnOcean_RLT($) {
       my $oldDef = $hash->{helper}{rlt}{oldDev}[2];
       CommandModify(undef, "$oldName $oldDef");
       $modules{EnOcean}{defptr}{$oldDef} = $oldHash;
-    }    
+    }
     delete $hash->{helper}{rlt};
-    readingsSingleUpdate($hash, 'state', 'stoped', 1);
+    readingsSingleUpdate($hash, 'state', 'stopped', 1);
     # delete deviceID
     CommandModify(undef, "$name 00000000");
     delete $modules{EnOcean}{defptr}{$def};
-    
-  }  
+
+  }
   return ($err, $logLevel, $response);
 }
 
@@ -12749,10 +15119,10 @@ sub EnOcean_RLTResult($$$$) {
         6 => '-56 ... -61',
         7 => '-62 ... -67',
         8 => '-68 ... -73',
-        9 => '-74 ... -79',              
+        9 => '-74 ... -79',
         10 => '-80 ... -85',
         11 => '<= -92');
-              
+
   for (my $cntr = 0; $cntr < $rltCntrMax; $cntr++) {
     $data = $hash->{helper}{rlt}{dataRx}[$cntr];
     if (defined $data) {
@@ -12760,9 +15130,9 @@ sub EnOcean_RLTResult($$$$) {
       $rssiMaster = -$hash->{helper}{rlt}{rssiMaster}[$cntr];
       $rssiMasterAvg += $rssiMaster;
       if ($rltType eq '1BS') {
-        $msgID = (hex($data) & 0xF0) >> 6 | (hex($data) & 6) >> 1;      
+        $msgID = (hex($data) & 0xF0) >> 6 | (hex($data) & 6) >> 1;
         Log3 $name, 2, "EnOcean RLT DeviceID: " . $hash->{DEF} . " msgCntr: ". ($cntr + 1) . " msgID: $msgID RSSI Master: $rssiMaster response received";
-      
+
       } else {
         $subTelNum = (hex(substr($data, 0, 2)) & 0xC0) >> 6;
         $rssiLevel2 = hex(substr($data, 0, 2)) & 0x3F;
@@ -12774,16 +15144,16 @@ sub EnOcean_RLTResult($$$$) {
         $rssiNonEnOcean = (hex(substr($data, 6, 2)) & 0xF0) >> 4;
         $rssiNonEnOcean = $rssiNonEnOcean{$rssiNonEnOcean} if (exists $rssiNonEnOcean{$rssiNonEnOcean});
         $msgID = (hex(substr($data, 6, 2)) & 6) >> 1;
-        
+
         Log3 $name, 2, "EnOcean RLT DeviceID: " . $hash->{DEF} . " msgCntr: ". ($cntr + 1) . " subTelNum: $subTelNum " .
                        "RSSI Master: $rssiMaster RSSI Slave: $rssiSlave RSSI Level 1: $rssiLevel1 RSSI Level 2: $rssiLevel2 " .
                        "RSSI non EnOcean: $rssiNonEnOcean";
-      
-      }    
-      
+
+      }
+
     } else {
       Log3 $name, 2, "EnOcean RLT DeviceID: " . $hash->{DEF} . " msgCntr: ". ($cntr + 1) . " no answer";
-      
+
     }
   }
   if ($msgCntr > 0) {
@@ -12793,7 +15163,7 @@ sub EnOcean_RLTResult($$$$) {
     readingsEndUpdate($hash, 1);
   } else {
     CommandDeleteReading(undef, "$name msgLost");
-    CommandDeleteReading(undef, "$name rssiMasterAvg");  
+    CommandDeleteReading(undef, "$name rssiMasterAvg");
   }
   return ($err, $logLevel, $response);
 }
@@ -12817,20 +15187,29 @@ sub EnOcean_energyManagement_01Parse($@)
   readingsBeginUpdate($hash);
   readingsBulkUpdate($hash, "randomEnd", $randomEnd);
   readingsBulkUpdate($hash, "randomStart", $randomStart);
-  my %timeoutHash = (hash => $hash, function => "demandResponseTimeout");
-  my %functionHash = (hash            => $hash,
-                      function        => "demandResponseExec",
-                      drLevel         => $drLevel,
-                      powerUsage      => $powerUsage,
-                      powerUsageLevel => $powerUsageLevel,
-                      powerUsageScale => $powerUsageScale,
-                      setpoint        => $setpoint
-                     );
-  RemoveInternalTimer(\%timeoutHash);
-  RemoveInternalTimer(\%functionHash);
+  #my %timeoutHash = (hash => $hash, function => "demandResponseTimeout");
+  #my %functionHash = (hash            => $hash,
+  #                    function        => "demandResponseExec",
+  #                    drLevel         => $drLevel,
+  #                    powerUsage      => $powerUsage,
+  #                    powerUsageLevel => $powerUsageLevel,
+  #                    powerUsageScale => $powerUsageScale,
+  #                    setpoint        => $setpoint
+  #                   );
+  $hash->{helper}{timer}{demandResponseTimeout} = {hash => $hash, function => "demandResponseTimeout"};
+  $hash->{helper}{demandResponseExec} = {hash            => $hash,
+                                         function        => "demandResponseExec",
+                                         drLevel         => $drLevel,
+                                         powerUsage      => $powerUsage,
+                                         powerUsageLevel => $powerUsageLevel,
+                                         powerUsageScale => $powerUsageScale,
+                                         setpoint        => $setpoint
+                                        };
+  RemoveInternalTimer($hash->{helper}{timer}{demandResponseTimeout}) if (exists $hash->{helper}{timer}{demandResponseTimeout});
+  RemoveInternalTimer($hash->{helper}{demandResponseExec}) if (exists $hash->{helper}{demandResponseExec});
   if ($timeout > 0 && $drLevel < 15) {
     # timeout timer
-    InternalTimer(gettimeofday() + $timeout, "EnOcean_demandResponseTimeout", \%timeoutHash, 0);
+    InternalTimer(gettimeofday() + $timeout, "EnOcean_demandResponseTimeout", $hash->{helper}{timer}{demandResponseTimeout}, 0);
     my ($sec, $min, $hour, $day, $month, $year) = localtime(time + $timeout);
     $month += 1;
     $year += 1900;
@@ -12845,13 +15224,13 @@ sub EnOcean_energyManagement_01Parse($@)
   if ($randomStart eq "yes" && ReadingsVal($name, "level", 15) == 15) {
     readingsBulkUpdate($hash, "state", "waiting_for_start");
     Log3 $name, 3, "EnOcean set $name demand response waiting for start";
-    InternalTimer(gettimeofday() + $randomTime, "EnOcean_demandResponseExec", \%functionHash, 0);
+    InternalTimer(gettimeofday() + $randomTime, "EnOcean_demandResponseExec", $hash->{helper}{demandResponseExec}, 0);
   } elsif ($randomEnd eq "yes" && ReadingsVal($name, "level", 15) < 15) {
     readingsBulkUpdate($hash, "state", "waiting_for_stop");
     Log3 $name, 3, "EnOcean set $name demand response waiting for stop";
-    InternalTimer(gettimeofday() + $randomTime, "EnOcean_demandResponseExec", \%functionHash, 0);
+    InternalTimer(gettimeofday() + $randomTime, "EnOcean_demandResponseExec", $hash->{helper}{demandResponseExec}, 0);
   } else {
-    EnOcean_demandResponseExec(\%functionHash);
+    EnOcean_demandResponseExec($hash->{helper}{demandResponseExec});
   }
   readingsEndUpdate($hash, 1);
   return;
@@ -12903,7 +15282,7 @@ sub EnOcean_demandResponseExec($)
                   );
     $actionCmd = EvalSpecials($actionCmd, %specials);
     my $ret = AnalyzeCommandChain(undef, $actionCmd);
-    Log3 $name, 2, "$name: $ret" if($ret);
+    Log3 $name, 2, "EnOcean $name demandRespAction ERROR: $ret" if($ret);
   }
   return;
 }
@@ -12969,7 +15348,7 @@ sub EnOcean_demandResponseTimeout($)
     # action exec
     $actionCmd = EvalSpecials($actionCmd, %specials);
     my $ret = AnalyzeCommandChain(undef, $actionCmd);
-    Log3 $name, 2, "$name: $ret" if($ret);
+    Log3 $name, 2, "EnOcean $name demandRespAction ERROR: $ret" if($ret);
   }
   return;
 }
@@ -13016,9 +15395,9 @@ sub EnOcean_sndUTE($$$$$$$) {
     if (!exists($hash->{IODev}{Teach})) {
       # enable teach-in receiving for 3 sec
       $hash->{IODev}{Teach} = 1;
-      my %timeoutHash = (hash => $IOHash, function => "UTERespTimeout", helper => "UTERespWait");
-      RemoveInternalTimer(\%timeoutHash);
-      InternalTimer(gettimeofday() + 3, "EnOcean_RespTimeout", \%timeoutHash, 0);
+      RemoveInternalTimer($hash->{helper}{timer}{UTERespTimeout}) if(exists $hash->{helper}{timer}{UTERespTimeout});
+      $hash->{helper}{timer}{UTERespTimeout} = {hash => $IOHash, function => "UTERespTimeout", helper => "UTERespWait"};
+      InternalTimer(gettimeofday() + 3, 'EnOcean_RespTimeout', $hash->{helper}{timer}{UTERespTimeout}, 0);
     }
   }
   $attr{$name}{devChannel} = $devChannel;
@@ -13041,11 +15420,77 @@ sub EnOcean_RespTimeout($) {
 }
 
 #
-sub EnOcean_cdmClear($) {
+sub EnOcean_setTeachConfirmWaitHash($) {
+  my ($ctrl, $hash) = @_;
+  if (AttrVal($hash->{NAME}, "teachMethod", "") eq 'confirm') {
+    $hash->{IODev}{helper}{teachConfirmWaitHash} = $hash;
+    RemoveInternalTimer($hash->{helper}{timer}{teachConfirmWaitHash}) if(exists $hash->{helper}{timer}{teachConfirmWaitHash});
+    $hash->{helper}{timer}{teachConfirmWaitHash} = {hash => $hash->{IODev}, function => "teachConfirmWaitHash"};
+    InternalTimer(gettimeofday() + 5, 'EnOcean_helperClear', $hash->{helper}{timer}{teachConfirmWaitHash}, 0);
+  }
+  return;
+}
+
+#
+sub EnOcean_ReadDevDesc($$) {
+  # read xml device description to $hash->{helper}
+  my ($ctrl, $hash) = @_;
+  my $name = $hash->{NAME};
+  if ($xmlFunc == 0) {
+    Log3 $name, 2, "EnOcean $name XML functions are not available";
+    return;
+  }
+  if (exists($hash->{TYPE}) && $hash->{TYPE} eq 'EnOcean' && exists($attr{$name}{model})) {
+    if (exists $EnO_models{$attr{$name}{model}}) {
+      if (exists $EnO_models{$attr{$name}{model}}{xml}{xmlDescrLocation}) {
+        my $xmlFile = $attr{global}{modpath} . $EnO_models{$attr{$name}{model}}{xml}{xmlDescrLocation};
+        if (-e -f -r $xmlFile) {
+          my $xmlData = $xml->XMLin($xmlFile);
+          $hash->{helper} = $xmlData;
+          if (exists $xmlData->{Device}) {
+            Log3 $name, 5, "EnOcean $name Beginn Device Description";
+            Log3 $name, 5, "###";
+            Log3 $name, 5, Dumper($xmlData);
+            Log3 $name, 5, "###";
+            Log3 $name, 5, "EnOcean $name End Device Description";
+          } else {
+            Log3 $name, 2, "EnOcean $name Device Description not defined";
+          }
+        } else {
+          Log3 $name, 2, "EnOcean $name Device Description file $xmlFile not exists";
+        }
+      }
+    }
+  }
+  return;
+}
+
+#
+sub EnOcean_helperClear($) {
   my ($functionHash) = @_;
   my $function = $functionHash->{function};
   my $hash = $functionHash->{hash};
-  delete $hash->{helper}{cdm};
+  delete $hash->{helper}{$function};
+  return;
+}
+
+#
+sub EnOcean_cdmClearRemoteWait($) {
+  my ($functionHash) = @_;
+  my $hash = $functionHash->{hash};
+  my $param = $functionHash->{param};
+  delete $hash->{IODev}{helper}{remoteAnswerWait}{$param}{hash};
+  #Log3 $hash->{NAME}, 3, "EnOcean $hash->{NAME} EnOcean_cdmClearRemoteWait executed.";
+  return;
+}
+
+#
+sub EnOcean_cdmClearHashVal($) {
+  my ($functionHash) = @_;
+  my $hash = $functionHash->{hash};
+  my $param = $functionHash->{param};
+  delete $hash->{$param};
+  #Log3 $hash->{NAME}, 3, "EnOcean $hash->{NAME} EnOcean_cdmClearHashVal executed.";
   return;
 }
 
@@ -13120,7 +15565,6 @@ sub EnOcean_convIntToBit($$) {
   return $data;
 }
 
-#####
 sub EnOcean_gpConvSelDataToSndData($$$$) {
   # Generic Profiles, make selective data in hex
   my ($header, $channel, $resolution, $data) = @_;
@@ -13205,78 +15649,73 @@ sub EnOcean_sec_parseTeachIn($$$$) {
   my $key1; # First part of private key
   my $key2; # Second part of private key
 
-	# Extract byte fields from telegram
-	# TEACH_IN_INFO, SLF, RLC/KEY/variable
-	$telegram =~ /^(..)(..)(.*)/;	# TODO Parse error handling?
-	my $teach_bin = unpack('B8',pack('H2', $1));	# Parse as ASCII HEX, unpack to bitstring
-	my $slf_bin = unpack('B8',pack('H2', $2));	# Parse as ASCII HEX, unpack to bitstring
-	my $crypt = $3;
+  # Extract byte fields from telegram
+  # TEACH_IN_INFO, SLF, RLC/KEY/variable
+  $telegram =~ /^(..)(..)(.*)/;	# TODO Parse error handling?
+  my $teach_bin = unpack('B8',pack('H2', $1));	# Parse as ASCII HEX, unpack to bitstring
+  my $slf_bin = unpack('B8',pack('H2', $2));	# Parse as ASCII HEX, unpack to bitstring
+  my $crypt = $3;
 
-	# Extract bit fields from teach-in info field
-	# IDX, CNT, PSK, TYPE, INFO
-	$teach_bin =~ /(..)(..)(.)(.)(..)/;	# TODO Parse error handling?
-	my $idx = unpack('C',pack('B8', '000000'.$1));	# Padd to byte, parse as unsigned char
-	my $cnt = unpack('C',pack('B8', '000000'.$2));  # Padd to byte, parse as unsigned char
-	my $psk = $3;
-	my $type = $4;
-	my $info = unpack('C',pack('B8', '000000'.$5)); # Padd to byte, parse as unsigned char
+  # Extract bit fields from teach-in info field
+  # IDX, CNT, PSK, TYPE, INFO
+  $teach_bin =~ /(..)(..)(.)(.)(..)/;	# TODO Parse error handling?
+  my $idx = unpack('C',pack('B8', '000000'.$1));	# Padd to byte, parse as unsigned char
+  my $cnt = unpack('C',pack('B8', '000000'.$2));  # Padd to byte, parse as unsigned char
+  my $psk = $3;
+  my $type = $4;
+  my $info = unpack('C',pack('B8', '000000'.$5)); # Padd to byte, parse as unsigned char
 
-	# Extract bit fields from SLF field
-	# RLC_ALGO, RLC_TX, MAC_ALGO, DATA_ENC
-	$slf_bin =~ /(..)(.)(..)(...)/;	# TODO Parse error handling?
-	my $rlc_algo = unpack('C',pack('B8', '000000'.$1));	# Padd to byte, parse as unsigned char
-	my $rlc_tx = $2;
-	my $mac_algo = unpack('C',pack('B8', '000000'.$3));	# Padd to byte, parse as unsigned char
-	my $data_enc = unpack('C',pack('B8', '00000'.$4));	# Padd to byte, parse as unsigned char
+  # Extract bit fields from SLF field
+  # RLC_ALGO, RLC_TX, MAC_ALGO, DATA_ENC
+  $slf_bin =~ /(..)(.)(..)(...)/;	# TODO Parse error handling?
+  my $rlc_algo = unpack('C',pack('B8', '000000'.$1));	# Padd to byte, parse as unsigned char
+  my $rlc_tx = $2;
+  my $mac_algo = unpack('C',pack('B8', '000000'.$3));	# Padd to byte, parse as unsigned char
+  my $data_enc = unpack('C',pack('B8', '00000'.$4));	# Padd to byte, parse as unsigned char
 
-	#print "IDX: $idx, CNT: $cnt, PSK: $psk, TYPE: $type, INFO: $info\n"
+  # The teach-in information is split in two telegrams due to the ERP1 limitations on telegram length
+  # So we should get a telegram with index 0 and count 2 with the first half of the infos needed
+  if ($idx == 0 && $cnt == 2) {
+    # First part of the teach in message
 
-	# The teach-in information is split in two telegrams due to the ERP1 limitations on telegram length
-	# So we should get a telegram with index 0 and count 2 with the first half of the infos needed
-	if ($idx == 0 && $cnt == 2) {
-	  # First part of the teach in message
-	  #print "First part of 2 part teach in message received\n";
-          #print "RLC_ALGO: $rlc_algo, RLC_TX: $rlc_tx, MAC_ALGO: $mac_algo, DATA_ENC: $data_enc\n";
-	  #print "RLC and KEY are ". ($psk == 1 ? "" : "not") . " encrypted\n";
-	  #print "Application is ". ($type == 1 ? "a PTM" : "non-specfic") . "\n";
+    # Decode teach in type
+    if ($type == 0) {
+      # 1BS, 4BS, UTE or GP teach-in expected
+      if ($info == 0) {
+        $attr{$name}{comMode} = "uniDir";
+        $attr{$name}{secMode} = "rcv";
+      } else {
+        $attr{$name}{comMode} = "biDir";
+        $attr{$name}{secMode} = "biDir";
+      }
+      $hash->{helper}{teachInWait} = "STE";
+    } else {
+      # switch teach-in
+      $attr{$name}{teachMethod} = 'STE';
+      if ($info == 0) {
+        $attr{$name}{comMode} = "uniDir";
+        $attr{$name}{eep} = "D2-03-00";
+        $attr{$name}{manufID} = "7FF";
+        $attr{$name}{secMode} = "rcv";
+        foreach my $attrCntr (keys %{$EnO_eepConfig{"D2.03.00"}{attr}}) {
+          $attr{$name}{$attrCntr} = $EnO_eepConfig{"D2.03.00"}{attr}{$attrCntr};
+        }
+        readingsSingleUpdate($hash, "teach", "STE teach-in accepted EEP D2-03-00 Manufacturer: " . $EnO_manuf{"7FF"}, 1);
+        Log3 $name, 2, "EnOcean $name STE teach-in accepted EEP D2-03-00 Rocker A Manufacturer: " . $EnO_manuf{"7FF"};
+      } else {
+        $attr{$name}{comMode} = "uniDir";
+        $attr{$name}{eep} = "D2-03-00";
+        $attr{$name}{manufID} = "7FF";
+        $attr{$name}{secMode} = "rcv";
+        foreach my $attrCntr (keys %{$EnO_eepConfig{"D2.03.00"}{attr}}) {
+          $attr{$name}{$attrCntr} = $EnO_eepConfig{"D2.03.00"}{attr}{$attrCntr};
+        }
+        readingsSingleUpdate($hash, "teach", "STE teach-in accepted EEP D2-03-00 Manufacturer: " . $EnO_manuf{"7FF"}, 1);
+        Log3 $name, 2, "EnOcean $name STE teach-in accepted EEP D2-03-00 Rocker B Manufacturer: " . $EnO_manuf{"7FF"};
+      }
+    }
 
-	  # Decode teach in type
-	  if ($type == 0) {
-	    # 1BS, 4BS, UTE or GP teach-in expected
-            if ($info == 0) {
-              $attr{$name}{comMode} = "uniDir";
-    	      $attr{$name}{secMode} = "rcv";
-            } else {
-              $attr{$name}{comMode} = "biDir";
-              $attr{$name}{secMode} = "biDir";
-            }
-            $hash->{helper}{teachInWait} = "STE";            
-	  } else {
-	    # switch teach-in
-            if ($info == 0) {
-              $attr{$name}{comMode} = "uniDir";
-              $attr{$name}{eep} = "D2-03-00";
-              $attr{$name}{manufID} = "7FF";
-    	      $attr{$name}{secMode} = "rcv";
-              foreach my $attrCntr (keys %{$EnO_eepConfig{"D2.03.00"}{attr}}) {
-                $attr{$name}{$attrCntr} = $EnO_eepConfig{"D2.03.00"}{attr}{$attrCntr};
-	      }
-              readingsSingleUpdate($hash, "teach", "EEP D2-03-00 Manufacturer: " . $EnO_manuf{"7FF"}, 1);
-              Log3 $name, 2, "EnOcean $name teach-in EEP D2-03-00 Rocker A Manufacturer: " . $EnO_manuf{"7FF"};
-            } else {
-              $attr{$name}{comMode} = "uniDir";
-              $attr{$name}{eep} = "D2-03-00";
-              $attr{$name}{manufID} = "7FF";
-    	      $attr{$name}{secMode} = "rcv";
-              foreach my $attrCntr (keys %{$EnO_eepConfig{"D2.03.00"}{attr}}) {
-                $attr{$name}{$attrCntr} = $EnO_eepConfig{"D2.03.00"}{attr}{$attrCntr};
-              }
-              readingsSingleUpdate($hash, "teach", "EEP D2-03-00 Manufacturer: " . $EnO_manuf{"7FF"}, 1);
-              Log3 $name, 2, "EnOcean $name teach-in EEP D2-03-00 Rocker B Manufacturer: " . $EnO_manuf{"7FF"};
-            }
-	  }
-
-		# Decode RLC algorithm and extract RLC and private key (only first part most likely)
+  # Decode RLC algorithm and extract RLC and private key (only first part most likely)
 		if ($rlc_algo == 0) {
 			# No RLC used in telegram or internally in memory, use case untested
 			return ("Secure modes without RLC not tested or supported", undef);
@@ -13376,9 +15815,11 @@ sub EnOcean_sec_parseTeachIn($$$$) {
 			return ("Could not parse data encryption information, $data_enc", undef);
 		}
 
-		# Ok we got a lots of infos and the first part of the private key
-		return (undef, "part1: $name");
-	} elsif ($idx == 1 && $cnt == 0) {
+          $hash->{helper}{teachInSTE} = $cnt - 1;
+          # Ok we got a lots of infos and the first part of the private key
+          return (undef, "part 1 received Rlc: $rlc Key1: $key1");
+
+	} elsif ($idx == 1 && exists($hash->{helper}{teachInSTE})) {
 	  # Second part of the teach-in telegrams
 
 	  # Extract byte fields from telegram
@@ -13394,7 +15835,7 @@ sub EnOcean_sec_parseTeachIn($$$$) {
 
 	  # Append second part of private key to first part of private key
 	  $attr{$name}{keyRcv} .= $key2;
-	
+
 	  if ($attr{$name}{secMode} eq "biDir") {
             # bidirectional secure teach-in
             if (!defined $subDef) {
@@ -13413,8 +15854,8 @@ sub EnOcean_sec_parseTeachIn($$$$) {
               Log3 $name, $logLevel, "EnOcean $name $response";
             }
           }
-          # We're done
-	  return (undef, "part2: $name");
+	  delete $hash->{helper}{teachInSTE};
+	  return (undef, "part 2 received Key2: $key2");
 	}
 
 	# Sequence error?
@@ -13480,9 +15921,7 @@ sub EnOcean_sec_getRLC($$) {
 	if (hex($old_rlc) < hex($attr{$name}{$rlcVar})) {
 	  $old_rlc = $attr{$name}{$rlcVar};
 	}
-
-	#print "RLC old: $old_rlc\n";
-	Log3 $name, 5, "EnOcean $name EnOcean_sec_getRLC RLC old: $old_rlc";
+	Log3 $name, 5, "EnOcean $name EnOcean_sec_getRLC RLC old: $old_rlc " . hex($old_rlc);
 
 	# Advance RLC by one
 	my $new_rlc = hex($old_rlc) + 1;
@@ -13506,12 +15945,11 @@ sub EnOcean_sec_getRLC($$) {
 		        $attr{$name}{$rlcVar} = "000000";
                         EnOcean_CommandSave(undef, undef);
 		}
-                readingsSingleUpdate($hash, "." . $rlcVar, uc(unpack('H6',pack('N', $new_rlc))), 0);
-		$attr{$name}{$rlcVar} = uc(unpack('H6',pack('N', $new_rlc)));
+                readingsSingleUpdate($hash, "." . $rlcVar, sprintf("%06X", $new_rlc), 0);
+		$attr{$name}{$rlcVar} = sprintf("%06X", $new_rlc);
 	}
 
-	#print "RLC new: ".$attr{$name}{rlc}."\n";
-	Log3 $name, 5, "EnOcean $name EnOcean_sec_getRLC RLC new: ". $attr{$name}{$rlcVar};
+	Log3 $name, 5, "EnOcean $name EnOcean_sec_getRLC RLC new: $attr{$name}{$rlcVar} $new_rlc";
 	return $old_rlc;
 }
 
@@ -13617,126 +16055,124 @@ sub EnOcean_sec_generateMAC($$$) {
 # lack of hardware suporting this.
 #
 sub EnOcean_sec_convertToNonsecure($$$) {
-	my ($hash, $rorg, $crypt_data) = @_;
-        my $name = $hash->{NAME};
-        if ($cryptFunc == 0) {
-	  return ("Cryptographic functions are not available", undef, undef);
-        }
-        my $private_key;
+  my ($hash, $rorg, $crypt_data) = @_;
+  my $name = $hash->{NAME};
+  if ($cryptFunc == 0) {
+    return ("Cryptographic functions are not available", undef, undef);
+  }
+  my $private_key;
+  # Prefix of pattern to extract the different cryptographic infos
+  my $crypt_pattern = "^(.*)";;
+  # Flags and infos for fields to expect
+  my $expect_rlc = 0;
+  my $expect_mac = 0;
+  my $mac_len;
+  my $expect_enc = 0;
 
-	# Prefix of pattern to extract the different cryptographic infos
-	my $crypt_pattern = "^(.*)";;
-
-	# Flags and infos for fields to expect
-	my $expect_rlc = 0;
-	my $expect_mac = 0;
-	my $mac_len;
-	my $expect_enc = 0;
-
-    # Check if the RORG is supported
-    if ($rorg ne '30') {
-        return ("RORG $rorg unsupported", undef, undef);
+  # Check if RLC is transmitted and when, which length to expect
+  if($attr{$name}{rlcTX} eq 'true') {
+    # Message should contain RLC
+    if ($attr{$name}{rlcAlgo} eq '2++') {
+      $crypt_pattern .= "(....)";
+      $expect_rlc = 1;
+    } elsif ($attr{$name}{rlcAlgo} eq '3++') {
+      $crypt_pattern .= "(......)";
+      $expect_rlc = 1;
+    } else {
+      # RLC_TX but no info on RLC length
+      return ("RLC_TX and RLC_ALGO inconsistent", undef, undef);
     }
-	#$attr{$name}{rlcAlgo} = '2++';
-	# Check if RLC is transmitted and when, which length to expect
-	if($attr{$name}{rlcTX} eq 'true') {
-		# Message should contain RLC
-		if ($attr{$name}{rlcAlgo} eq '2++') {
-			$crypt_pattern .= "(....)";
-			$expect_rlc = 1;
-		} elsif ($attr{$name}{rlcAlgo} eq '3++') {
-			$crypt_pattern .= "(......)";
-			$expect_rlc = 1;
-		} else {
-			# RLC_TX but no info on RLC length
-			return ("RLC_TX and RLC_ALGO inconsistent", undef, undef);
-		}
-	}
+  }
 
-	# Check what length of MAC to expect
-	if($attr{$name}{macAlgo} eq '3') {
-		$crypt_pattern .= "(......)";
-		$mac_len = 3;
-		$expect_mac = 1;
-	} elsif ($attr{$name}{macAlgo} eq '4') {
-		$crypt_pattern .= "(........)";
-		$mac_len = 4;
-		$expect_mac = 1;
-	} else {
-		# According to the specification it's possible to transmit no MAC, bt we don't implement this for now
-		return ("Secure mode messages without MAC unsupported", undef, undef);
-	}
+  # Check what length of MAC to expect
+  if($attr{$name}{macAlgo} eq '3') {
+    $crypt_pattern .= "(......)";
+    $mac_len = 3;
+    $expect_mac = 1;
+  } elsif ($attr{$name}{macAlgo} eq '4') {
+    $crypt_pattern .= "(........)";
+    $mac_len = 4;
+    $expect_mac = 1;
+  } else {
+    # According to the specification it's possible to transmit no MAC, bt we don't implement this for now
+    return ("Secure mode messages without MAC unsupported", undef, undef);
+  }
 
-	# Suffix for crypt pattern
-	$crypt_pattern .= '$';
+  # Suffix for crypt pattern
+  $crypt_pattern .= '$';
 
-	#print "Crypt_pattern: $crypt_pattern\n";
+  # Extract byte fields from message payload
+  $crypt_data =~ /$crypt_pattern/;
+  my $data_enc = $1;
+  my $dataLength = length($data_enc);
+  return ("Telegrams with a length of more than 16 bytes are not supported", undef, undef) if ($dataLength > 32);
+  my $rlc;
+  my $mac;
+  if ($expect_rlc == 1 && $expect_mac == 1) {
+    $rlc = $2;
+    $mac = $3;
+  } elsif ($expect_rlc == 0 && $expect_mac == 1) {
+    $mac = $2;
+  }
 
-	# Extract byte fields from message payload
-	$crypt_data =~ /$crypt_pattern/;
-	my $data_enc = $1;
-	my $rlc;
-	my $mac;
-	if ($expect_rlc == 1 && $expect_mac == 1) {
-		$rlc = $2;
-		$mac = $3;
-	} elsif ($expect_rlc == 0 && $expect_mac == 1) {
-		$mac = $2;
-	}
+  Log3 $name, 5, "EnOcean $name EnOcean_sec_convertToNonsecure RORG: $rorg DATA_ENC: $data_enc";
+  if ($expect_rlc == 1) {
+    Log3 $name, 5, "EnOcean $name EnOcean_sec_convertToNonsecure RLC: $rlc";
+  };
+  Log3 $name, 5, "EnOcean $name EnOcean_sec_convertToNonsecure MAC: $mac";
 
-	#print "DATA: $data_enc\n";
-        Log3 $name, 5, "EnOcean $name EnOcean_sec_convertToNonsecure DATA: $data_enc";
-	#if ($expect_rlc == 1) { print "RLC: $rlc\n";};
-	if ($expect_rlc == 1) { Log3 $name, 5, "EnOcean $name EnOcean_sec_convertToNonsecure RLC: $rlc";};
-	#print "MAC: $mac\n";
-        Log3 $name, 5, "EnOcean $name EnOcean_sec_convertToNonsecure MAC: $mac";
+  # TODO RLC could be transmitted with data, could not test this
+  #if(!defined($rlc)) {
+  #	print "No RLC in message, using stored value\n";
+  #	$rlc = getRLC($senderID);
+  #}
 
-	# TODO RLC could be transmitted with data, could not test this
-	#if(!defined($rlc)) {
-	#	print "No RLC in message, using stored value\n";
-	#	$rlc = getRLC($senderID);
-	#}
+  # Maximum RLC search window is 128
+  foreach my $rlc_window (0..128) {
+    #print "Trying RLC offset $rlc_window\n";
+    # Fetch stored RLC
+    $rlc = EnOcean_sec_getRLC($hash, "rlcRcv");
+    # Fetch private Key for VAES
+    if ($attr{$name}{keyRcv} =~ /[\dA-F]{32}/) {
+      $private_key = pack('H32',$attr{$name}{keyRcv});
+    } else {
+      return ("private key wrong, please teach-in the device new", undef, undef);
+    }
 
-	# Maximum RLC search window is 128
-	foreach my $rlc_window (0..128) {
-		#print "Trying RLC offset $rlc_window\n";
+    # Generate and check MAC over RORG+DATA+RLC fields
+    if ($mac eq EnOcean_sec_generateMAC($private_key, $rorg.$data_enc.$rlc, $mac_len)) {
+      #print "RLC verfified\n";
+      # Expand RLC to 16byte
+      my $rlc_expanded = pack('H32',$rlc);
 
-		# Fetch stored RLC		
-		$rlc = EnOcean_sec_getRLC($hash, "rlcRcv");
+      # Expand data to 16byte
+      my $data_expanded = pack('H32',$data_enc);
 
-		# Fetch private Key for VAES
-
-		if ($attr{$name}{keyRcv} =~ /[\dA-F]{32}/) {
-		  $private_key = pack('H32',$attr{$name}{keyRcv});
-		} else {
-	          return ("private key wrong, please teach-in the device new", undef, undef);
-		}
-
-		# Generate and check MAC over RORG+DATA+RLC fields
-		if($mac eq EnOcean_sec_generateMAC($private_key, $rorg.$data_enc.$rlc, $mac_len)) {
-			#print "RLC verfified\n";
-
-			# Expand RLC to 16byte
-			my $rlc_expanded = pack('H32',$rlc);
-
-			# Expand data to 16byte
-			my $data_expanded = pack('H32',$data_enc);
-
-			# Decode data using VAES
-			my $data_dec = EnOcean_sec_decodeVAES($rlc_expanded, $private_key, $data_expanded);
-
-			# Extract one nibble of data
-			my $data_end = unpack('H32', $data_dec);
-			$data_end =~ /^.(.)/;
-
-			#print "MSG: $1\n";
-			return (undef, '32', "0" . uc($1));
-		}
-	}
-	# Couldn't verify or decrypt message in RLC window
-	return ("Can't verify or decrypt telegram", undef, undef);
+      # Decode data using VAES
+      my $data_dec = EnOcean_sec_decodeVAES($rlc_expanded, $private_key, $data_expanded);
+      my $data_end = unpack('H32', $data_dec);
+      if ($rorg eq '30') {
+        $data_end =~ /^(.{$dataLength})/;
+        return (undef, '32', uc($1));
+        #if ($dataLength == 2) {
+          # Extract one nibble of data
+        #  $data_end =~ /^.(.)/;
+        #  return (undef, '32', "0" . uc($1));
+        #} else {
+        #  $data_end =~ /^(.{$dataLength})/;
+        #  return (undef, '32', uc($1));
+        #}
+      } else {
+        $dataLength -= 2;
+        $data_end =~ /^(..)(.{$dataLength})/;
+        Log3 $name, 5, "EnOcean $name EnOcean_sec_convertToNonsecure RORG: " . uc($1) . " DATA: " . uc($2);
+        return (undef, uc($1), uc($2));
+      }
+    }
+  }
+  # Couldn't verify or decrypt message in RLC window
+  return ("Can't verify or decrypt telegram", undef, undef);
 }
-
 
 #
 sub EnOcean_sec_createTeachIn($$$$$$$$$$$)
@@ -13801,7 +16237,6 @@ sub EnOcean_sec_createTeachIn($$$$$$$$$$$)
 
   return (undef, "secure teach-in", 2);
 }
-
 
 #
 sub EnOcean_sec_convertToSecure($$$$)
@@ -13879,10 +16314,13 @@ EnOcean_NumericSort
 sub EnOcean_TimeDiff($)
 {
   my ($strTS) = @_;
-  my $serTS = (defined($strTS) && $strTS ne "") ? time_str2num($strTS) : gettimeofday();
-  my $timeDiff = gettimeofday() - $serTS;
-  $timeDiff = 0 if ($timeDiff < 0);
-  return $timeDiff;
+  if (defined $strTS) {
+    my $timeDiff = gettimeofday() - ($strTS eq "" ? gettimeofday() : time_str2num($strTS));
+    $timeDiff = 0 if ($timeDiff < 0);
+    return $timeDiff;
+  } else {
+    return 0;
+  }
 }
 
 # Undef
@@ -13890,7 +16328,13 @@ sub
 EnOcean_Undef($$)
 {
   my ($hash, $name) = @_;
+  delete $hash->{helper};
   delete $modules{EnOcean}{defptr}{uc($hash->{DEF})};
+  delete $modules{EnOcean}{defptr}{uc($attr{$name}{remoteID})} if (exists $attr{$name}{remoteID});
+  if (AttrVal($name, "remoteManagement", "off") eq "client") {
+    delete $hash->{RemoteClientUnlock};
+    RemoveInternalTimer($hash->{helper}{timer}{RemoteClientUnlock}) if(exists $hash->{helper}{timer}{RemoteClientUnlock});
+  }
   return undef;
 }
 
@@ -13916,10 +16360,10 @@ EnOcean_Delete($$)
   while (($weblinkName, $weblinkHash) = each(%defs)) {
     if ($weblinkName =~ /^SVG_$name.*/) {
       $gplotFile = "./www/gplot/" . $defs{$weblinkName}{GPLOTFILE} . "*.gplot";
-      CommandDelete(undef, $weblinkName);      
+      CommandDelete(undef, $weblinkName);
       Log3 $name, 2, "EnOcean $weblinkName deleted";
       $count = unlink glob $gplotFile;
-      Log3 $name, 2, "EnOcean $gplotFile >> $count files deleted";      
+      Log3 $name, 2, "EnOcean $gplotFile >> $count files deleted";
     }
   }
   return undef;
@@ -13928,11 +16372,21 @@ EnOcean_Delete($$)
 1;
 
 =pod
+=item device
+=item summary    EnOcean Gateway and Actor
+=item summary_DE EnOcean Gateway und Aktor
 =begin html
 
 <a name="EnOcean"></a>
 <h3>EnOcean</h3>
-<ul>
+<ul><br>
+  <b>Quick Links</b>
+  <ul>
+  <li><a href="#EnOceanget">Get Commands</a></li>
+  <li><a href="#EnOceanset">Set Commands</a></li>
+  <li><a href="#EnOceanattr">Attributes</a></li>
+  <li><a href="#EnOceanevents">Generated Events</a></li>
+  </ul><br><br>
   EnOcean devices are sold by numerous hardware vendors (e.g. Eltako, Peha, etc),
   using the RF Protocol provided by the EnOcean Alliance.<br><br>
   Depending on the function of the device an specific device profile is used, called
@@ -13945,14 +16399,22 @@ EnOcean_Delete($$)
   see in particular the
   <a href="http://www.enocean-alliance.org/eep/">EnOcean Equipment Profiles (EEP)</a>
   <br><br>
-  The supplementary Generic Profiles approach instead defines a language to communicate the 
+  The supplementary Generic Profiles approach instead defines a language to communicate the
   transmitted data types and ranges. The devices becomes self describing on their data
   structures in communication. The Generic Profiles include a language definition with
   a parameter selection that covers every possible measured value to be transmitted.
   Therefore, the approach does not only define parameters for the value recalculation algorithm
   but also includes specific signal definition. (e.g. physical units). Further technical
   information can be found at the
-  <a href="https://www.enocean-alliance.org/fileadmin/redaktion/enocean_alliance/pdf/GenericProfiles_V1_Extract.pdf">Generic Profiles 1.0 Abstract (PDF)</a>
+  <a href="https://www.enocean-alliance.org/fileadmin/redaktion/enocean_alliance/pdf/GenericProfiles_V1_Extract.pdf">Generic Profiles 1.0 Abstract</a>
+  <br><br>
+  Smart Acknowledge (Smart Ack) enables a special bidirectional communication. The communication is managed by a
+  Controller that responds to the devices telegrams with acknowledges. Smart Ack is a bidirectional communication
+  protocol between two actors. At least one actor must be an energy autarkic Sensor, and at least one must be a line
+  powered Controller (Fhem). A sensor sends its data and expects the answer telegram in a predefined very short
+  time slot. In this time Sensors receiver is active. For this purpose we declare a Post Master with Mail Boxes.
+  A Mail Box is like a letter box for a Sensor and it specific to a single sender. Telegrams from Fhem are collected
+  into the Mail Box. A Sensor can reclaim telegrams that are in his Mail Box.
   <br><br>
   Fhem recognizes a number of devices automatically. In order to teach-in, for
   some devices the sending of confirmation telegrams has to be turned on.
@@ -13965,10 +16427,11 @@ EnOcean_Delete($$)
   changed separately.
   <br><br>
   Fhem and the EnOcean devices must be trained with each other. To this, Fhem
-  must be in the learning mode, see <a href="#EnOcean_teach-in">Teach-In / Teach-Out</a>
-  and <a href="#TCM_learningMode">learningMode</a>.<br>
-  The teach-in procedure depends on the type of the devices. Switches (EEP RPS)
-  and contacts (EEP 1BS) are recognized when receiving the first message.
+  must be in the learning mode, see <a href="#EnOcean_teach-in">Teach-In / Teach-Out</a>,
+  <a href="#EnOcean_smartAck">Smart Ack Learning</a> and <a href="#TCM_learningMode">learningMode</a>.
+  The teach-in procedure depends on the type of the devices.
+  <br><br>
+  Switches (EEP RPS) and contacts (EEP 1BS) are recognized when receiving the first message.
   Contacts can also send a teach-in telegram. Fhem not need this telegram.
   Sensors (EEP 4BS) has to send a teach-in telegram. The profile-less
   4BS teach-in procedure transfers no EEP profile identifier and no manufacturer
@@ -13977,8 +16440,26 @@ EnOcean_Delete($$)
   <a href="#subType">subType</a>, <a href="#manufID">manufID</a> and/or
   <a href="#model">model</a>. If the EEP profile identifier and the manufacturer
   ID are sent the device is clearly identifiable. Fhem automatically assigns
-  these devices to the correct profile. Some 4BS, VLD or MSC devices must be paired
-  bidirectional, see <a href="#EnOcean_teach-in">Teach-In / Teach-Out</a>.<br><br>
+  these devices to the correct profile.
+  <br><br>
+  4BS devices can also be taught in special cases by using of confirmation telegrams. This method
+  is used for the EnOcean Tipp-Funk devices. The function is activated via the attribute [<a href="#EnOcean_teachMethod">teachMethod</a>] = confirm.<br>
+  For example the remote device Eltako TF100D can be learned as follows
+  <ul><br>
+  <code>define &lt;name&gt; EnOcean H5-38-08</code><br>
+  set TF100D in learning mode<br>
+  <code>set &lt;name&gt; teach</code>
+  </ul>
+  <br>
+  Some 4BS, VLD or MSC devices must be paired bidirectional,
+  see <a href="#EnOcean_teach-in">Teach-In / Teach-Out</a>.
+  <br><br>
+  Devices that communicate encrypted, has to taught-in through specific procedures.
+  <br><br>
+  Smart Ack Learning is a futher process where devices exchange information about each
+  other in order to create the logical links in the EnOcean network and a Post Master Mail Box.
+  It can result in Learn In or Learn Out, see <a href="#EnOcean_smartAck">Smart Ack Learning</a>.
+  <br><br>
   Fhem supports many of most common EnOcean profiles and manufacturer-specific
   devices. Additional profiles and devices can be added if required.
   <br><br>
@@ -14068,6 +16549,133 @@ EnOcean_Delete($$)
   <br><br>
   </ul>
 
+  <b>Remote Management</b><br>
+  <ul>
+    Remote Management allows EnOcean devices to be configured and maintained over the air.
+    Thanks to Remote Management, sensors or switches IDs, for instance, can be stored or deleted from
+    already installed actuators or gateways which are hard to access. Remote Management also allows querying
+    debug information from the Remote Device and calling some manufacturer implemented functions.<br>
+    Remote Management is performed by the Remote Manager, operated by the actor, on the
+    managed Remote Device (Sensor, Gateway). The management is done through a series of
+    commands and responding answers. Actor sends the commands to the Remote Device. Remote
+    Device sends answers to the actor. The commands indicate the Remote Device what to do.
+    Remote Device answers if requested by the command. The commands belong to one of the
+    main use case categories, which are:
+    <ul>
+      <li>Security</li>
+      <li>Locate / indentify remote device</li>
+      <li>Get status</li>
+      <li>Extended function</li>
+    </ul>
+    The management is often done with a group of Remote Devices. Commands are sent as
+    addressed unicast telegrams, usually. In special cases broadcast transmission is also available.
+    To avoid telegram collisions the Remote Devices respond to broadcast commands with a
+    random delay.<br>
+    The Security, Locate, and Get Status options provide to the actor basic operability of Remote
+    management. Their purpose is to ensure the proper work of Remote Management when
+    operating with several Remote Devices. These functions behave in the same way on every
+    Remote Device. Every product that supports Remote Management provides these options.<br>
+    Extended functions provide the real benefit of Remote Management. They vary from Remote
+    Device to Remote Device. They depend on how and where the Remote Device is used.
+    Therefore, not every Remote Device provides every extended function. It depends on the
+    programmer / customer what extended functions he wants to add. There is a list of specified
+    commands, but the manufacturer can also add manufacturer specific extended functions. These
+    functions are identified by the manufacturer ID.<br>
+    More information can be found on the <a href="http://www.enocean.com">EnOcean websites</a>.<br><ber>
+    Fhem operates primarily as a remote manager. For tests but also a client device can be created.
+    <br><br>
+    The remote manager function must be activated for the desired device by
+    <ul><br>
+      <code>attr &lt;remote device name&gt; remote manager</code><br>
+    </ul>
+    <br><br>
+    The remote client device must be defined as follows<br>
+    <ul><br>
+      <code>define &lt;client name&gt; EnOcean C5-00-00</code><br>
+    </ul><br>
+    and has to by unlocked for t seconds
+    <ul><br>
+      <code>set &lt;client name&gt; unlock &lt;t/s&gt;</code><br>
+    </ul><br>
+    Only one remote management client device should be defined.<br><br>
+
+    For security reasons the remote management commands can only be accessed in the unlock
+    period. The period can be entered in two cases:
+    <ul>
+      <li>Within 30min after device power-up if no CODE is set</li>
+      <li>Within 30min after an unlock command with a correct 32bit security code is received</li>
+    </ul>
+    The unlock/lock period can be accessed only with the security code. The security code can be
+    set whenever the Remote Device accepts remote management commands.<br>
+    When the Remote Device is locked it does not respond to any command, but unlock and ping.
+    When a wrong security code is received the Remote Device does not process unlock commands
+    for a security period of 30 seconds.<br>
+    Security code=0x000000 is the default value and has to be interpreted as: no CODE has been
+    set. The actor can also set the security code to 0x000000 from a previously set value. If no
+    security code is set, unlock after the unlock period is not processed. Only ping will be
+    processed. Remote Management is not available until next power up. 0xFFFFFFFF is reserved
+    and can not be used as security code.<br><br>
+    To administrate a remote device whose Remote ID must be known. The Remote ID can be determined
+    as follows:
+    <ul><br>
+      <code>attr &lt;name&gt; remote manager</code><br>
+      power-up the remote device<br>
+      <code>get &lt;name&gt; remoteID</code><br><br>
+    </ul>
+    All commands are described in the remote management chapters of the <a href="#EnOcean_remoteSet">set</a>-
+    and <a href="#EnOcean_remoteGet">get</a>-commands.<br><br>
+    The Remote Management Function is configured using the following attributes:<br>
+    <ul>
+      <li><a href="#EnOcean_remoteCode">remoteCode</a></li>
+      <li><a href="#EnOcean_remoteEEP">remoteEEP</a></li>
+      <li><a href="#EnOcean_remoteID">remoteID</a></li>
+      <li><a href="#EnOcean_remoteManagement">remoteManagement</a></li>
+      <li><a href="#EnOcean_remoteManufID">remoteManufID</a></li>
+    </ul><br>
+    The content of events is described in the chapter <a href="#EnOcean_remoteEvents">Remote Management Events</a><br><br>.
+    The following extended functions are supported:
+    <ul>
+      <li>210:remoteLinkTableInfo</li>
+      <li>211:remoteLinkTable</li>
+      <li>212:remoteLinkTable</li>
+      <li>213:remoteLinkTableGP</li>
+      <li>214:remoteLinkTableGP</li>
+      <li>220:remoteLearnMode</li>
+      <li>221:remoteTeach</li>
+      <li>224:remoteReset</li>
+      <li>225:remoteRLT</li>
+      <li>226:remoteApplyChanges</li>
+      <li>227:remoteProductID</li>
+      <li>230:remoteDevCfg</li>
+      <li>231:remoteDevCfg</li>
+      <li>232:remoteLinkCfg</li>
+      <li>233:remoteLinkCfg</li>
+      <li>240:remoteAck</li>
+      <li>250:remoteRepeater</li>
+      <li>251:remoteRepeater</li>
+      <li>252:remoteRepeaterFilter</li>
+    </ul>
+    <br><br>
+  </ul>
+
+  <b>Signal Telegram</b><br>
+  <ul>
+    Signal Telegram as a feature is dedicated to signalize special events with optional data, trigger actions or
+    request responses. It extends the functionality of the device independently of used EEPs or other
+    communication profiles.<br>
+    Target key functional fields are:
+    <ul>
+      <li>Communication flow control</li>
+      <li>Energy harvesting and reporting</li>
+      <li>Failure & issues reporting</li>
+      <li>Radio link quality reporting</li>
+    </ul>
+    The Signal Telegram function commands are activated by the attribute <a href="#EnOcean_signal">signal</a>.
+    All commands are described in the signal telegram chapter of the <a href="#EnOcean_signalGet">get</a>-commands.
+    The content of events is described in the chapter <a href="#EnOcean_signalEvents">Signal Telegram Events</a>.
+    <br><br>
+  </ul>
+
   <b>Radio Link Test</b><br>
   <ul>
     Units supporting the Radio Link Test (RLT) shall offer a functionality that allows for radio link testing between them
@@ -14080,7 +16688,7 @@ EnOcean_Delete($$)
     </ul><br>
     and has to by activated
     <ul><br>
-      <code>set &lt;name&gt; standby</code><br>    
+      <code>set &lt;name&gt; standby</code><br>
     </ul><br>
     Alternatively, the device can also be created automatically by autocreate. Only one RLT device may be defined in FHEM.<br>
     After activation the RLT Master listens for RLT Query messages. On reception of at least one RLT Query messsage the
@@ -14099,9 +16707,11 @@ EnOcean_Delete($$)
     To receive secured telegrams, you first have to start the teach in mode via<br><br>
     <code>set &lt;IODev&gt; teach &lt;t/s&gt;</code><br><br>
     and then doing the following on the PTM 215 module:<br>
-    <li>Remove the switch cover of the module</li>
-    <li>Press both buttons of one rocker side (A0 & A1 or B0 & B1)</li>
-    <li>While keeping the buttons pressed actuate the energy bow twice.</li><br>
+    <ul>
+      <li>Remove the switch cover of the module</li>
+      <li>Press both buttons of one rocker side (A0 & A1 or B0 & B1)</li>
+      <li>While keeping the buttons pressed actuate the energy bow twice.</li><br>
+    </ul>
     This generates two teach-in telegrams which create a Fhem device with the subType "switch.00" and synchronize the Fhem with
     the PTM 215. Both the Fhem and the PTM 215 now maintain a counter which is used to generate a rolling code encryption scheme.
     Also during teach-in, a private key is transmitted to the Fhem. The counter value is allowed to desynchronize for a maximum of
@@ -14110,14 +16720,18 @@ EnOcean_Delete($$)
     you would need to do anyway).<br><br>
 
     To send secured telegrams, you first have send a secure teach-in to the remode device<br><br>
-    <code>set &lt;name&gt; teachInSec</code><br><br>
+    <ul>
+      <code>set &lt;name&gt; teachInSec</code><br><br>
+    </ul>
     As for the security of this solution, if someone manages to capture the teach-in telegrams, he can extract the private key,
     so the added security isn't perfect but relies on the fact, that none listens to you setting up your installation.
     <br><br>
     The cryptographic functions need the additional Perl modules Crypt/Rijndael and Crypt/Random. The module must be installed manually.
     With the help of CPAN at the operating system level, for example,<br><br>
-    <code>/usr/bin/perl -MCPAN -e 'install Crypt::Rijndael'</code><br>
-    <code>/usr/bin/perl -MCPAN -e 'install Crypt::Random'</code>
+    <ul>
+      <code>/usr/bin/perl -MCPAN -e 'install Crypt::Rijndael'</code><br>
+      <code>/usr/bin/perl -MCPAN -e 'install Crypt::Random'</code>
+    </ul>
   <br><br>
   </ul>
 
@@ -14155,16 +16769,20 @@ EnOcean_Delete($$)
 
    Inofficial EEP for special devices
    <ul>
+     <li>G5-07-01 PioTek-Tracker<br></li>
      <li>G5-10-12 Room Sensor and Control Unit [Eltako FUTH65D]<br></li>
      <li>G5-38-08 Gateway, Dimming [Eltako FSG, FUD]<br></li>
+     <li>H5-38-08 Gateway, Dimming [Eltako TF61D, TF100D]<br></li>
      <li>M5-38-08 Gateway, Switching [Eltako FSR14]<br></li>
+     <li>N5-38-08 Gateway, Switching [Eltako TF61L, TF61R, TF100A, TF100L]<br></li>
      <li>G5-3F-7F Shutter [Eltako FSB]<br></li>
+     <li>H5-3F-7F Shutter [Eltako TF61J]<br></li>
      <li>L6-02-01 Smoke Detector [Eltako FRW]<br></li>
      <li>G5-ZZ-ZZ Light and Presence Sensor [Omnio Ratio eagle-PM101]<br></li>
      <li>ZZ-ZZ-ZZ EnOcean RAW profile<br></li>
      <br><br>
    </ul>
- 
+
     The <a href="#autocreate">autocreate</a> module may help you if the actor or sensor send
     acknowledge messages or teach-in telegrams. In order to control this devices e. g. switches with
     additional SenderIDs you can use the attributes <a href="#subDef">subDef</a>,
@@ -14183,11 +16801,26 @@ EnOcean_Delete($$)
       If the attributes subDef* are set, this values are used as EnOcean SenderID.<br>
       For an existing device, the device can be re-parameterized by entering the EEP.<br>
     </li>
+    <li>Dev_EURID: 0000000 ... FFFFFFFF<br>
+      EnOcean ChipID of the device<br>
+    </li>
+    <li>Dev_RepeatingCounter: 0...2<br>
+      Number of forwardings by repeaters received by the device<br>
+    </li>
+    <li>Dev_RSSImax: LP/dBm<br>
+      Largest field strength received by the device<br>
+    </li>
+    <li>Dev_RSSImin: LP/dBm<br>
+      Smallest field strength received by the device<br>
+    </li>
+    <li>Dev_SubTelNum: 1...15<br>
+      Number of sub telegrams received by the device<br>
+    </li>
     <li>&lt;IODev&gt;_DestinationID: 0000000 ... FFFFFFFF<br>
       Received destination address, Broadcast radio: FFFFFFFF<br>
     </li>
-    <li>&lt;IODev&gt;_RSSI: LP/dBm<br>
-      Received signal strength indication (best value of all received subtelegrams)<br>
+    <li>&lt;IODev&gt;_PacketType: 1 ... 255<br>
+      Number of the packet type of last data telegram received<br>
     </li>
     <li>&lt;IODev&gt;_ReceivingQuality: excellent|good|bad<br>
       excellent: RSSI >= -76 dBm (internal standard antenna sufficiently)<br>
@@ -14196,6 +16829,12 @@ EnOcean_Delete($$)
     </li>
     <li>&lt;IODev&gt;_RepeatingCounter: 0...2<br>
       Number of forwardings by repeaters<br>
+    </li>
+    <li>&lt;IODev&gt;_RSSI: LP/dBm<br>
+      Received signal strength indication (best value of all received subtelegrams)<br>
+    </li>
+    <li>&lt;IODev&gt;_SubTelNum: 1...15<br>
+      Number of sub telegrams received<br>
     </li>
     <br><br>
   </ul>
@@ -14258,8 +16897,87 @@ EnOcean_Delete($$)
       If no SenderID (attr subDef) was assigned before a learning telegram is sent for the first time, a free SenderID
       is assigned automatically.
       <br><br>
-   </ul>
+      <li>Secure Devices Teach-In</li>
+      <br>
+      <code>set &lt;name&gt; teachInSec</code>
+      <br><br>
+      Secure teach-in to the remode device.<br>
+      If no SenderID (attr subDef) was assigned before a learning telegram is sent for the first time, a free SenderID
+      is assigned automatically.
+      <br><br>
+    </ul>
     </li>
+
+    <li><a name="EnOcean_smartAck">Smart Ack Learning</a>
+    <ul>
+      <li>Teach-in remote Smart Ack devices</li>
+      <br>
+      <code>set &lt;IODev&gt; smartAckLearn &lt;t/s&gt;</code>
+      <br><br>
+      Set Fhem in the Smart Ack learning mode.<br>
+      The post master fuctionality must be activated using the command <code>smartAckMailboxMax</code> in advance.<br>
+      The simple learnmode is supported, see <a href="#TCM_smartAckLearnMode">smartAckLearnMode</a><br>
+      A device, which is then also put in this state is to paired with
+      Fhem. Bidirectional learn in for 4BS, UTE and Generic Profiles are supported.<br>
+      <code>IODev</code> is the name of the TCM Module.<br>
+      <code>t/s</code> is the time for the learning period.
+      <br><br>
+      Example:
+      <ul><code>set TCM_0 smartAckLearn 600</code></ul>
+      <br>
+    </ul>
+    </li>
+
+    <li><a name="EnOcean_remoteSet">Remote Management</a>
+    <ul>
+    <code>set &lt;name&gt; &lt;value&gt;</code>
+    <br><br>
+    where <code>value</code> is
+        <li>remoteAction<br>
+          sent action command to perfoms an action, depending on the functionality of the device</li>
+         <li>remoteApplyChanges devCfg|linkTable|no_change<br>
+          apply changes</li>
+         <li>remoteDevCfg &lt;index&gt; &lt;value&gt;<br>
+          set configuration</li>
+         <li>remoteLinkTable in|out &lt;index&gt; &lt;ID&gt; &lt;EEP&gt; &lt;channel&gt;<br>
+          set link table content</li>
+         <li>remoteLinkCfg in|out &lt;index&gt; &lt;data index&gt; &lt;value&gt;<br>
+          set link based configuration</li>
+         <li>remoteLinkTableGP in|out &lt;index&gt; &lt;GP channel description&gt;<br>
+          set link table content</li>
+         <li>remoteLock<br>
+          locks the remote device or local client</li>
+        <li>remoteLearnMode in|out|off &lt;index&gt;<br>
+          initiate remote learn-in or learn-out of inbound index</li>
+         <li>remoteReset devCfg|linkTableIn|linkTableOut|no_change<br>
+          reset to defaults</li>
+         <li>remoteRLT on|off &lt;number of RLT slaves&gt;<br>
+          reset to defaults</li>
+         <li>remoteRepeater on|off|filter &lt;level&gt; &lt;filter structure&gt;<br>
+          set repeater functions</li>
+         <li>remoteRepeaterFilter apply|block|delete|deleteAll destinationID|sourceID|rorg|rssi &lt;filter value&gt;<br>
+          set repeater functions</li>
+         <li>remoteSetCode<br>
+          set the remote security code</li>
+         <li>remoteTeach &lt;channel&gt;<br>
+          request teach-in telegram from channel 00..FF</li>
+         <li>remoteUnlock [1...1800]<br>
+          unlocks the remote device or local client<br>
+          The unlock period can be set in the client mode between 1s and 1800 s.</li>
+          <br>
+      [&lt;channel&gt;] = 00...FF<br>
+      [&lt;EEP&gt;] = &lt;RORG&gt;-&lt;function&gt;-&lt;type&gt;<br>
+      [&lt;filter structure&gt;] = AND|OR<br>
+      [&lt;filter value&gt;] = &lt;destinationID&gt;|&lt;sourceID&gt;|&lt;RORG&gt;|&lt;LP/dBm&gt;<br>
+      [&lt;GP channel description&gt;] = &lt;name of channel 00&gt;:&lt;O|I&gt;:&lt;channel type&gt;:&lt;signal type&gt;:&lt;value type&gt;[:&lt;resolution&gt;[:&lt;engineering min&gt;:&lt;scaling min&gt;:&lt;engineering max&gt;:&lt;scaling max&gt;]]<br>
+      [&lt;ID&gt;] = 00000001...FFFFFFFE<br>
+      [&lt;index&gt;] = 00...FF<br>
+      [&lt;number of RLT slaves&gt;] = 01..7F<br>
+      [&lt;level&gt;] = 1|2<br>
+      [&lt;data index&gt;] = 0000...FFFF<br>
+      [&lt;value&gt;] = n x 00...FF<br>
+    </ul><br>
+    </li><br>
 
     <li>Switch, Pushbutton Switch (EEP F6-02-01 ... F6-03-02)<br>
     RORG RPS [default subType]
@@ -14368,9 +17086,12 @@ EnOcean_Delete($$)
           issue open command</li>
         <li>teach<br>
           initiate teach-in</li>
-    </ul></li><br>
-        The attr subType must be contact. The attribute must be set manually.
-    <br><br>
+    </ul><br>
+       The attr subType must be contact. The attribute must be set manually.
+       A monitoring period can be set for signOfLife telegrams of the sensor, see
+       <a href="#EnOcean_signOfLife">signOfLife</a> and <a href="#EnOcean_signOfLifeInterval">signOfLifeInterval</a>.
+       Default is "off" and an interval of 1980 sec.
+    </li><br><br>
 
     <li>Room Sensor and Control Unit (EEP A5-10-02)<br>
         [Thermokon SR04 PTS]<br>
@@ -14524,10 +17245,10 @@ EnOcean_Delete($$)
     <br><br>
     where <code>value</code> is
       <li>setpoint setpoint/%<br>
-          Set the actuator to the specifed setpoint (0...100). The setpoint can also be set by the 
+          Set the actuator to the specifed setpoint (0...100). The setpoint can also be set by the
           <a href="#EnOcean_setpointRefDev">setpointRefDev</a> device if it is set.</li>
       <li>setpointTemp t/&#176C<br>
-          Set the actuator to the specifed temperature setpoint. The temperature setpoint can also be set by the 
+          Set the actuator to the specifed temperature setpoint. The temperature setpoint can also be set by the
           <a href="#EnOcean_setpointTempRefDev">setpointTempRefDev</a> device if it is set.<br>
           The FHEM PID controller calculates the actuator setpoint based on the temperature setpoint. The controller's
           operation can be set via the PID parameters <a href="#EnOcean_pidFactor_P">pidFactor_P</a>,
@@ -14557,7 +17278,9 @@ EnOcean_Delete($$)
          <li><a href="#EnOcean_pidFactor_D">pidFactor_D</a></li>
          <li><a href="#EnOcean_pidIPortionCallBeforeSetting">pidIPortionCallBeforeSetting</a></li>
          <li><a href="#EnOcean_pidSensorTimeout">pidSensorTimeout</a></li>
+         <li><a href="#EnOcean_rcvRespAction">rcvRespAction</a></li>
          <li><a href="#EnOcean_setpointRefDev">setpointRefDev</a></li>
+         <li><a href="#EnOcean_setpointSummerMode">setpointSummerMode</a></li>
          <li><a href="#EnOcean_setpointTempRefDev">setpointTempRefDev</a></li>
          <li><a href="#temperatureRefDev">temperatureRefDev</a></li>
          <li><a href="#EnOcean_summerMode">summerMode</a></li>
@@ -14583,10 +17306,10 @@ EnOcean_Delete($$)
     <br><br>
     where <code>value</code> is
       <li>setpoint setpoint/%<br>
-          Set the actuator to the specifed setpoint (0...100). The setpoint can also be set by the 
+          Set the actuator to the specifed setpoint (0...100). The setpoint can also be set by the
           <a href="#EnOcean_setpointRefDev">setpointRefDev</a> device if it is set.</li>
       <li>setpointTemp t/&#176C<br>
-          Set the actuator to the specifed temperature setpoint. The temperature setpoint can also be set by the 
+          Set the actuator to the specifed temperature setpoint. The temperature setpoint can also be set by the
           <a href="#EnOcean_setpointTempRefDev">setpointTempRefDev</a> device if it is set.<br>
           The FHEM PID controller calculates the actuator setpoint based on the temperature setpoint. The controller's
           operation can be set via the PID parameters <a href="#EnOcean_pidFactor_P">pidFactor_P</a>,
@@ -14605,6 +17328,7 @@ EnOcean_Delete($$)
          <li><a href="#EnOcean_blockKey">blockKey</a></li>
          <li><a href="#EnOcean_displayOrientation">displayOrientation</a></li>
          <li><a href="#EnOcean_measurementCtrl">measurementCtrl</a></li>
+         <li><a href="#model">model</a></li>
          <li><a href="#EnOcean_pidActorCallBeforeSetting">pidActorCallBeforeSetting</a></li>
          <li><a href="#EnOcean_pidActorErrorAction">pidActorErrorAction</a></li>
          <li><a href="#EnOcean_pidActorErrorPos">pidActorErrorPos</a></li>
@@ -14630,6 +17354,8 @@ EnOcean_Delete($$)
     The attr subType must be hvac.04. This is done if the device was
     created by autocreate. To control the device, it must be bidirectional paired,
     see <a href="#EnOcean_teach-in">Teach-In / Teach-Out</a>.<br>
+    The OEM version of the Holter SmartDrive MX has an internal PID controller. This function is activated by
+    attr <device> model Holter_OEM and attr <device> pidCtrl off.<br>
     The command is not sent until the device wakes up and sends a message, usually
     every 5 minutes.
     </li>
@@ -14752,7 +17478,7 @@ EnOcean_Delete($$)
         The attr subType must be gateway and gwCmd must be switching. This is done if the device was
         created by autocreate.<br>
         For Eltako devices attributes must be set manually. For Eltako FSA12 attribute model must be set
-        to FSA12.
+        to Eltako_FSA12.
      </li>
      <br><br>
 
@@ -14989,22 +17715,24 @@ EnOcean_Delete($$)
     where <code>value</code> is
       <li>position/% [&alpha;/&#176]<br>
         drive blinds to position with angle value</li>
-     <li>teach<br>
-        initiate teach-in mode</li>
-      <li>opens<br>
-        issue blinds opens command</li>
-      <li>up tu/s<br>
-        issue roll up command</li>
+      <li>anglePos &alpha;/&#176<br>
+        drive blinds to angle value</li>
       <li>closes<br>
         issue blinds closes command</li>
       <li>down td/s<br>
         issue roll down command</li>
+      <li>opens<br>
+        issue blinds opens command</li>
       <li>position position/% [&alpha;/&#176]<br>
         drive blinds to position with angle value</li>
       <li>stop<br>
         issue stop command</li>
+     <li>teach<br>
+        initiate teach-in mode</li>
+      <li>up tu/s<br>
+        issue roll up command</li>
     </ul><br>
-      Runtime Range: tu|td = 1 s ... 255 s<br>
+      Run-time Range: tu|td = 1 s ... 255 s<br>
       Position Range: position = 0 % ... 100 %<br>
       Slat Angle Range: &alpha; = -180 &#176 ... 180 &#176<br>
       Angle Time Range: ta = 0 s ... 6 s<br>
@@ -15012,14 +17740,15 @@ EnOcean_Delete($$)
       <a href="#angleMin">angleMin</a>, <a href="#angleTime">angleTime</a>,
       <a href="#shutTime">shutTime</a> and <a href="#shutTimeCloses">shutTimeCloses</a>,
       are set correctly.
-      Set attr subType to manufProfile, manufID to 00D and attr model to
-      FSB14|FSB61|FSB70 manually.<br>
+      If <a href="#EnOcean_settingAccuracy">settingAccuracy</a> is set to high, the run-time is sent in 1/10 increments.<br>
+      Set attr subType to manufProfile, manufID to 00D and attr model to Eltako_FSB14|FSB61|FSB70|FSB_ACK manually.
+      If the attribute model is set to Eltako_FSB_ACK, with the status "open_ack" the readings position and anglePos are also updated.<br>
       Use the sensor type "Szenentaster/PC" for Eltako devices.
     </li>
     <br><br>
 
     <li>Electronic switches and dimmers with Energy Measurement and Local Control (D2-01-00 - D2-01-12)<br>
-        [Telefunken Funktionsstecker, PEHA Easyclick, AWAG Elektrotechnik AG Omnio UPS 230/xx,UPD 230/xx]<br>
+        [Telefunken Funktionsstecker, PEHA Easyclick, AWAG Elektrotechnik AG Omnio UPS 230/xx,UPD 230/xx, NodOn in-wall module, smart plug]<br>
     <ul>
     <code>set &lt;name&gt; &lt;value&gt;</code>
     <br><br>
@@ -15070,6 +17799,9 @@ EnOcean_Delete($$)
         specify the measurement unit</li>
       <li>roomCtrlMode off|comfort|comfort-1|comfort-2|economy|buildingProtection<br>
       set pilot wire mode</li>
+      <li>special repeater off|1|2<br>
+      set repeater level of device (additional NodOn command)
+      </li>
     </ul><br>
        [autoOffTime] = 0 s ... 0.1 s ... 6553.4 s<br>
        [delayOffTime] = 0 s ... 0.1 s ... 6553.4 s<br>
@@ -15082,40 +17814,42 @@ EnOcean_Delete($$)
     </li>
     <br><br>
 
-    <li>Blind Control for Position and Angle (D2-05-00)<br>
-        [AWAG Elektrotechnik AG OMNIO UPJ 230/12]<br>
+    <li>Blind Control for Position and Angle (D2-05-00 - D2-05-01)<br>
+        [AWAG Elektrotechnik AG OMNIO UPJ 230/12, REGJ12/04M ]<br>
     <ul>
     <code>set &lt;name&gt; &lt;value&gt;</code>
     <br><br>
     where <code>value</code> is
-      <li>opens<br>
+      <li>opens [&lt;channel&gt;]<br>
         issue blinds opens command</li>
-      <li>closes<br>
+      <li>closes [&lt;channel&gt;]<br>
         issue blinds closes command</li>
-      <li>position position/% [[&alpha;/%] [directly|opens|closes]]<br>
+      <li>position position/% [[&alpha;/%] [[&lt;channel&gt;] [directly|opens|closes]]]<br>
         drive blinds to position with angle value</li>
-      <li>angle &alpha;/%<br>
+      <li>anglePos &alpha;/%  [&lt;channel&gt;]<br>
         drive blinds to angle value</li>
-      <li>stop<br>
+      <li>stop  [&lt;channel&gt;]<br>
         issue stop command</li>
-      <li>alarm<br>
+      <li>alarm  [&lt;channel&gt;]<br>
         set actuator to the "alarm" mode. When the actuator ist set to the "alarm" mode neither local
         nor central positioning and configuration commands will be executed. Before entering the "alarm"
         mode, the actuator will execute the "alarm action" as configured by the attribute <a href="#EnOcean_alarmAction">alarmAction</a>
       </li>
-      <li>lock<br>
+      <li>lock  [&lt;channel&gt;]<br>
         set actuator to the "blockade" mode. When the actuator ist set to the "blockade" mode neither local
         nor central positioning and configuration commands will be executed.
       </li>
-      <li>unlock<br>
+      <li>unlock  [&lt;channel&gt;]<br>
         issue unlock command</li>
     </ul><br>
+      Channel Range: 1 ... 4|all, default is all<br>
       Position Range: position = 0 % ... 100 %<br>
       Slat Angle Range: &alpha; = 0 % ... 100 %<br>
       The devive can only fully controlled if the attributes <a href="#EnOcean_alarmAction">alarmAction</a>,
       <a href="#angleTime">angleTime</a>, <a href="#EnOcean_reposition">reposition</a> and <a href="#shutTime">shutTime</a>
       are set correctly.<br>
-      The attr subType must be blindsCtrl.00. This is done if the device was
+      With the attribute <a name="EnOcean_defaultChannel">defaultChannel</a> the default channel can be specified.<br>
+      The attr subType must be blindsCtrl.00 or blindsCtrl.01. This is done if the device was
       created by autocreate. To control the device, it must be bidirectional paired,
       see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
     </li>
@@ -15150,8 +17884,7 @@ EnOcean_Delete($$)
         <li><a href="#EnOcean_subDefW">subDefW</a></li>
       </ul>
       The attr subType must be multisensor.01. This is done if the device was
-      created by autocreate. To control the device, it must be bidirectional paired,
-      see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
+      created by autocreate.
     </li>
     <br><br>
 
@@ -15187,7 +17920,7 @@ EnOcean_Delete($$)
         set pre comfort temperature</li>
       <li>roomCtrlMode buildingProtectionTemp|comfortTemp|economyTemp|preComfortTemp<br>
         select setpoint temperature</li>
-      <li>setPointTemp t/&#176C<br>
+      <li>setpointTemp t/&#176C<br>
         set current setpoint temperature</li>
       <li>time<br>
         set time and date of the room controller </li>
@@ -15221,6 +17954,39 @@ EnOcean_Delete($$)
     </li>
     <br><br>
 
+    <li>Room Control Panels (D2-11-01 - D2-11-08)<br>
+        [Thermokon EasySens SR06 LCD-2T/-2T rh -4T/-4T rh]<br>
+    <ul>
+    <code>set &lt;name&gt; &lt;value&gt;</code>
+    <br><br>
+    where <code>value</code> is
+      <li>cooling on|off, default [colling] = off<br>
+        set cooling symbol at the display</li>
+      <li>desired-temp t/&#176C<br>
+        set setpoint temperature</li>
+      <li>fanSpeed auto|off|1|2|3<br>
+        set fan speed</li>
+      <li>heating on|off, default [heating] = off<br>
+        set heating symbol at the display</li>
+      <li>occupancy occupied|unoccupied<br>
+        set occupancy state</li>
+      <li>setpointTemp t/&#176C<br>
+        set current setpoint temperature</li>
+      <li>setpointShiftMax t/K<br>
+        set setpoint shift max</li>
+      <li>setpointType setpointTemp|setpointShift<br>
+        set setpoint type</li>
+      <li>window closed|open, default [window] = closed<br>
+        set window open symbol at the display</li>
+   </ul><br>
+       Setpoint Range: t = 5 &#176C ... 40 &#176C<br>
+       Setpoint Shift Max Range: t = 0 K ... 10 K<br>
+       The attr subType must be roomCtrlPanel.01. This is done if the device was
+       created by autocreate. To control the device, it must be bidirectional paired by Smart Ack,
+       see <a href="#EnOcean_smartAck">SmartAck Learning</a>.
+    </li>
+    <br><br>
+
     <li>Fan Control (D2-20-00 - D2-20-02)<br>
         [Maico ECA x RC/RCH, ER 100 RC, untested]<br>
     <ul>
@@ -15239,7 +18005,7 @@ EnOcean_Delete($$)
         set humidity threshold</li>
       <li>roomSize 0...350/m<sup>2</sup>|default|not_used<br>
         set room size</li>
-      <li>setPointTemp [t/&#176C]<br>
+      <li>setpointTemp [t/&#176C]<br>
         set current setpoint temperature</li>
     </ul><br>
        Setpoint Range: t = 0 &#176C ... 40 &#176C<br>
@@ -15357,7 +18123,7 @@ EnOcean_Delete($$)
     Generic Profiles.
     </li>
     <br><br>
- 
+
     <li>Radio Link Test<br>
     <ul>
     <code>set &lt;name&gt; &lt;value&gt;</code>
@@ -15376,12 +18142,64 @@ EnOcean_Delete($$)
       created by autocreate or manually by <code>define &lt;name&gt; EnOcean A5-3F-00</code><br>.
     </li>
     <br><br>
- 
+
  </ul></ul>
 
   <a name="EnOceanget"></a>
   <b>Get</b>
   <ul>
+
+    <li><a name="EnOcean_remoteGet">Remote Management</a>
+    <ul>
+    <code>get &lt;name&gt; &lt;value&gt;</code>
+    <br><br>
+    where <code>value</code> is
+        <li>remoteDevCfg &lt;start data index&gt; &lt;end data index&gt;<br>
+          get device configuration between start index and end index</li>
+        <li>remoteFunctions<br>
+          get a list of the supported extended functions</li>
+         <li>remoteID<br>
+          get the remote device ID</li>
+        <li>remoteLinkTableInfo<br>
+          query supported link table info</li>
+        <li>remoteLinkCfg in|out &lt;index&gt; &lt;start data index&gt; &lt;end data index&gt; &lt;length&gt;<br>
+          get link table between start index and end index</li>
+        <li>remoteLinkTable in|out &lt;start index&gt; &lt;end index&gt;<br>
+          get link table between start index and end index</li>
+        <li>remoteLinkTableGP in|out &lt;index&gt;<br>
+          get link table GP entry with index</li>
+        <li>remotePing<br>
+          get a ping response from the remote device</li>
+        <li>remoteProductID<br>
+          query product ID</li>
+        <li>remoteRepeater<br>
+          asks for the repeater status of the remote device</li>
+        <li>remoteStatus<br>
+          asks for the status info of the remote device</li>
+        <br>
+       [&lt;data index&gt;] = 0000...FFFF<br>
+       [&lt;index&gt;] = 00...FF<br>
+       [&lt;length&gt;] = n x 00...FF<br>
+    </ul>
+    </li><br><br>
+
+    <li><a name="EnOcean_signalGet">Signal Telegram</a>
+    <ul>
+    <code>get &lt;name&gt; &lt;value&gt;</code>
+    <br><br>
+    where <code>value</code> is
+        <li>signal energy<br>
+          get the energy status</li>
+        <li>signal revision<br>
+          get the revision of the device</li>
+         <li>signal RXlevel<br>
+          get the RX level of receiced request</li>
+        <li>signal harvester<br>
+          get the energy current harvested reporting</li>
+    </ul><br>
+      Trigger status messages of the device.
+    </li><br><br>
+
     <li>Dual Channel Switch Actuator (EEP A5-11-059)<br>
          [untested]<br>
     <ul>
@@ -15410,7 +18228,7 @@ EnOcean_Delete($$)
     <br><br>
 
     <li>Electronic switches and dimmers with Energy Measurement and Local Control (D2-01-00 - D2-01-12)<br>
-        [Telefunken Funktionsstecker, PEHA Easyclick, AWAG Elektrotechnik AG Omnio UPS 230/xx,UPD 230/xx]<br>
+        [Telefunken Funktionsstecker, PEHA Easyclick, AWAG Elektrotechnik AG Omnio UPS 230/xx,UPD 230/xx, NodOn in-wall module, smart plug]<br>
     <ul>
     <code>get &lt;name&gt; &lt;value&gt;</code>
     <br><br>
@@ -15426,6 +18244,9 @@ EnOcean_Delete($$)
        <li>special &lt;channel&gt; health|load|voltage|serialNumber<br>
        additional Permondo SmartPlug PSC234 commands
        </li>
+       <li>special &lt;channel&gt; firmwareVersion|reset|taughtInDevID|taughtInDevNum<br>
+       additional NodOn commands
+       </li>
 
     </ul><br>
        The default channel can be specified with the attr <a href="#EnOcean_defaultChannel">defaultChannel</a>.<br>
@@ -15436,18 +18257,20 @@ EnOcean_Delete($$)
     <br><br>
 
     <li>Blind Control for Position and Angle (D2-05-00)<br>
-        [AWAG Elektrotechnik AG OMNIO UPJ 230/12]<br>
+        [AWAG Elektrotechnik AG OMNIO UPJ 230/12, REGJ12/04M]<br>
     <ul>
     <code>get &lt;name&gt; &lt;value&gt;</code>
     <br><br>
     where <code>value</code> is
-      <li>position<br>
+      <li>position  [&lt;channel&gt;]<br>
         query position and angle value</li>
     </ul><br>
+      Channel Range: 1 ... 4|all, default is all<br>
       The devive can only fully controlled if the attributes <a href="#EnOcean_alarmAction">alarmAction</a>,
       <a href="#angleTime">angleTime</a>, <a href="#EnOcean_reposition">reposition</a> and <a href="#shutTime">shutTime</a>
       are set correctly.<br>
-      The attr subType must be blindsCtrl.00. This is done if the device was
+      With the attribute <a name="EnOcean_defaultChannel">defaultChannel</a> the default channel can be specified.<br>
+      The attr subType must be blindsCtrl.00 or blindsCrtl.01. This is done if the device was
       created by autocreate. To control the device, it must be bidirectional paired,
       see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
     </li>
@@ -15470,8 +18293,7 @@ EnOcean_Delete($$)
         <li><a href="#EnOcean_subDefW">subDefW</a></li>
       </ul>
       The attr subType must be multisensor.01. This is done if the device was
-      created by autocreate. To control the device, it must be bidirectional paired,
-      see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
+      created by autocreate.
     </li>
     <br><br>
 
@@ -15555,9 +18377,11 @@ EnOcean_Delete($$)
       filled via a notify from a distinct temperature sensor.<br>
       If absent, the reported temperature from the HVAC components is used.
     </li>
-    <li><a name="EnOcean_alarmAction">alarmAction</a> no|stop|opens|closes<br>
+    <li><a name="EnOcean_alarmAction">alarmAction</a> &lt;channel1&gt;[:&lt;channel2&gt;[:&lt;channel3&gt;[:&lt;channel4&gt;]]]<br>
+      [alarmAction] = no|stop|opens|closes, default is no<br>
       Action that is executed before the actuator is entering the "alarm" mode.<br>
-      Notice subType blindsCrtl.00: The attribute can only be set while the actuator is online.    </li>
+      Notice subType blindsCrtl.00, blindsCrtl.01: The attribute can only be set while the actuator is online.
+    </li>
     <li><a name="angleMax">angleMax</a> &alpha;s/&#176, [&alpha;s] = -180 ... 180, 90 is default.<br>
       Slat angle end position maximum.<br>
       angleMax is supported for shutter.
@@ -15566,8 +18390,8 @@ EnOcean_Delete($$)
       Slat angle end position minimum.<br>
       angleMin is supported for shutter.
     </li>
-    <li><a name="angleTime">angleTime</a> t/s,<br>
-      subType blindsCtrl.00: [angleTime] = 0|0.01 .. 2.54, 0 is default.<br>
+    <li><a name="angleTime">angleTime</a> &lt;channel1&gt;[:&lt;channel2&gt;[:&lt;channel3&gt;[:&lt;channel4&gt;]]]<br>
+      subType blindsCtrl.00, blindsCtrl.01: [angleTime] = 0|0.01 .. 2.54, 0 is default.<br>
       subType manufProfile: [angleTime] = 0 ... 6, 0 is default.<br>
       Runtime value for the sunblind reversion time. Select the time to revolve
       the sunblind from one slat angle end position to the other end position.<br>
@@ -15619,7 +18443,9 @@ EnOcean_Delete($$)
     <li><a name="EnOcean_dataEnc">dataEnc</a> VAES|AES-CBC, [dataEnc] = VAES is default<br>
       Data encryption algorithm
     </li>
-    <li><a name="EnOcean_defaultChannel">defaultChannel</a> all|input|0 ... 29, [defaultChannel] = all is default<br>
+    <li><a name="EnOcean_defaultChannel">defaultChannel</a> &lt;channel&gt;
+      subType actuator.01: [defaultChannel] = all|input|0 ... 29, all is default.<br>
+      subType blindsCtrl.00,  blindsCtrl.01: [defaultChannel] = all|1 ... 4, all is default.<br>
       Default device channel
     </li>
     <li><a name="EnOcean_daylightSavingTime">daylightSavingTime</a> supported|not_supported, [daylightSavingTime] = supported is default.<br>
@@ -15695,16 +18521,16 @@ EnOcean_Delete($$)
       </ul>
     </li>
     <li><a name="EnOcean_displayContent">displayContent</a>
-      humidity|off|setPointTemp|temperatureExtern|temperatureIntern|time|default|no_change, [displayContent] = no_change is default.<br>
+      humidity|off|setpointTemp|temperatureExtern|temperatureIntern|time|default|no_change, [displayContent] = no_change is default.<br>
       displayContent is supported for roomCtrlPanel.00.
     </li>
     <li><a name="EnOcean_displayOrientation">displayOrientation</a> rad/&#176, [displayOrientation] = 0|90|180|270, 0 is default.<br>
       Display orientation of the actuator
     </li>
     <li><a href="#do_not_notify">do_not_notify</a></li>
-    <li><a href="#eventMap">eventMap</a></li>
     <li><a name="EnOcean_eep">eep</a> &lt;00...FF&gt;-&lt;00...3F&gt;-&lt;00...7F&gt;<br>
       EnOcean Equipment Profile (EEP)
+    <li><a href="#eventMap">eventMap</a></li>
     </li>
     <li><a name="EnOcean_gpDef">gpDef</a> &lt;name of channel 00&gt;:&lt;O|I&gt;:&lt;channel type&gt;:&lt;signal type&gt;:&lt;value type&gt;[:&lt;resolution&gt;[:&lt;engineering min&gt;:&lt;scaling min&gt;:&lt;engineering max&gt;:&lt;scaling max&gt;]] ...
                                           &lt;name of channel 64&gt;:&lt;O|I&gt;:&lt;channel type&gt;:&lt;signal type&gt;:&lt;value type&gt;[:&lt;resolution&gt;[:&lt;engineering min&gt;:&lt;scaling min&gt;:&lt;engineering max&gt;:&lt;scaling max&gt;]]
@@ -15741,7 +18567,7 @@ EnOcean_Delete($$)
     </li>
     <li><a name="EnOcean_measurementCtrl">measurementCtrl</a> enable|disable<br>
       Enable or disable the temperature measurements (room and feed temperature) of the actuator. If the temperature
-      measurements are turned off, an external temperature sensor must be exists, see attribute 
+      measurements are turned off, an external temperature sensor must be exists, see attribute
       <a href="#temperatureRefDev">temperatureRefDev</a>.
     </li>
     <li><a href="#model">model</a></li>
@@ -15769,7 +18595,7 @@ EnOcean_Delete($$)
     <li><a name="EnOcean_observeRefDev">observeRefDev</a> &lt;name&gt; [&lt;name&gt; [&lt;name&gt;]],
       [observeRefDev] = &lt;name of the own device&gt; is default<br>
       Names of the devices to be observed. The list must be separated by spaces.
-    </li>    
+    </li>
     <li><a name="EnOcean_pidActorCallBeforeSetting">pidActorCallBeforeSetting</a>,
         [pidActorCallBeforeSetting] = not defined is default<br>
         Callback-function, which can manipulate the actorValue. Further information see modul PID20.
@@ -15792,21 +18618,21 @@ EnOcean_Delete($$)
     </li>
     <li><a name="EnOcean_pidCtrl">pidCtrl</a> on|off,
         [pidCtrl] = on is default<br>
-        Activate PID regulator
+        Activate the Fhem PID regulator
     </li>
     <li><a name="EnOcean_pidDeltaTreshold">pidDeltaTreshold</a> &lt;floating-point number&gt;,
         [pidDeltaTreshold] = 0 is default<br>
         if delta < delta-threshold the pid will enter idle state
     </li>
-    <li><a name="EnOcean_pidFactor_P">pidFactor_P</a> &lt;floating-point number&gt;, 
+    <li><a name="EnOcean_pidFactor_P">pidFactor_P</a> &lt;floating-point number&gt;,
         [pidFactor_P] = 25 is default<br>
         P value for PID
     </li>
-    <li><a name="EnOcean_pidFactor_I">pidFactor_I</a> &lt;floating-point number&gt;, 
+    <li><a name="EnOcean_pidFactor_I">pidFactor_I</a> &lt;floating-point number&gt;,
         [pidFactor_I] = 0.25 is default<br>
         I value for PID
     </li>
-    <li><a name="EnOcean_pidFactor_D">pidFactor_D</a> &lt;floating-point number&gt;, 
+    <li><a name="EnOcean_pidFactor_D">pidFactor_D</a> &lt;floating-point number&gt;,
         [pidFactor_D] = 0 is default<br>
         D value for PID
     </li>
@@ -15829,9 +18655,32 @@ EnOcean_Delete($$)
       rampTime is supported for gateway, command dimming and lightCtrl.01.
       </li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
-    <li><a name="EnOcean_remoteManagement">remoteManagement</a> off|on,
+    <li><a name="EnOcean_rcvRespAction">rcvRespAction</a> &lt;command&gt;<br>
+      Command being executed after an message from the aktor is received and before an response message is sent.
+      If &lt;command&gt; is enclosed in {}, then it is a perl expression, if it is enclosed in "", then it is a shell command,
+      else it is a "plain" fhem.pl command (chain). In the &lt;command&gt; you can access the name of the device by using $NAME
+      and the current readings $ACTUATORSTATE, $BATTERY, $COVER, $ENERGYINPUT, $ENERGYSTORAGE, $MAINTENANCEMODE, $OPERATIONMODE,
+      $ROOMTEMP, $SELFCTRL, $SETPOINT, $SETPOINTTEMP, $SUMMERMODE, $TEMPERATURE, $WINDOW for the subType hvac.01 and $NAME,
+      $BATTERY, $FEEDTEMP, $MAINTENANCEMODE, $OPERATIONMODE, $ROOMTEMP, $SETPOINT, $SETPOINTTEMP, $SUMMERMODE, $TEMPERATURE
+      for the subType hvac.04.
+      This data is available as a local variable in perl, as environment variable for shell
+      scripts, and will be textually replaced for Fhem commands.
+    </li>
+    <li><a name="EnOcean_remoteCode">remoteCode</a> &lt;00000000...FFFFFFFE&gt;<br>
+      Remote Management Security Code, 00000000 is interpreted as on code has been set.
+    </li>
+    <li><a name="EnOcean_remoteEEP">remoteEEP</a> &lt;00...FF&gt;-&lt;00...3F&gt;-&lt;00...7F&gt;<br>
+      Remote Management EnOcean Equipment Profile (EEP)
+    </li>
+    <li><a name="EnOcean_remoteID">remoteID</a> &lt;00000001...FFFFFFFE&gt;<br>
+      Remote Management Remote Device ID
+    </li>
+    <li><a name="EnOcean_remoteManagement">remoteManagement</a> client|manager|off,
       [remoteManagement] = off is default.<br>
       Enable Remote Management for the device.
+    </li>
+    <li><a name="EnOcean_remoteManufID">remoteManufID</a> &lt;000...7FF&gt;<br>
+      Remote Management Manufacturer ID
     </li>
     <li><a name="repeatingAllowed">repeatingAllowed</a> yes|no,
       [repeatingAllowed] = yes is default.<br>
@@ -15869,6 +18718,9 @@ EnOcean_Delete($$)
     <li><a name="scaleDecimals">scaleDecimals</a> 0 ... 9<br>
       Decimal rounding with x digits of the scaled reading setpoint
     </li>
+    <li><a name="EnOcean_teachMethod">teachMethod</a> 1BS|4B|confirm|GP|RPS|smartAck|STE|UTE<br>
+      teach-in method
+    </li>
     <li><a name="scaleMax">scaleMax</a> &lt;floating-point number&gt;<br>
       Scaled maximum value of the reading setpoint
     </li>
@@ -15884,14 +18736,14 @@ EnOcean_Delete($$)
     <li><a name="EnOcean_sendDevStatus">sendDevStatus</a> no|yes, [sendDevStatus] = no is default.<br>
       Send new status of the device.
     </li>
-    <li><a name="EnOcean_serviceOn">serviceOn</a> no|yes,
-      [serviceOn] = no is default.<br>
-      Device in Service Mode.
-    </li>
-    <li><a name="sensorMode">switchMode</a> switch|pushbutton,
+    <li><a name="sensorMode">sensorMode</a> switch|pushbutton,
       [sensorMode] = switch is default.<br>
       The status "released" will be shown in the reading state if the
       attribute is set to "pushbutton".
+    </li>
+    <li><a name="EnOcean_serviceOn">serviceOn</a> no|yes,
+      [serviceOn] = no is default.<br>
+      Device in Service Mode.
     </li>
     <li><a name="EnOcean_setCmdTrigger">setCmdTrigger</a> man|refDev, [setCmdTrigger] = man is default.<br>
       Operation mode to send set commands<br>
@@ -15903,13 +18755,21 @@ EnOcean_Delete($$)
       Name of the device whose reference value is read. The reference values is
       the reading setpoint.
     </li>
+    <li><a name="EnOcean_setpointSummerMode">setpointSummerMode</a> valvePos/%,
+        [setpointSummerMode] = 0...100, 0 is default<br>
+      Valve position in summer operation
+    </li>
     <li><a name="EnOcean_setpointTempRefDev">setpointTempRefDev</a> &lt;name&gt;<br>
       Name of the device whose reference value is read. The reference values is
       the reading setpointTemp.
     </li>
+    <li><a name="EnOcean_settingAccuracy">settingAccuracy</a> high|low,
+      [settingAccuracy] = low is default.<br>
+      set setting accurancy.
+    </li>
     <li><a href="#showtime">showtime</a></li>
-    <li><a name="shutTime">shutTime</a> t/s<br>
-      subType blindsCtrl.00: [shutTime] = 5 ... 300, 300 is default.<br>
+    <li><a name="shutTime">shutTime</a> &lt;channel1&gt;[:&lt;channel2&gt;[:&lt;channel3&gt;[:&lt;channel4&gt;]]]<br>
+      subType blindsCtrl.00,  blindsCtrl.01: [shutTime] = 5 ... 300, 300 is default.<br>
       subType manufProfile: [shutTime] = 1 ... 255, 255 is default.<br>
       Use the attr shutTime to set the time delay to the position "Halt" in
       seconds. Select a delay time that is at least as long as the shading element
@@ -15922,6 +18782,16 @@ EnOcean_Delete($$)
       Select a runtime that is at least as long as the value set by the delay switch of the actuator.
       <br>
       shutTimeCloses is supported for shutter.
+    </li>
+    <li><a name="EnOcean_signal">signal</a> off|on,
+      [signal] = off is default.<br>
+      Activate the request functions of signal telegram messages.
+    </li>
+    <li><a name="EnOcean_signOfLife">signOfLife</a> off|on, [sifnOfLive] = off is default.<br>
+      Monitoring signOfLife telegrams from sensors.
+    </li>
+    <li><a name="EnOcean_signOfLifeInterval">signOfLifeInterval</a> 1...65535<br>
+      Monitoring period in seconds for signOfLife telegrams from sensors.
     </li>
     <li><a name="subDef">subDef</a> &lt;EnOcean SenderID&gt;,
       [subDef] = [DEF] is default.<br>
@@ -15991,21 +18861,19 @@ EnOcean_Delete($$)
       If [subDefI] = getNextID FHEM can assign a free SenderID alternatively. The assigned SenderID will only
       displayed after the system configuration has been reloaded, e.g. Fhem command rereadcfg.
     </li>
-    <li><a name="subDefH">subDefH</a> &lt;EnOcean SenderID&gt;,
+    <li><a name="EnOcean_subDefH">subDefH</a> &lt;EnOcean SenderID&gt;,
       [subDefH] = undef is default.<br>
       SenderID (<a href="#TCM">TCM</a> BaseID + offset)<br>
       Used with subType "multisensor.00". If the attribute subDefH is set, the position of the window handle as EEP F6-10-00
       (windowHandle) telegram is forwarded.<br>
-      If [subDefH] = getNextID FHEM can assign a free SenderID alternatively. The assigned SenderID will only
-      displayed after the system configuration has been reloaded, e.g. Fhem command rereadcfg.
+      If [subDefH] = getNextID FHEM can assign a free SenderID alternatively.
     </li>
-    <li><a name="subDefW">subDefW</a> &lt;EnOcean SenderID&gt;,
+    <li><a name="EnOcean_subDefW">subDefW</a> &lt;EnOcean SenderID&gt;,
       [subDefW] = undef is default.<br>
       SenderID (<a href="#TCM">TCM</a> BaseID + offset)<br>
       Used with subType "multisensor.00". If the attribute subDefW is set, the window state as EEP D5-00-01
       (contact) telegram is forwarded.<br>
-      If [subDefW] = getNextID FHEM can assign a free SenderID alternatively. The assigned SenderID will only
-      displayed after the system configuration has been reloaded, e.g. Fhem command rereadcfg.
+      If [subDefW] = getNextID FHEM can assign a free SenderID alternatively.
     </li>
     <li><a href="#subType">subType</a></li>
     <li><a name="subTypeSet">subTypeSet</a> &lt;type of device&gt;, [subTypeSet] = [subType] is default.<br>
@@ -16014,7 +18882,8 @@ EnOcean_Delete($$)
     </li>
     <li><a name="EnOcean_summerMode">summerMode</a> off|on,
       [summerMode] = off is default.<br>
-      Put Battery Powered Actuator (hvac.01) or Heating Radiator Actuating Drive (hvac.04) in summer operation to reduce energy consumption.
+      Put Battery Powered Actuator (hvac.01) or Heating Radiator Actuating Drive (hvac.04) in summer operation
+      to reduce energy consumption. If [summerMode] = on, the set commands are not executed.
     </li>
     <li><a name="EnOcean_switchHysteresis">switchHysteresis</a> &lt;value&gt;,
       [switchHysteresis] = 1 is default.<br>
@@ -16072,6 +18941,9 @@ EnOcean_Delete($$)
       The Room Control Panel Kieback & Peter RBW322-FTL supports only [roomCtrlMode] = comfort.<br>
       timeProgram is supported for roomCtrlPanel.00.
       </li>
+    <li><a name="EnOcean_trackerWakeUpCycle">trackerWakeUpCycle</a> t/s, [wakeUpCycle] =10 s, 20 s, 30 s, 40 s, 60 s, 120 s, 180 s, 240 s, 3600, 86400 s, 30 s is default.<br>
+      Transmission cycle of the tracker.
+    </li>
     <li><a name="EnOcean_updateState">updateState</a> default|yes|no, [updateState] = default is default.<br>
       update reading state after set commands
       </li>
@@ -16080,8 +18952,7 @@ EnOcean_Delete($$)
       </li>
     <li><a href="#verbose">verbose</a></li>
     <li><a name="EnOcean_wakeUpCycle">wakeUpCycle</a> t/s, [wakeUpCycle] = 10 s ... 151200 s, 300 s is default.<br>
-      Name of the device whose reference value is read. The reference values is
-      the reading temperature.
+      Transmission cycle of the actuator.
     </li>
     <li><a href="#webCmd">webCmd</a></li>
     </ul>
@@ -16092,6 +18963,39 @@ EnOcean_Delete($$)
   <b>Generated events</b>
   <ul>
     <ul>
+
+     <li><a name="EnOcean_remoteEvents">Remote Management</a><br>
+     <ul>
+         <li>remoteDevCfg&lt;0000...FFFF&gt;: &lt;device config&gt;</li>
+         <li>remoteFunction&lt;01...99&gt;: &lt;remote function number&gt;:&lt;remote manufacturer ID&gt;:&lt;explanation&gt;</li>
+         <li>remoteLastFunctionNumber: 001...FFF</li>
+         <li>remoteLastStatusReturnCode: 00...FF</li>
+         <li>remoteLearn: not_supported|supported</li>
+         <li>remoteLinkCfg&lt;in|out&gt;&lt;00...FF&gt;: &lt;data index&gt;:&lt;device config&gt;</li>
+         <li>remoteLinkTableDesc&lt;in|out&gt;&lt;00...FF&gt;: &lt;DeviceID&gt;:&lt;EEP&gt;:&lt;channel&gt;</li>
+         <li>remoteLinkTableGPDesc&lt;in|out&gt;&lt;00...FF&gt;: &lt;name of channel 00&gt;:&lt;O|I&gt;:&lt;channel type&gt;:&lt;signal type&gt;:&lt;value type&gt;[:&lt;resolution&gt;[:&lt;engineering min&gt;:&lt;scaling min&gt;:&lt;engineering max&gt;:&lt;scaling max&gt;]]</li>
+         <li>remoteProductID: 00000000...FFFFFFFF</li>
+         <li>remoteRepeaterFilter: AND|OR</li>
+         <li>remoteRepeaterFunction: on|off|filter</li>
+         <li>remoteRepeaterLevel: 1|2</li>
+         <li>remoteTeach: not_supported|supported</li>
+         <li>remoteRSSI: LP/dBm</li>
+         <li>teach: &lt;result of teach procedure&gt;</li>
+     </ul>
+     </li>
+     <br><br>
+
+     <li><a name="EnOcean_signalEvents">Signal Telegram</a><br>
+     <ul>
+         <li>harvester: very_good|good|average|bad|very_bad</li>
+         <li>hwVersion: 00000000...FFFFFFFF</li>
+         <li>trigger: heartbeat</li>
+         <li>smartAckMailbox: empty|not_exists|reset</li>
+         <li>swVersion: 00000000...FFFFFFFF</li>
+     </ul>
+     </li>
+     <br><br>
+
      <li>Switch (EEP F6-02-01 ... F6-03-02)<br>
      <ul>
          <li>A0</li>
@@ -16113,7 +19017,7 @@ EnOcean_Delete($$)
      </li>
      <br><br>
 
-     <li>Pushbutton Switch, Pushbutton Input Module (EEP F6-02-01 ... F6-02-02)<br>
+     <li>Pushbutton Switch, Pushbutton Input Module (EEP F6-02-01 ... F6-02-02, F6-01-01)<br>
          [Eltako FT55, FSM12, FSM61, FTS12]<br>
      <ul>
          <li>A0</li>
@@ -16131,7 +19035,7 @@ EnOcean_Delete($$)
          <li>state: &lt;BtnX&gt;[,&lt;BtnY&gt;] [released]</li>
      </ul><br>
          The status of the device may become "released", this is not the case for a normal switch.<br>
-         Set attr model to FT55|FSM12|FSM61|FTS12 or attr sensorMode to pushbutton manually.
+         Set attr model to Eltako_FT55|FSM12|FSM61|FTS12 or attr sensorMode to pushbutton manually.
      </li>
      <br><br>
 
@@ -16178,17 +19082,19 @@ EnOcean_Delete($$)
      </li>
      <br><br>
 
-     <li>Smoke Detector (EEP F6-02-01 ... F6-02-02)<br>
-         [Eltako FRW]<br>
+     <li>Pushbutton Switch (EEP D2-03-0A)<br>
+         [Nodon Soft Button]<br>
      <ul>
-         <li>smoke-alarm</li>
+         <li>on</li>
          <li>off</li>
-         <li>alarm: smoke-alarm|off</li>
-         <li>battery: low|ok</li>
-         <li>buttons: pressed|released</li>
-         <li>state: smoke-alarm|off</li>
+         <li>batteryPrecent: r/% (Sensor Range: r = 1 % ... 100 %)</li>
+         <li>buttonD: on|off</li>
+         <li>buttonL: on|off</li>
+         <li>buttonS: on|off</li>
+         <li>state: on|off</li>
      </ul><br>
-        Set attr subType to FRW manually.
+        The attr subType must be switch.0A. This is done if the device was
+        created by autocreate.
      </li>
      <br><br>
 
@@ -16199,7 +19105,7 @@ EnOcean_Delete($$)
          <li>energyHoldOff: normal|holdoff</li>
          <li>buttons: pressed|released</li>
      </ul><br>
-        Set attr subType to switch and model to FAE14|FHK14 manually. In addition
+        Set attr subType to switch and model to Eltako_FAE14|FHK14 manually. In addition
         every telegram received from a teached-in temperature sensor (e.g. FTR55H)
         is repeated as a confirmation telegram from the Heating/Cooling Relay
         FAE14, FHK14. In this case set attr subType to e. g. roomSensorControl.05
@@ -16218,6 +19124,19 @@ EnOcean_Delete($$)
      </li>
      <br><br>
 
+     <li>Wind Speed Threshold Detector (EEP F6-05-00)<br>
+     <ul>
+         <li>on</li>
+         <li>off</li>
+         <li>alarm: dead_sensor|off</li>
+         <li>windSpeed: dead_sensor|on|off</li>
+         <li>battery: low|ok</li>
+         <li>state: on|off</li>
+     </ul><br>
+        Set attr subType to windSpeed.00 manually.
+     </li>
+     <br><br>
+
      <li>Liquid Leakage Sensor (EEP F6-05-01)<br>
          [untested]<br>
      <ul>
@@ -16226,6 +19145,19 @@ EnOcean_Delete($$)
          <li>state: dry|wet</li>
      </ul><br>
          Set attr subType to liquidLeakage manually.
+     </li>
+     <br><br>
+
+     <li>Smoke Detector (EEP F6-05-02)<br>
+         [Eltako FRW]<br>
+     <ul>
+         <li>smoke-alarm</li>
+         <li>off</li>
+         <li>alarm: dead_sensor|smoke-alarm|off</li>
+         <li>battery: low|ok</li>
+         <li>state: smoke-alarm|off</li>
+     </ul><br>
+        Set attr subType to smokeDetector.02 manually.
      </li>
      <br><br>
 
@@ -16244,14 +19176,17 @@ EnOcean_Delete($$)
 
      <li>Single Input Contact, Door/Window Contact<br>
          1BS Telegram (EEP D5-00-01)<br>
-         [EnOcean STM 320, STM 329, STM 250, Eltako FTK, Peha D 450 FU]
+         [EnOcean EMCS, STM 320, STM 329, STM 250, Eltako FTK, Peha D 450 FU]
      <ul>
          <li>closed</li>
          <li>open</li>
+         <li>alarm: dead_sensor</li>
          <li>teach: &lt;result of teach procedure&gt;</li>
          <li>state: open|closed</li>
      </ul></li>
-        The device should be created by autocreate.
+        The device should be created by autocreate. A monitoring period can be set for signOfLife telegrams of the sensor, see
+       <a href="#EnOcean_signOfLife">signOfLife</a> and <a href="#EnOcean_signOfLifeInterval">signOfLifeInterval</a>.
+       Default is "off" and an interval of 1310 sec.
      <br><br>
 
      <li>Temperature Sensors with with different ranges (EEP A5-02-01 ... A5-02-30)<br>
@@ -16277,23 +19212,30 @@ EnOcean_Delete($$)
        <li>voltage: U/V</li> (Sensor Range: U = 0 V ... 6.6 V)
        <li>state: T: t/&#176C H: rH/% B: unknown|low|ok</li>
      </ul><br>
-        The attr subType must be tempHumiSensor.02 and attr
-        manufID must be 00D for Eltako Devices. This is done if the device was
-        created by autocreate.
+       The attr subType must be tempHumiSensor.02 and attr
+       manufID must be 00D for Eltako Devices. This is done if the device was
+       created by autocreate.<br>
+       A monitoring period can be set for signOfLife telegrams of the sensor, see
+       <a href="#EnOcean_signOfLife">signOfLife</a> and <a href="#EnOcean_signOfLifeInterval">signOfLifeInterval</a>.
+       Default is "off" and an interval of 3300 sec.
      </li>
      <br><br>
 
      <li>Temperatur and Humidity Sensor (EEP A5-04-03)<br>
-         [untsted]<br>
+         [untested]<br>
      <ul>
        <li>T: t/&#176C H: rH/%</li>
+       <li>alarm: dead_sensor</li>
        <li>humidity: rH/% (Sensor Range: rH = 0 % ... 100 %)</li>
        <li>telegramType: heartbeat|event</li>
        <li>temperature: t/&#176C (Sensor Range: t = -20 &#176C ... 60 &#176C)</li>
        <li>state: T: t/&#176C H: rH/%</li>
      </ul><br>
-        The attr subType must be tempHumiSensor.03. This is done if the device was
-        created by autocreate.
+       The attr subType must be tempHumiSensor.03. This is done if the device was
+       created by autocreate.<br>
+       A monitoring period can be set for signOfLife telegrams of the sensor, see
+       <a href="#EnOcean_signOfLife">signOfLife</a> and <a href="#EnOcean_signOfLifeInterval">signOfLifeInterval</a>.
+       Default is "off" and an interval of 1540 sec.
      </li>
      <br><br>
 
@@ -16367,6 +19309,18 @@ EnOcean_Delete($$)
      </li>
      <br><br>
 
+     <li>Light Sensor (EEP A5-06-05)<br>
+         [untested]<br>
+     <ul>
+       <li>E/lx</li>
+       <li>brightness: E/lx (Sensor Range: 0 lx ... 10200 lx</li>
+       <li>voltage: U/V (Sensor Range: U = 0 V ... 5.1 V)</li>
+       <li>state: E/lx</li>
+     </ul><br>
+        The attr subType must be lightSensor.05. This is done if the device was created by autocreate.
+     </li>
+     <br><br>
+
       <li>Occupancy Sensor (EEP A5-07-01, A5-07-02)<br>
          [EnOcean EOSW]<br>
      <ul>
@@ -16383,6 +19337,22 @@ EnOcean_Delete($$)
         The attr subType must be occupSensor.<01|02>. This is done if the device was
         created by autocreate. Current is the solar panel current. Some values are
         displayed only for certain types of devices.
+     </li>
+     <br><br>
+
+      <li>Eltako/PioTek-Tracker TF-TTB (EEP A5-07-01)<br>
+     <ul>
+       <li>on|off</li>
+       <li>battery: ok|low</li>
+       <li>button: pressed|released</li>
+       <li>motion: on|off</li>
+       <li>voltage: U/V (Sensor Range: U = 0 V ... 5.0 V)</li>
+       <li>state: on|off</li>
+     </ul><br>
+        The attr subType must be occupSensor.01. This is done if the device was
+        created by autocreate. The attr model has to be set manually to tracker.
+        Alternatively, the profile will be defined with inofficial EEP G5-07-01.<br>
+        The transmission cycle is set using the attribute <a href="#EnOcean_trackerWakeUpCycle">trackerWakeUpCycle</a>.
      </li>
      <br><br>
 
@@ -16458,12 +19428,13 @@ EnOcean_Delete($$)
      </li>
      <br><br>
 
-     <li>Gas Sensor, Volatile organic compounds (VOC) Sensor (EEP A5-09-05)<br>
+     <li>Gas Sensor, Volatile organic compounds (VOC) Sensor (EEP A5-09-05, A5-09-0C)<br>
          [untested]<br>
      <ul>
-       <li>concentration: c/ppb (Sensor Range: c = 0 ppb ...  655350 ppb)</li>
+       <li>concentration: c/[unit] (Sensor Range: c = 0 ...  655350</li>
+       <li>concentrationUnit: ppb|&mu;/m3</li>
        <li>vocName: Name of last measured VOC</li>
-       <li>state: c/ppb</li>
+       <li>state: c/[unit]</li>
      </ul><br>
         The attr subType must be vocSensor.01. This is done if the device was
         created by autocreate.
@@ -16520,7 +19491,6 @@ EnOcean_Delete($$)
         created by autocreate.
      </li>
      <br><br>
-
 
      <li>Radiation Sensor (EEP A5-09-0B)<br>
          [untested]<br>
@@ -16743,8 +19713,7 @@ EnOcean_Delete($$)
        <a href="#scaleDecimals">scaleDecimals</a> for the additional scaled reading
        setpointScaled. Use attribut <a href="#userReadings">userReadings</a> to
        adjust the scaling alternatively.<br>
-       The attr subType must be roomSensorControl.20.
-       This is done if the device was created by autocreate.
+       The attr subType must be roomSensorControl.20. This is done if the device was created by autocreate.
      </li>
      <br><br>
 
@@ -16767,77 +19736,6 @@ EnOcean_Delete($$)
        adjust the scaling alternatively.<br>
        The attr subType must be roomSensorControl.22.
        This is done if the device was created by autocreate.
-     </li>
-     <br><br>
-
-      <li>Multisensor Window Handle (D2-06-01)<br>
-         [Soda GmbH]<br>
-     <ul>
-       <li>T: t/&#176C H: -|rH/% E: -|E/lx M: off|on|invalid|not_supported|unknown</li>
-       <li>alarms: &lt;alarms&gt; (Range: alarms = 00000000 ... FFFFFFFF)</li>
-       <li>battery: ok|low</li>
-       <li>batteryLowClick: enabled|disabled</li>
-       <li>burglaryAlarm: off|on|invalid|not_supported|unknown</li>
-       <li>handle: up|down|left|right|invalid|not_supported|unknown</li>
-       <li>blinkInterval: t/s|unknown (Range: t = 3 s ... 255 s)</li>
-       <li>blinkIntervalSet: t/s|unknown (Range: t = 3 s ... 255 s)</li>
-       <li>brightness: E/lx|over_range|invalid|not_supported|unknown (Sensor Range: E = 0 lx ... 60000 lx)</li>
-       <li>buttonLeft: pressed|released|invalid|not_supported|unknown</li>
-       <li>buttonLeftPresses: &lt;buttonLeftPresses&gt; (Range: buttonLeftPresses = 00000000 ... FFFFFFFF)</li>
-       <li>buttonRight: pressed|released|invalid|not_supported|unknown</li>
-       <li>buttonRightPresses: &lt;buttonRightPresses&gt; (Range: buttonRightPresses = 00000000 ... FFFFFFFF)</li>
-       <li>energyStorage: 1/%|unknown</li>
-       <li>handleClosedClick: enabled|disabled</li>
-       <li>handleMoveClosed: &lt;handleMoveClosed&gt; (Range: handleMoveClosed = 00000000 ... FFFFFFFF)</li>
-       <li>handleMoveOpend: &lt;handleMoveOpend&gt; (Range: handleMoveOpend = 00000000 ... FFFFFFFF)</li>
-       <li>handleMoveTilted: &lt;handleMoveTilted&gt; (Range: handleMoveTilted = 00000000 ... FFFFFFFF)</li>
-       <li>humidity: rH/%|invalid|not_supported|unknown</li>
-       <li>motion: off|on|invalid|not_supported|unknown</li>
-       <li>powerOns: &lt;powerOns&gt; (Range: powerOns = 00000000 ... FFFFFFFF)</li>
-       <li>presence: absent|present|invalid|not_supported|unknown</li>
-       <li>protectionAlarm: off|on|invalid|not_supported|unknown</li>
-       <li>temperature: t/&#176C|invalid|not_supported|unknown (Sensor Range: t = -20 &#176C ... 60 &#176C)</li>
-       <li>updateInterval: t/s|unknown (Range: t = 5 s ... 65535 s)</li>
-       <li>updateIntervalSet: t/s|unknown (Range: t = 5 s ... 65535 s)</li>
-       <li>waitingCmds: &lt;integer number&gt;</li>
-       <li>window: undef|not_tilted|tilted|invalid|not_supported|unknown</li>
-       <li>windowTilts: &lt;windowTilts&gt; (Range: windowTilts = 00000000 ... FFFFFFFF)</li>
-       <li>state: T: t/&#176C H: -|rH/% E: -|E/lx M: off|on|invalid|not_supported|unknown</li>
-     </ul><br>
-       The attr subType must be multisensor.01. This is done if the device was
-       created by autocreate. To control the device, it must be bidirectional paired,
-       see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
-     </li>
-     <br><br>
-
-    <li>Room Control Panels (D2-10-00 - D2-10-02)<br>
-         [Kieback & Peter RBW322-FTL]<br>
-     <ul>
-       <li>T: t/&#176C H: -|rH/% F: 0 ... 100/% SPT: t/&#176C O: -|absent|present M: -|on|off</li>
-       <li>battery: ok|low|empty|-</li>
-       <li>cooling: auto|on|off|-</li>
-       <li>customWarning[1|2]: on|off</li>
-       <li>fanSpeed: 0 ... 100/%</li>
-       <li>fanSpeedMode: central|local</li>
-       <li>heating: auto|on|off|-</li>
-       <li>humidity: -|rH/%</li>
-       <li>moldWarning: on|off</li>
-       <li>motion: on|off|-</li>
-       <li>occupancy: -|absent|present</li>
-       <li>roomCtrlMode: buildingProtection|comfort|economy|preComfort</li>
-       <li>setpointBuildingProtectionTemp: -|t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
-       <li>setpointComfortTemp: -|t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
-       <li>setpointEconomyTemp: -|t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
-       <li>setpointPreComfortTemp: -|t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
-       <li>setpointTemp: t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
-       <li>solarPowered: yes|no</li>
-       <li>temperature: t/&#176C (Sensor Range: t = 0 &#176C ... 40 &#176C)</li>
-       <li>window: closed|open</li>
-       <li>state: T: t/&#176C H: -|rH/% F: 0 ... 100/% SPT: t/&#176C O: -|absent|present M: -|on|off</li>
-     </ul><br>
-       The attr subType must be roomCtrlPanel.00. This is done if the device was
-       created by autocreate. To control the device, it must be bidirectional paired,
-       see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
      </li>
      <br><br>
 
@@ -17061,7 +19959,22 @@ EnOcean_Delete($$)
      <br><br>
 
      <li>Environmental Applications<br>
-         EEP A5-13-03 ... EEP A5-13-06 are not implemented.
+         Data Exchange (EEP A5-13-03)<br>
+         Time and Day Exchange (EEP A5-13-04)<br>
+         Direction Exchange (EEP A5-13-05)<br>
+         Geographic Exchange (EEP A5-13-06)<br>
+     <ul>
+       <li>azimuth: &alpha;/&deg; (Sensor Range: &alpha; = 0 &deg; ... 359 &deg;)</li>
+       <li>date: JJJJ-MM-DD</li>
+       <li>elevation: &beta;/&deg; (Sensor Range: &beta; = -90 &deg; ... 90 &deg;)</li>
+       <li>latitude: &phi;/&deg; (Sensor Range: &phi; = -90 &deg; ... 90 &deg;)</li>
+       <li>longitude: &lambda;/&deg; (Sensor Range: &lambda; = -180 &deg; ... 180 &deg;)</li>
+       <li>time: hh:mm:ss [AM|PM]</li>
+       <li>timeSource: GPS|RTC</li>
+       <li>weekday: Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday</li>
+     </ul><br>
+        The attr subType must be environmentApp. This is done if the device was created by
+        autocreate.
      </li>
      <br><br>
 
@@ -17081,7 +19994,36 @@ EnOcean_Delete($$)
      </li>
      <br><br>
 
-      <li>Multi-Func Sensor (EEP A5-14-01 ... A5-14-06)<br>
+     <li>Wind Sensor (EEP A5-13-07)<br>
+         [Hideki, untested]<br>
+     <ul>
+       <li>Vh/km (Sensor Range: V = 0 km/h ... 199.9 km/h)</li>
+       <li>battery: ok|low</li>
+       <li>windSpeedAverage: Vh/km (Sensor Range: V = 0 km/h ... 199.9 km/h)</li>
+       <li>windSpeedDirection: NNE|NE|ENE|E|ESE|SE|SSE|S|SSW|SW|WSW|W|WNW|NW|NNW|N</li>
+       <li>windSpeedMax: Vh/km (Sensor Range: V = 0 km/h ... 199.9 km/h)</li>
+       <li>state:Vh/km (Sensor Range: V = 0 km/h ... 199.9 km/h)</li>
+     </ul><br>
+        The attr subType must be windSensor.01. This is done if the device was created by
+        autocreate.<br>
+     </li>
+     <br><br>
+
+     <li>Rain Sensor (EEP A5-13-08)<br>
+         [Hideki, untested]<br>
+     <ul>
+       <li>H/mm</li>
+       <li>battery: ok|low</li>
+       <li>rain: H/mm</li>
+       <li>state:H/mm</li>
+     </ul><br>
+        The amount of rainfall is calculated at intervals of 183 s.<br>
+        The attr subType must be rainSensor.01. This is done if the device was created by
+        autocreate.<br>
+     </li>
+     <br><br>
+
+     <li>Multi-Func Sensor (EEP A5-14-01 ... A5-14-06)<br>
          [untested]<br>
      <ul>
        <li>C: open|closed V: on|off E: E/lx U: U/V</li>
@@ -17093,6 +20035,37 @@ EnOcean_Delete($$)
        <li>state: C: open|closed V: on|off E: E/lx U: U/V</li>
      </ul><br>
         The attr subType must be multiFuncSensor. This is done if the device was
+        created by autocreate.
+     </li>
+     <br><br>
+
+     <li>Dual Door Contact (EEP A5-14-07, A5-14-08)<br>
+         [untested]<br>
+     <ul>
+       <li>C: open|closed B: unlocked|locked V: on|off U: U/V</li>
+       <li>alarm: dead_sensor</li>
+       <li>block: unlocked|locked</li>
+       <li>contact: open|closed</li>
+       <li>vibration: on|off</li>
+       <li>voltage: U/V (Sensor Range: U = 0 V ... 5.0 V)</li>
+       <li>state: C: open|closed B: unlocked|locked V: on|off U: U/V</li>
+     </ul><br>
+        The attr subType must be doorContact. This is done if the device was
+        created by autocreate.
+     </li>
+     <br><br>
+
+     <li>Window/Door Contact (EEP A5-14-09, A5-14-0A)<br>
+         [untested]<br>
+     <ul>
+       <li>W: open|tilt|closed B: unlocked|locked V: on|off U: U/V</li>
+       <li>alarm: dead_sensor</li>
+       <li>vibration: on|off</li>
+       <li>voltage: U/V (Sensor Range: U = 0 V ... 5.0 V)</li>
+       <li>window: open|tilt|closed</li>
+       <li>state: W: open|tilt|closed V: on|off U: U/V</li>
+     </ul><br>
+        The attr subType must be windowContact. This is done if the device was
         created by autocreate.
      </li>
      <br><br>
@@ -17114,7 +20087,7 @@ EnOcean_Delete($$)
        <li>p_i: &lt;floating-point number&gt;</li>
        <li>p_p: &lt;floating-point number&gt;</li>
        <li>pidAlarm: actuator_in_errorPos|dead_sensor|no_temperature_value|setpoint_device_missing</li>
-       <li>pidState: alarm|idle|processing|start|stop|</li>      
+       <li>pidState: alarm|idle|processing|start|stop|</li>
        <li>roomTemp: t/&#176C</li>
        <li>selfCtl: on|off</li>
        <li>setpoint: setpoint/%</li>
@@ -17152,7 +20125,7 @@ EnOcean_Delete($$)
        <li>p_i: &lt;floating-point number&gt;</li>
        <li>p_p: &lt;floating-point number&gt;</li>
        <li>pidAlarm: actuator_in_errorPos|dead_sensor|no_temperature_value|setpoint_device_missing</li>
-       <li>pidState: alarm|idle|processing|start|stop|</li>      
+       <li>pidState: alarm|idle|processing|start|stop|</li>
        <li>roomTemp: t/&#176C</li>
        <li>setpoint: setpoint/%</li>
        <li>setpointSet: setpoint/%</li>
@@ -17232,11 +20205,26 @@ EnOcean_Delete($$)
        <li>in3: 0|1</li>
        <li>teach: &lt;result of teach procedure&gt;</li>
        <li>temperature: t/&#176C (Sensor Range: t = 0 &#176C ... 40 &#176C)</li>
-       <li>wake: 0|1</li>
-       <li>state: T: t/&#176C I: 0|1 0|1 0|1 0|1 W: 0|1</li>
+       <li>wake: high|low</li>
+       <li>state: T: t/&#176C I: 0|1 0|1 0|1 0|1 W: high|low</li>
      </ul><br>
         The attr subType must be digitalInput.03. This is done if the device was
         created by autocreate.
+     </li>
+     <br><br>
+
+     <li>Smoke Detector (EEP A5-30-03)<br>
+       [Eltako TF-RWB]<br>
+     <ul>
+       <li>smoke-alarm</li>
+       <li>off</li>
+       <li>alarm: dead_sensor|smoke-alarm|off</li>
+       <li>teach: &lt;result of teach procedure&gt;</li>
+       <li>temperature: t/&#176C (Sensor Range: t = 0 &#176C ... 40 &#176C)</li>
+       <li>state: smoke-alarm|off</li>
+     </ul><br>
+        The attr subType must be digitalInput.03. This is done if the device was
+        created by autocreate. Set attr model to Eltako_TF_RWB manually.
      </li>
      <br><br>
 
@@ -17470,8 +20458,10 @@ EnOcean_Delete($$)
         The values of the reading position and anglePos are updated automatically,
         if the command position is sent or the reading state was changed
         manually to open or closed.<br>
-        Set attr subType file, attr manufID to 00D and attr model to
-        FSB14|FSB61|FSB70 manually.
+        Set attr subType manufProfile, attr manufID to 00D and attr model to
+        Eltako_FSB14|FSB61|FSB70|FSB_ACK manually.
+        If the attribute model is set to Eltako_FSB_ACK, with the status "open_ack" the readings position and anglePos are also updated.<br>
+
      </li>
      <br><br>
 
@@ -17493,6 +20483,7 @@ EnOcean_Delete($$)
         <li>error&lt;channel&gt;: ok|warning|failure|not_supported</li>
         <li>extSwitchMode&lt;1...29|All|Input&gt;: unavailable|switch|pushbutton|auto</li>
         <li>extSwitchType&lt;1...29|All|Input&gt;: toggle|direction</li>
+        <li>firmwareVersion: [000000 ... FFFFFF]</li>
         <li>loadClassification: no</li>
         <li>localControl&lt;channel&gt;: enabled|disabled</li>
         <li>loadLink: connected|disconnected</li>
@@ -17515,6 +20506,8 @@ EnOcean_Delete($$)
         <li>responseTimeMin: 1/s</li>
         <li>roomCtrlMode: off|comfort|comfort-1|comfort-2|economy|buildingProtection</li>
         <li>serialNumber: [00000000 ... FFFFFFFF]</li>
+        <li>taughtInDevID&lt;00...23&gt;: [00000001 ... FFFFFFFE]</li>
+        <li>taughtInDevNum: [0 ... 23]</li>
         <li>teach: &lt;result of teach procedure&gt;</li>
         <li>teachInDev: enabled|disabled</li>
         <li>state: on|off</li>
@@ -17540,17 +20533,136 @@ EnOcean_Delete($$)
         <li>not_reached<br>
             The status of the device become "not_reached" between one of the endpoints.</li>
         <li>pos/% (Sensor Range: pos = 0 % ... 100 %)</li>
-        <li>anglePos: &alpha;/% (Sensor Range: &alpha; = 0 % ... 100 %)</li>
-        <li>block: unlock|lock|alarm</li>
-        <li>endPosition: open|closed|not_reached|unknown</li>
-        <li>position: unknown|pos/% (Sensor Range: pos = 0 % ... 100 %)</li>
+        <li>anglePos&lt;channel&gt;: &alpha;/% (Sensor Range: &alpha; = 0 % ... 100 %)</li>
+        <li>block&lt;channel&gt;: unlock|lock|alarm</li>
+        <li>endPosition&lt;channel&gt;: open|closed|not_reached|unknown</li>
+        <li>position&lt;channel&gt;: unknown|pos/% (Sensor Range: pos = 0 % ... 100 %)</li>
         <li>teach: &lt;result of teach procedure&gt;</li>
-        <li>state: open|closed|in_motion|stoped|pos/% (Sensor Range: pos = 0 % ... 100 %)</li>
+        <li>state: open|closed|in_motion|stopped|pos/% (Sensor Range: pos = 0 % ... 100 %)</li>
      </ul>
         <br>
-        The attr subType must be blindsCtrl.00. This is done if the device was
+        The attr subType must be blindsCtrl.00 or blindsCtrl.01. This is done if the device was
         created by autocreate. To control the device, it must be bidirectional paired,
         see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
+     </li>
+     <br><br>
+      <li>Multisensor Window Handle (D2-06-01)<br>
+         [Soda GmbH]<br>
+     <ul>
+       <li>T: t/&#176C H: -|rH/% E: -|E/lx M: off|on|invalid|not_supported|unknown</li>
+       <li>alarms: &lt;alarms&gt; (Range: alarms = 00000000 ... FFFFFFFF)</li>
+       <li>battery: ok|low</li>
+       <li>batteryLowClick: enabled|disabled</li>
+       <li>burglaryAlarm: off|on|invalid|not_supported|unknown</li>
+       <li>handle: up|down|left|right|invalid|not_supported|unknown</li>
+       <li>blinkInterval: t/s|unknown (Range: t = 3 s ... 255 s)</li>
+       <li>blinkIntervalSet: t/s|unknown (Range: t = 3 s ... 255 s)</li>
+       <li>brightness: E/lx|over_range|invalid|not_supported|unknown (Sensor Range: E = 0 lx ... 60000 lx)</li>
+       <li>buttonLeft: pressed|released|invalid|not_supported|unknown</li>
+       <li>buttonLeftPresses: &lt;buttonLeftPresses&gt; (Range: buttonLeftPresses = 00000000 ... FFFFFFFF)</li>
+       <li>buttonRight: pressed|released|invalid|not_supported|unknown</li>
+       <li>buttonRightPresses: &lt;buttonRightPresses&gt; (Range: buttonRightPresses = 00000000 ... FFFFFFFF)</li>
+       <li>energyStorage: 1/%|unknown</li>
+       <li>handleClosedClick: enabled|disabled</li>
+       <li>handleMoveClosed: &lt;handleMoveClosed&gt; (Range: handleMoveClosed = 00000000 ... FFFFFFFF)</li>
+       <li>handleMoveOpend: &lt;handleMoveOpend&gt; (Range: handleMoveOpend = 00000000 ... FFFFFFFF)</li>
+       <li>handleMoveTilted: &lt;handleMoveTilted&gt; (Range: handleMoveTilted = 00000000 ... FFFFFFFF)</li>
+       <li>humidity: rH/%|invalid|not_supported|unknown</li>
+       <li>motion: off|on|invalid|not_supported|unknown</li>
+       <li>powerOns: &lt;powerOns&gt; (Range: powerOns = 00000000 ... FFFFFFFF)</li>
+       <li>presence: absent|present|invalid|not_supported|unknown</li>
+       <li>protectionAlarm: off|on|invalid|not_supported|unknown</li>
+       <li>temperature: t/&#176C|invalid|not_supported|unknown (Sensor Range: t = -20 &#176C ... 60 &#176C)</li>
+       <li>updateInterval: t/s|unknown (Range: t = 5 s ... 65535 s)</li>
+       <li>updateIntervalSet: t/s|unknown (Range: t = 5 s ... 65535 s)</li>
+       <li>waitingCmds: &lt;integer number&gt;</li>
+       <li>window: undef|not_tilted|tilted|invalid|not_supported|unknown</li>
+       <li>windowTilts: &lt;windowTilts&gt; (Range: windowTilts = 00000000 ... FFFFFFFF)</li>
+       <li>state: T: t/&#176C H: -|rH/% E: -|E/lx M: off|on|invalid|not_supported|unknown</li>
+     </ul><br>
+       The attr subType must be multisensor.01. This is done if the device was
+       created by autocreate. To control the device, it must be bidirectional paired,
+       see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
+     </li>
+     <br><br>
+
+    <li>Room Control Panels (D2-10-00 - D2-10-02)<br>
+         [Kieback & Peter RBW322-FTL]<br>
+     <ul>
+       <li>T: t/&#176C H: -|rH/% F: 0 ... 100/% SPT: t/&#176C O: -|absent|present M: -|on|off</li>
+       <li>battery: ok|low|empty|-</li>
+       <li>cooling: auto|on|off|-</li>
+       <li>customWarning[1|2]: on|off</li>
+       <li>fanSpeed: 0 ... 100/%</li>
+       <li>fanSpeedMode: central|local</li>
+       <li>heating: auto|on|off|-</li>
+       <li>humidity: -|rH/%</li>
+       <li>moldWarning: on|off</li>
+       <li>motion: on|off|-</li>
+       <li>occupancy: -|absent|present</li>
+       <li>roomCtrlMode: buildingProtection|comfort|economy|preComfort</li>
+       <li>setpointBuildingProtectionTemp: -|t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
+       <li>setpointComfortTemp: -|t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
+       <li>setpointEconomyTemp: -|t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
+       <li>setpointPreComfortTemp: -|t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
+       <li>setpointTemp: t/&#176C (Range: t = 0 &#176C ... 40 &#176C)</li>
+       <li>solarPowered: yes|no</li>
+       <li>temperature: t/&#176C (Sensor Range: t = 0 &#176C ... 40 &#176C)</li>
+       <li>window: closed|open</li>
+       <li>state: T: t/&#176C H: -|rH/% F: 0 ... 100/% SPT: t/&#176C O: -|absent|present M: -|on|off</li>
+     </ul><br>
+       The attr subType must be roomCtrlPanel.00. This is done if the device was
+       created by autocreate. To control the device, it must be bidirectional paired,
+       see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
+     </li>
+     <br><br>
+
+    <li>Room Control Panels (D2-11-01 - D2-11-08)<br>
+        [Thermokon EasySens SR06 LCD-2T/-2T rh -4T/-4T rh]<br>
+     <ul>
+       <li>T: t/&#176C H: rH/% SPT: t/&#176C F: auto|off|1|2|3</li>
+       <li>cooling: on|off</li>
+       <li>fanSpeed: auto|off|1|2|3</li>
+       <li>heating: on|off</li>
+       <li>humidity: rH/%</li>
+       <li>occupancy: occupied|unoccupied</li>
+       <li>setpointBase: t/&#176C (Range: t = 15 &#176C ... 30 &#176C)</li>
+       <li>setpointShift: t/K (Range: t = -10 K ... 10 K)</li>
+       <li>setpointShiftMax: t/K (Range: t = 0 K ... 10 K)</li>
+       <li>setpointTemp: t/&#176C (Range: t = 5 &#176C ... 40 &#176C)</li>
+       <li>setpointType: setpointTemp|setpointShift</li>
+       <li>temperature: t/&#176C (Sensor Range: t = 0 &#176C ... 40 &#176C)</li>
+       <li>trigger: heartbeat|sensor|input</li>
+       <li>window: closed|open</li>
+       <li>state: T: t/&#176C H: rH/% SPT: t/&#176C F: auto|off|1|2|3</li>
+     </ul><br>
+       The attr subType must be roomCtrlPanel.01. This is done if the device was
+       created by autocreate. To control the device, it must be bidirectional paired by Smart Ack,
+       see <a href="#EnOcean_smartAck">SmartAck Learning</a>.
+     </li>
+     <br><br>
+
+     <li>Sensor for Smoke, Air quality, Hygrothermal comfort, Temperature and Humidity (D2-14-30)<br>
+        [INSAFE+ Origin I870EO untested]<br>
+     <ul>
+       <li>off|smoke-alarm</li>
+       <li>airQuality: optimal|air_dry|humidity_high|teperature_humidity_high|error</li>
+       <li>alarm: off|smoke-alarm|dead_sensor</li>
+       <li>battery: ok|medium|low|critical</li>
+       <li>endOffLife: t/month (Range t = 0...120 month</li>
+       <li>humidity: rH/%</li>
+       <li>hygrothermalComfort: good|medium|bad|error</li>
+       <li>maintenanceLast: t/week (Range t = 0...250 week</li>
+       <li>sensorFaultMode: off|on</li>
+       <li>smokeAlarmHumidity: ok|not_ok</li>
+       <li>smokeAlarmMaintenance: ok|not_done</li>
+       <li>smokeAlarmTemperature: ok|not_ok</li>
+       <li>teach: &lt;result of teach procedure&gt;</li>
+       <li>temperature: t/&#176C (Sensor Range: t = 0 &#176C ... 50 &#176C)</li>
+       <li>state: off|smoke-alarm</li>
+     </ul><br>
+       The attr subType must be multiFuncSensor.30. This is done if the device was
+       created by autocreate.
      </li>
      <br><br>
 
@@ -17574,9 +20686,46 @@ EnOcean_Delete($$)
        see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
      </li>
      <br><br>
-     
+
+     <li>AC Current Clamp (D2-32-00 - D2-32-02)<br>
+        [untested]<br>
+     <ul>
+       <li>I1: I/A I2: I/A I3: I/A</li>
+       <li>current1: I/A (Range: I = 0 A ... 4095 A)</li>
+       <li>current2: I/A (Range: I = 0 A ... 4095 A)</li>
+       <li>current3: I/A (Range: I = 0 A ... 4095 A)</li>
+       <li>teach: &lt;result of teach procedure&gt;</li>
+       <li>state: I1: I/A I2: I/A I3: I/A</li>
+     </ul><br>
+       The attr subType must be currentClamp.00|currentClamp.01|currentClamp.02. This is done if the device was
+       created by autocreate.
+     </li>
+     <br><br>
+
+     <li>LED Controller Status (EEP D2-40-00 - D2-40-01)<br>
+         [untested]<br>
+     <ul>
+       <li>on|off</li>
+       <li>blue: 0 % ... 100 %</li>
+       <li>daylightHarvesting: on|off</li>
+       <li>demandResp: on|off</li>
+       <li>dim: 0 % ... 100 %</li>
+       <li>green: 0 % ... 100 %</li>
+       <li>occupany: unoccupied|occupied|unknown</li>
+       <li>powerSwitch: on|off</li>
+       <li>red: 0 % ... 100 %</li>
+       <li>rgb: RRGGBB (red (R), green (G) or blue (B) color component values: 00 ... FF)</li>
+       <li>teach: &lt;result of teach procedure&gt;</li>
+       <li>telegramType: event|heartbeat</li>
+       <li>state: on|off</li>
+     </ul><br>
+        The attr subType must be ledCtrlState.00|ledCtrlState.01 This is done if the device was
+        created by autocreate.
+     </li>
+     <br><br>
+
      <li>Heat Recovery Ventilation (D2-50-00 - D2-50-11)<br>
-        [untested]<br>        
+        [untested]<br>
      <ul>
         <li>off|1...4|auto|demand|supplyAir|exhaustAir</li>
         <li>airQualidity1: 1/%</li>
@@ -17613,48 +20762,11 @@ EnOcean_Delete($$)
         <li>SWVersion: [0 ... 4095]</li>
         <li>timerMode: on|off</li>
         <li>weeklyTimer: on|off</li>
-        <li>state: off|1...4|auto|demand|supplyAir|exhaustAir</li> 
+        <li>state: off|1...4|auto|demand|supplyAir|exhaustAir</li>
      </ul><br>
        The attr subType must be heatRecovery.00. This is done if the device was
        created by autocreate. To control the device, it must be bidirectional paired,
        see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
-     </li>
-     <br><br>
-     
-     <li>AC Current Clamp (D2-32-00 - D2-32-02)<br>
-        [untested]<br>
-     <ul>
-       <li>I1: I/A I2: I/A I3: I/A</li>
-       <li>current1: I/A (Range: I = 0 A ... 4095 A)</li>
-       <li>current2: I/A (Range: I = 0 A ... 4095 A)</li>
-       <li>current3: I/A (Range: I = 0 A ... 4095 A)</li>
-       <li>teach: &lt;result of teach procedure&gt;</li>
-       <li>state: I1: I/A I2: I/A I3: I/A</li>
-     </ul><br>
-       The attr subType must be currentClamp.00|currentClamp.01|currentClamp.02. This is done if the device was
-       created by autocreate.
-     </li>
-     <br><br>
-
-     <li>LED Controller Status (EEP D2-40-00 - D2-40-01)<br>
-         [untested]<br>
-     <ul>
-       <li>on|off</li>
-       <li>blue: 0 % ... 100 %</li>
-       <li>daylightHarvesting: on|off</li>
-       <li>demandResp: on|off</li>
-       <li>dim: 0 % ... 100 %</li>
-       <li>green: 0 % ... 100 %</li>
-       <li>occupany: not_occupied|occupied|unknown</li>
-       <li>powerSwitch: on|off</li>
-       <li>red: 0 % ... 100 %</li>
-       <li>rgb: RRGGBB (red (R), green (G) or blue (B) color component values: 00 ... FF)</li>
-       <li>teach: &lt;result of teach procedure&gt;</li>
-       <li>telegramType: event|heartbeat</li>
-       <li>state: on|off</li>
-     </ul><br>
-        The attr subType must be ledCtrlState.00|ledCtrlState.01 This is done if the device was
-        created by autocreate.
      </li>
      <br><br>
 
@@ -17670,6 +20782,18 @@ EnOcean_Delete($$)
        The attr subType must be valveCtrl.00. This is done if the device was
        created by autocreate. To control the device, it must be bidirectional paired,
        see <a href="#EnOcean_teach-in">Bidirectional Teach-In / Teach-Out</a>.
+     </li>
+     <br><br>
+
+     <li>Liquid Leakage Sensor (EEP D2-B0-51)<br>
+         [untested]<br>
+     <ul>
+         <li>dry</li>
+         <li>wet</li>
+         <li>state: dry|wet</li>
+     </ul><br>
+       The attr subType must be liquidLeakage.51. This is done if the device was
+       created by autocreate.
      </li>
      <br><br>
 
@@ -17689,8 +20813,8 @@ EnOcean_Delete($$)
 
     <li>RAW Command<br>
     <ul>
-       <li>RORG: 1BS|4BS|MCS|RPS|UTE|VLD</li>
-       <li>dataSent: data (Range: 1-byte hex ... 28-byte hex)</li>
+       <li>RORG: 1BS|4BS|ENC|MCS|RPS|SEC|STE|UTE|VLD</li>
+       <li>dataSent: data (Range: 1 Byte hex ... 512 Byte hex)</li>
        <li>statusSent: status (Range: 0x00 ... 0xFF)</li>
        <li>state: RORG: rorg DATA: data STATUS: status ODATA: odata</li>
     </ul><br>
@@ -17726,10 +20850,10 @@ EnOcean_Delete($$)
 
     <li>Radio Link Test<br>
     <ul>
-      <li>standby|active|stoped</li>
+      <li>standby|active|stopped</li>
       <li>msgLost: msgLost/%</li>
       <li>rssiMasterAvg: LP/dBm</li>
-      <li>state: standby|active|stoped<br></li>
+      <li>state: standby|active|stopped<br></li>
     </ul><br>
       The attr subType must be readioLinkTest. This is done if the device was
       created by autocreate or manually by <code>define &lt;name&gt; EnOcean A5-3F-00</code><br>.

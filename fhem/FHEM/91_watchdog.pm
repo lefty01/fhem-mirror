@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 91_watchdog.pm 16963 2018-07-09 07:40:22Z rudolfkoenig $
 package main;
 
 use strict;
@@ -15,11 +15,48 @@ watchdog_Initialize($)
   $hash->{DefFn} = "watchdog_Define";
   $hash->{UndefFn} = "watchdog_Undef";
   $hash->{AttrFn}   = "watchdog_Attr";
+  $hash->{SetFn}    = "watchdog_Set";
   $hash->{NotifyFn} = "watchdog_Notify";
-  $hash->{AttrList} = "disable:0,1 disabledForIntervals execOnReactivate ".
-                        "regexp1WontReactivate:0,1 addStateEvent:0,1";
+  no warnings 'qw';
+  my @attrList = qw(
+    activateOnStart:0,1
+    addStateEvent:0,1
+    autoRestart:0,1
+    disable:0,1
+    disabledForIntervals
+    execOnReactivate
+    regexp1WontReactivate:0,1
+  );
+  use warnings 'qw';
+  $hash->{AttrList} = join(" ", @attrList);
+
+  # acivateOnStart handling
+  InternalTimer(1, sub() {
+    my @arr = devspec2array("TYPE=watchdog");
+    my $now = time();
+    foreach my $wd (@arr) {
+      next if(!AttrVal($wd, "activateOnStart", 0));
+      my $wh = $defs{$wd};
+      my $aTime = ReadingsTimestamp($wd, "Activated", undef);
+      my $tTime = ReadingsTimestamp($wd, "Triggered", undef);
+      my $rTime = ReadingsTimestamp($wd, "Reset",     undef);
+      next if(!$aTime ||
+              ($rTime && $rTime gt $aTime) ||
+              ($tTime && $tTime gt $aTime) ||
+              time_str2num($aTime)+$wh->{TO} <= $now);
+      my $remaining = time_str2num($aTime)+$wh->{TO};
+      watchdog_Activate($wh, $remaining);
+    }
+  }, 1) if(!$init_done);
 }
 
+sub
+watchdog_reset($)
+{
+  my ($watchdog) = @_;
+  $watchdog->{STATE} = "defined";
+  setReadingsVal($watchdog, "Reset", "reset", TimeNow());
+}
 
 #####################################
 # defined watchme watchdog reg1 timeout reg2 command
@@ -63,9 +100,16 @@ watchdog_Define($$)
     watchdog_Activate($watchdog)
 
   } else {
-    $watchdog->{STATE} = "defined";
+    $watchdog->{STATE} = "defined"; # do not set the reading
 
   }
+
+  InternalTimer(1, sub($){
+    my $re = ($re1 eq "." ? "" : $re1).
+             (($re2 eq "SAME" || $re2 eq $re1) ? "" : "|$re2");
+    $re .= "|$name";    # for trigger w .
+    notifyRegexpChanged($watchdog, $re);
+  }, $watchdog, 0);
 
   return undef;
 }
@@ -77,7 +121,7 @@ watchdog_Notify($$)
   my ($watchdog, $dev) = @_;
 
   my $ln = $watchdog->{NAME};
-  return "" if(IsDisabled($ln));
+  return "" if(IsDisabled($ln) || $watchdog->{STATE} eq "inactive");
   my $dontReAct = AttrVal($ln, "regexp1WontReactivate", 0);
 
   my $n   = $dev->{NAME};
@@ -96,19 +140,22 @@ watchdog_Notify($$)
 
       if($dotTrigger) {
         RemoveInternalTimer($watchdog);
-        $watchdog->{STATE} = "defined";
+        watchdog_reset($watchdog);
         return;
       }
 
       if($n =~ m/^$re2$/ || "$n:$s" =~ m/^$re2$/) {
+        my $isRe1 = ($re1 eq $re2 || $re1 eq ".");
+        return if($isRe1 && $dontReAct); # 60414
+
         RemoveInternalTimer($watchdog);
 
-        if(($re1 eq $re2 || $re1 eq ".") && !$dontReAct) {
+        if($re1 eq $re2 || $re1 eq ".") {
           watchdog_Activate($watchdog);
           return "";
 
         } else {
-          $watchdog->{STATE} = "defined";
+          watchdog_reset($watchdog);
 
         }
 
@@ -123,7 +170,7 @@ watchdog_Notify($$)
       }
 
     } elsif($dotTrigger) {
-      $watchdog->{STATE} = "defined";       # trigger w . 
+      watchdog_reset($watchdog);       # trigger w . 
 
     }
 
@@ -137,8 +184,8 @@ watchdog_Trigger($)
   my ($watchdog) = @_;
   my $name = $watchdog->{NAME};
 
-  if(AttrVal($name, "disable", 0)) {
-    $watchdog->{STATE} = "defined";
+  if(IsDisabled($name) || $watchdog->{STATE} eq "inactive") {
+    watchdog_reset($watchdog);
     return "";
   }
 
@@ -150,13 +197,17 @@ watchdog_Trigger($)
   
   my $ret = AnalyzeCommandChain(undef, $exec);
   Log3 $name, 3, $ret if($ret);
+
+  if(AttrVal($name, "autoRestart", 0)) {
+    watchdog_reset($watchdog);       # auto trigger w . 
+  }
 }
 
 sub
-watchdog_Activate($)
+watchdog_Activate($;$)
 {
-  my ($watchdog) = @_;
-  my $nt = gettimeofday() + $watchdog->{TO};
+  my ($watchdog, $remaining) = @_;
+  my $nt = ($remaining ? $remaining : gettimeofday() + $watchdog->{TO});
   $watchdog->{STATE} = "Next: " . FmtTime($nt);
   RemoveInternalTimer($watchdog);
   InternalTimer($nt, "watchdog_Trigger", $watchdog, 0);
@@ -168,7 +219,7 @@ watchdog_Activate($)
     my $tTime = ReadingsTimestamp($wName, "Triggered", "");
     $eor = undef if(!$aTime || !$tTime || $aTime ge $tTime)
   }
-  setReadingsVal($watchdog, "Activated", "activated", TimeNow());
+  setReadingsVal($watchdog, "Activated","activated", TimeNow()) if(!$remaining);
 
   AnalyzeCommandChain(undef, SemicolonEscape($eor)) if($eor);
 }
@@ -198,10 +249,38 @@ watchdog_Attr(@)
   return undef;
 }
 
+sub
+watchdog_Set($@)
+{
+  my ($hash, @a) = @_;
+  my $me = $hash->{NAME};
+
+  return "no set argument specified" if(int(@a) < 2);
+  my %sets = (inactive=>0, active=>0);
+  
+  my $cmd = $a[1];
+  return "Unknown argument $cmd, choose one of ".join(" ", sort keys %sets)
+    if(!defined($sets{$cmd}));
+  return "$cmd needs $sets{$cmd} parameter(s)" if(@a-$sets{$cmd} != 2);
+
+  if($cmd eq "inactive") {
+    readingsSingleUpdate($hash, "state", "inactive", 1);
+
+  }
+  elsif($cmd eq "active") {
+    readingsSingleUpdate($hash, "state", "defined", 1)
+        if(!AttrVal($me, "disable", undef));
+  }
+  
+  return undef;
+}
+
 1;
 
 =pod
 =item helper
+=item summary    execute a command, if no event is received within timeout
+=item summary_DE f&uuml;hrt Befehl aus, falls innerhalb des Timeouts kein Event empfangen wurde
 =begin html
 
 <a name="watchdog"></a>
@@ -270,7 +349,19 @@ watchdog_Attr(@)
   </ul>
 
   <a name="watchdogset"></a>
-  <b>Set</b> <ul>N/A</ul><br>
+  <b>Set </b>
+  <ul>
+    <li>inactive<br>
+        Inactivates the current device. Note the slight difference to the
+        disable attribute: using set inactive the state is automatically saved
+        to the statefile on shutdown, there is no explicit save necesary.<br>
+        This command is intended to be used by scripts to temporarily
+        deactivate the notify.<br>
+        The concurrent setting of the disable attribute is not recommended.</li>
+    <li>active<br>
+        Activates the current device (see inactive).</li>
+    </ul>
+    <br>
 
   <a name="watchdogget"></a>
   <b>Get</b> <ul>N/A</ul><br>
@@ -278,6 +369,14 @@ watchdog_Attr(@)
   <a name="watchdogattr"></a>
   <b>Attributes</b>
   <ul>
+    <li><a name="#activateOnStart">activateOnStart</a><br>
+      if set, the watchdog will be activated after a FHEM start if appropriate,
+      determined by the Timestamp of the Activated and the Triggered readings.
+      Note: since between shutdown and startup events may be missed, this
+      attribute is 0 (disabled) by default.
+    </li>
+
+    <li><a href="#addStateEvent">addStateEvent</a></li>
     <li><a href="#disable">disable</a></li>
     <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
 
@@ -289,6 +388,10 @@ watchdog_Attr(@)
       If set, its value will be executed as a FHEM command when the watchdog is
       reactivated (after triggering) by receiving an event matching regexp1.
       </li>
+    <li><a href="#autoRestart">autoRestart</a>
+      When the watchdog has triggered it will be automatically re-set to state
+      defined again (waiting for regexp1) if this attribute is set to 1.
+    </li>
   </ul>
   <br>
 </ul>
@@ -377,7 +480,23 @@ watchdog_Attr(@)
   </ul>
 
   <a name="watchdogset"></a>
-  <b>Set</b> <ul>N/A</ul><br>
+  <b>Set </b>
+  <ul>
+    <li>inactive<br>
+        Deaktiviert das entsprechende Ger&auml;t. Beachte den leichten
+        semantischen Unterschied zum disable Attribut: "set inactive"
+        wird bei einem shutdown automatisch in fhem.state gespeichert, es ist
+        kein save notwendig.<br>
+        Der Einsatzzweck sind Skripte, um das notify tempor&auml;r zu
+        deaktivieren.<br>
+        Das gleichzeitige Verwenden des disable Attributes wird nicht empfohlen.
+        </li>
+    <li>active<br>
+        Aktiviert das entsprechende Ger&auml;t, siehe inactive.
+        </li>
+    </ul>
+    <br>
+
 
   <a name="watchdogget"></a>
   <b>Get</b> <ul>N/A</ul><br>
@@ -385,6 +504,14 @@ watchdog_Attr(@)
   <a name="watchdogattr"></a>
   <b>Attribute</b>
   <ul>
+    <li><a name="#activateOnStart">activateOnStart</a><br>
+      Falls gesetzt, wird der Watchdog nach FHEM-Neustart aktiviert, je nach
+      Zeitstempel der Activated und Triggered Readings. Da zwischen Shutdown
+      und Neustart Events verlorengehen k&ouml;nnen, ist die Voreinstellung 0
+      (deaktiviert).
+    </li>
+
+
     <li><a href="#addStateEvent">addStateEvent</a></li>
     <li><a href="#disable">disable</a></li>
     <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
@@ -397,7 +524,13 @@ watchdog_Attr(@)
       Falls gesetzt, wird der Wert des Attributes als FHEM Befehl
       ausgef&uuml;hrt, wenn ein regexp1 Ereignis den Watchdog
       aktiviert nachdem er ausgel&ouml;st wurde.</li>
+
+    <li><a href="#autoRestart">autoRestart</a>
+      Wenn dieses Attribut gesetzt ist, wird der Watchdog nach dem er
+      getriggert wurde, automatisch wieder in den Zustand defined
+      gesetzt (Wartet also wieder auf Aktivierung durch regexp1)</li>
   </ul>
+
   <br>
 </ul>
 

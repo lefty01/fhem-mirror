@@ -1,9 +1,10 @@
-# $Id$
+# $Id: 44_S7_ARead.pm 15539 2017-12-01 21:52:13Z charlie71 $
 ##############################################
 package main;
 
 use strict;
 use warnings;
+use Time::HiRes qw(gettimeofday);
 
 #use Switch;
 require "44_S7_Client.pm";
@@ -50,36 +51,140 @@ sub S7_ARead_Define($$) {
 	my ( $name, $area, $DB, $start, $datatype );
 
 	$name     = $a[0];
-	$area     = lc $a[2];
-	$DB       = $a[3];
-	$start    = $a[4];
-	$datatype = lc $a[5];
 
-	if (   $area ne "inputs"
-		&& $area ne "outputs"
-		&& $area ne "flags"
-		&& $area ne "db" )
-	{
-		my $msg =
-"wrong syntax: define <name> S7_ARead {inputs|outputs|flags|db} <DB> <start> {u8|s8|u16|s16|u32|s32|float}";
+	AssignIoPort($hash);
 
-		Log3 undef, 2, $msg;
-		return $msg;
+	if ( uc $a[2] =~ m/^[NA](\d*)/ ) {
+		my $Offset;
+		$area = "db";
+		$DB   = 0;
+		my $startposition;
+
+		if ( uc $a[2] =~ m/^AI(\d*)/ ) {
+			$startposition = 2;
+			
+			if ( defined($hash->{IODev}{S7TYPE}) && $hash->{IODev}{S7TYPE} eq "LOGO7" ) {
+				$Offset = 926;
+			}
+			elsif ( defined($hash->{IODev}{S7TYPE}) && $hash->{IODev}{S7TYPE} eq "LOGO8" ) {
+				$Offset = 1032;
+			}
+			else {
+				my $msg =
+"wrong syntax : define <name> S7_ARead {inputs|outputs|flags|db} <DB> <address> \n Only for Logo7 or Logo8:\n define <name> S7_ARead {AI|AM|AQ|NAI|NAQ}";
+
+				Log3 undef, 2, $msg;
+				return $msg;
+			}
+
+		}
+		elsif ( uc $a[2] =~ m/^AQ(\d*)/ ) {
+			$startposition = 2;
+			
+			if ( defined($hash->{IODev}{S7TYPE}) && $hash->{IODev}{S7TYPE} eq "LOGO7" ) {
+				$Offset = 944;
+			}
+			elsif ( defined($hash->{IODev}{S7TYPE}) && $hash->{IODev}{S7TYPE} eq "LOGO8" ) {
+				$Offset = 1072;
+			}
+			else {
+				my $msg =
+"wrong syntax : define <name> S7_ARead {inputs|outputs|flags|db} <DB> <address> \n Only for Logo7 or Logo8:\n define <name> S7_ARead {AI|AM|AQ|NAI|NAQ}";
+
+				Log3 undef, 2, $msg;
+				return $msg;
+			}
+
+		}
+		elsif ( uc $a[2] =~ m/^AM(\d*)/ ) {
+			$startposition = 2;
+			
+			if ( defined($hash->{IODev}{S7TYPE}) && $hash->{IODev}{S7TYPE} eq "LOGO7" ) {
+				$Offset = 952;
+			}
+			elsif ( defined($hash->{IODev}{S7TYPE}) && $hash->{IODev}{S7TYPE} eq "LOGO8" ) {
+				$Offset = 1118;
+			}
+			else {
+				my $msg =
+"wrong syntax : define <name> S7_ARead {inputs|outputs|flags|db} <DB> <address> \n Only for Logo7 or Logo8:\n define <name> S7_ARead {AI|AM|AQ|NAI|NAQ}";
+
+				Log3 undef, 2, $msg;
+				return $msg;
+			}
+		}
+
+		elsif ( uc $a[2] =~ m/^NAI(\d*)/ ) {
+			$startposition = 3;
+			if ( $hash->{IODev}{S7TYPE} eq "LOGO8" ) {
+				$Offset = 1262;
+			}
+			else {
+				my $msg =
+"wrong syntax : define <name> S7_ARead {inputs|outputs|flags|db} <DB> <address> \n Only for Logo7 or Logo8:\n define <name> S7_ARead {AI|AM|AQ|NAI|NAQ}";
+
+				Log3 undef, 2, $msg;
+				return $msg;
+			}
+		}
+		elsif ( uc $a[2] =~ m/^NAQ(\d*)/ ) {
+			$startposition = 3;
+			if ( $hash->{IODev}{S7TYPE} eq "LOGO8" ) {
+				$Offset = 1406;
+			}
+			else {
+				my $msg =
+"wrong syntax : define <name> S7_ARead {inputs|outputs|flags|db} <DB> <address> \n Only for Logo7 or Logo8:\n define <name> S7_ARead {AI|AM|AQ|NAI|NAQ}";
+
+				Log3 undef, 2, $msg;
+				return $msg;
+			}
+		}
+		else {
+			my $msg =
+"wrong syntax : define <name> S7_ARead {inputs|outputs|flags|db} <DB> <address> \n Only for Logo7 or Logo8:\n define <name> S7_ARead {AI|AM|AQ|NAI|NAQ}";
+
+			Log3 undef, 2, $msg;
+			return $msg;
+		}
+
+		$start = $Offset  + ((int( substr( $a[2], $startposition ) ) - 1)*2);
+		$datatype = "u16";
+
 	}
+	else {	
+	
+		$area     = lc $a[2];
+		$DB       = $a[3];
+		$start    = $a[4];
+		$datatype = lc $a[5];
 
-	if (   $datatype ne "u8"
-		&& $datatype ne "s8"
-		&& $datatype ne "u16"
-		&& $datatype ne "s16"
-		&& $datatype ne "u32"
-		&& $datatype ne "s32"
-		&& $datatype ne "float" )
-	{
-		my $msg =
-"wrong syntax: define <name> S7_ARead {inputs|outputs|flags|db} <DB> <start> {u8|s8|u16|s16|u32|s32|float}";
+		if (   $area ne "inputs"
+			&& $area ne "outputs"
+			&& $area ne "flags"
+			&& $area ne "db" )
+		{
+			my $msg =
+"wrong syntax: define <name> S7_ARead {inputs|outputs|flags|db} <DB> <start> {u8|s8|u16|s16|u32|s32|float} \n Only for Logo7 or Logo8:\n define <name> S7_ARead {AI|AM|AQ|NAI|NAQ}";
 
-		Log3 undef, 2, $msg;
-		return $msg;
+			Log3 undef, 2, $msg;
+			return $msg;
+		}
+
+		if (   $datatype ne "u8"
+			&& $datatype ne "s8"
+			&& $datatype ne "u16"
+			&& $datatype ne "s16"
+			&& $datatype ne "u32"
+			&& $datatype ne "s32"
+			&& $datatype ne "float" )
+		{
+			my $msg =
+"wrong syntax: define <name> S7_ARead {inputs|outputs|flags|db} <DB> <start> {u8|s8|u16|s16|u32|s32|float} \n Only for Logo7 or Logo8:\n define <name> S7_ARead {AI|AM|AQ|NAI|NAQ}";
+
+			Log3 undef, 2, $msg;
+			return $msg;
+		}
 	}
 
 	$hash->{AREA}     = $area;
@@ -108,8 +213,6 @@ sub S7_ARead_Define($$) {
 	else {
 		push( @{ $modules{S7_ARead}{defptr}{$ID} }, $hash );
 	}
-
-	AssignIoPort($hash);    # logisches modul an physikalisches binden !!!
 
 	$hash->{IODev}{dirty} = 1;
 	Log3 $name, 4,
@@ -163,6 +266,7 @@ sub S7_ARead_Parse($$) {
 			pack( "H2" x $length, split( ",", $hexbuffer ) ) );
 
 		#my $b = pack( "C" x $length, @Writebuffer );
+		my $now = gettimeofday();
 		foreach my $clientName (@clientList) {
 
 			my $h = $defs{$clientName};
@@ -180,29 +284,29 @@ sub S7_ARead_Parse($$) {
 				my $myI;
 
 				if ( $h->{DATATYPE} eq "u8" ) {
-					$myI = $hash->{S7TCPClient}->ByteAt( \@Writebuffer, $s );
+					$myI = $hash->{S7PLCClient}->ByteAt( \@Writebuffer, $s );
 				}
 				elsif ( $h->{DATATYPE} eq "s8" ) {
-					$myI = $hash->{S7TCPClient}->ShortAt( \@Writebuffer, $s );
+					$myI = $hash->{S7PLCClient}->ShortAt( \@Writebuffer, $s );
 				}
 				elsif ( $h->{DATATYPE} eq "u16" ) {
-					$myI = $hash->{S7TCPClient}->WordAt( \@Writebuffer, $s );
+					$myI = $hash->{S7PLCClient}->WordAt( \@Writebuffer, $s );
 				}
 				elsif ( $h->{DATATYPE} eq "s16" ) {
-					$myI = $hash->{S7TCPClient}->IntegerAt( \@Writebuffer, $s );
+					$myI = $hash->{S7PLCClient}->IntegerAt( \@Writebuffer, $s );
 				}
 				elsif ( $h->{DATATYPE} eq "u32" ) {
-					$myI = $hash->{S7TCPClient}->DWordAt( \@Writebuffer, $s );
+					$myI = $hash->{S7PLCClient}->DWordAt( \@Writebuffer, $s );
 				}
 				elsif ( $h->{DATATYPE} eq "s32" ) {
-					$myI = $hash->{S7TCPClient}->DintAt( \@Writebuffer, $s );
+					$myI = $hash->{S7PLCClient}->DintAt( \@Writebuffer, $s );
 				}
 				elsif ( $h->{DATATYPE} eq "float" ) {
-					$myI = $hash->{S7TCPClient}->FloatAt( \@Writebuffer, $s );
+					$myI = $hash->{S7PLCClient}->FloatAt( \@Writebuffer, $s );
 				}
 				else {
 					Log3 $name, 3,
-					  "$name S7_ARead: Parse unknown type : ("
+					  "$n S7_ARead: Parse unknown type : ("
 					  . $h->{DATATYPE} . ")";
 				}
 
@@ -219,11 +323,76 @@ sub S7_ARead_Parse($$) {
 
 				$myI = $myI * $multi + $offset;
 
-				#my $myResult;
+				my $reading="state";
 
-				main::readingsSingleUpdate( $h, "state", $myI, 1 );
+#				main::readingsSingleUpdate( $h, $reading, $myI, 1 );
 
-				#			main::readingsSingleUpdate($h,"value",$myResult, 1);
+				#check event-onchange-reading
+				#code wurde der datei fhem.pl funktion readingsBulkUpdate entnommen und adaptiert
+				my $attreocr= AttrVal($h->{NAME}, "event-on-change-reading", undef);
+				my @a;
+				if($attreocr) {
+					@a = split(/,/,$attreocr);
+					$h->{".attreocr"} = \@a;
+				}
+				# determine whether the reading is listed in any of the attributes
+				my @eocrv;
+				my $eocr = $attreocr &&
+					( @eocrv = grep { my $l = $_; $l =~ s/:.*//;
+										($reading=~ m/^$l$/) ? $_ : undef} @a);
+			
+
+			  # check if threshold is given
+				my $eocrExists = $eocr;
+				if( $eocr
+					&& $eocrv[0] =~ m/.*:(.*)/ ) {
+				  my $threshold = $1;
+
+				  if($myI =~ m/([\d\.\-eE]+)/ && looks_like_number($1)) { #41083, #62190
+					my $mv = $1;
+					my $last_value = $h->{".attreocr-threshold$reading"};
+					if( !defined($last_value) ) {
+					  # $h->{".attreocr-threshold$reading"} = $mv;
+					} elsif( abs($mv - $last_value) < $threshold ) {
+					  $eocr = 0;
+					} else {
+					  # $h->{".attreocr-threshold$reading"} = $mv;
+					}
+				  }
+				}
+				
+				my $changed = !($attreocr)
+					  || ($eocr && ($myI ne ReadingsVal($h->{NAME},$reading,"")));				
+								
+
+				my $attrminint = AttrVal($h->{NAME}, "event-min-interval", undef);
+				my @aa;
+				if($attrminint) {
+						@aa = split(/,/,$attrminint);
+				}								
+					
+				my @v = grep { my $l = $_;
+							   $l =~ s/:.*//;
+							   ($reading=~ m/^$l$/) ? $_ : undef
+							  } @aa;
+				if(@v) {
+				  my (undef, $minInt) = split(":", $v[0]);
+				  my $le = $h->{".lastTime$reading"};
+				  if($le && $now-$le < $minInt) {
+					if(!$eocr || ($eocr && $myI eq ReadingsVal($h->{NAME},$reading,""))){
+					  $changed = 0;
+					#} else {
+					#  $hash->{".lastTime$reading"} = $now;
+					}
+				  } else {
+					#$hash->{".lastTime$reading"} = $now;
+					$changed = 1 if($eocrExists);
+				  }
+				}				
+
+				if ($changed == 1) {				
+					main::readingsSingleUpdate( $h, $reading, $myI, 1 );
+				}
 			}
 
 		}
@@ -256,34 +425,34 @@ sub S7_ARead_Parse($$) {
 
 						if ( $h->{DATATYPE} eq "u8" ) {
 							$myI =
-							  $hash->{S7TCPClient}->ByteAt( \@Writebuffer, $s );
+							  $hash->{S7PLCClient}->ByteAt( \@Writebuffer, $s );
 						}
 						elsif ( $h->{DATATYPE} eq "s8" ) {
 							$myI =
-							  $hash->{S7TCPClient}
+							  $hash->{S7PLCClient}
 							  ->ShortAt( \@Writebuffer, $s );
 						}
 						elsif ( $h->{DATATYPE} eq "u16" ) {
 							$myI =
-							  $hash->{S7TCPClient}->WordAt( \@Writebuffer, $s );
+							  $hash->{S7PLCClient}->WordAt( \@Writebuffer, $s );
 						}
 						elsif ( $h->{DATATYPE} eq "s16" ) {
 							$myI =
-							  $hash->{S7TCPClient}
+							  $hash->{S7PLCClient}
 							  ->IntegerAt( \@Writebuffer, $s );
 						}
 						elsif ( $h->{DATATYPE} eq "u32" ) {
 							$myI =
-							  $hash->{S7TCPClient}
+							  $hash->{S7PLCClient}
 							  ->DWordAt( \@Writebuffer, $s );
 						}
 						elsif ( $h->{DATATYPE} eq "s32" ) {
 							$myI =
-							  $hash->{S7TCPClient}->DintAt( \@Writebuffer, $s );
+							  $hash->{S7PLCClient}->DintAt( \@Writebuffer, $s );
 						}
 						elsif ( $h->{DATATYPE} eq "float" ) {
 							$myI =
-							  $hash->{S7TCPClient}
+							  $hash->{S7PLCClient}
 							  ->FloatAt( \@Writebuffer, $s );
 						}
 						else {
@@ -364,43 +533,45 @@ sub S7_ARead_Attr(@) {
 1;
 
 =pod
+=item summary logical device for a analog reading from a S7/S5
+=item summary_DE logisches Device für einen analogen Nur Lese Datenpunkt von einer S5 / S7
 =begin html
 
 <a name="S7_ARead"></a>
 <h3>S7_ARead</h3>
 <ul>
-	This module is a logical module of the physical module S7.<br />
-	This module provides analog data (signed / unsigned integer Values).<br />
-	Note: you have to configure a PLC reading at the physical module (S7) first.<br />
-	<br />
-	<br />
-	<b>Define</b><br />
-	<code>define &lt;name&gt; S7_ARead {inputs|outputs|flags|db} &lt;DB&gt; &lt;start&gt; {u8|s8|u16|s16|u32|s32}</code><br />
-	&nbsp;
-	<ul>
-		<li>inputs|outputs|flags|db &hellip; defines where to read.</li>
-		<li>DB &hellip; Number of the DB</li>
-		<li>start &hellip; start byte of the reading</li>
-		<li>{u8|s8|u16|s16|u32|s32} &hellip; defines the datatype:
-		<ul>
-			<li>u8 &hellip;. unsigned 8 Bit integer</li>
-			<li>s8 &hellip;. signed 8 Bit integer</li>
-			<li>u16 &hellip;. unsigned 16 Bit integer</li>
-			<li>s16 &hellip;. signed 16 Bit integer</li>
-			<li>u32 &hellip;. unsigned 32 Bit integer</li>
-			<li>s32 &hellip;. signed 32 Bit integer</li>
-		</ul>
-		</li>
-		<li>Note: the required memory area (start &ndash; start + datatypelength) need to be with in the configured PLC reading of the physical module.</li>
-	</ul>
-	<br />
-	<b>Attr</b><br />
-	The following parameters are used to scale every reading
-	<ul>
-		<li>multiplicator</li>
-		<li>offset</li>
-	</ul>
-	newValue = &lt;multiplicator&gt; * Value + &lt;offset&gt;
+
+This module is a logical module of the physical module S7. <br>
+This module provides analog data (signed / unsigned integer Values).<br>
+Note: you have to configure a PLC reading at the physical module (S7) first.<br>
+<br><br>
+<b>Define</b><br>
+<code>define &lt;name&gt; S7_ARead {inputs|outputs|flags|db} &lt;DB&gt; &lt;start&gt; {u8|s8|u16|s16|u32|s32}</code>
+<br><br>
+<ul>
+<li>inputs|outputs|flags|db … defines where to read.</li>
+<li>DB … Number of the DB</li>
+<li>start … start byte of the reading</li>
+<li>{u8|s8|u16|s16|u32|s32} … defines the datatype: </li>
+<ul>
+	<li>u8 …. unsigned 8 Bit integer</li>
+	<li>s8 …. signed 8 Bit integer</li>
+	<li>u16 …. unsigned 16 Bit integer</li>
+	<li>s16 …. signed 16 Bit integer</li>
+	<li>u32 …. unsigned 32 Bit integer</li>
+	<li>s32 …. signed 32 Bit integer</li>
+</ul>
+Note: the required memory area  (start – start + datatypelength) need to be with in the configured PLC reading of the physical module.
+</ul>
+<br>
+<b>Attr</b><br>
+The following parameters are used to scale every reading<br>
+<ul>
+<li>multiplicator</li>
+<li>offset</li>
+</ul>
+
+newValue = &lt;multiplicator&gt; * Value + &lt;offset&gt;
 </ul>
 =end html
 
@@ -409,40 +580,38 @@ sub S7_ARead_Attr(@) {
 <a name="S7_ARead"></a>
 <h3>S7_ARead</h3>
 <ul>
-	This module is a logical module of the physical module S7.<br />
-	This module provides analog data (signed / unsigned integer Values).<br />
-	Note: you have to configure a PLC reading at the physical module (S7) first.<br />
-	<br />
-	<br />
-	<b>Define</b><br />
-	<code>define &lt;name&gt; S7_ARead {inputs|outputs|flags|db} &lt;DB&gt; &lt;start&gt; {u8|s8|u16|s16|u32|s32}</code><br />
-	&nbsp;
-	<ul>
-		<li>inputs|outputs|flags|db &hellip; defines where to read.</li>
-		<li>DB &hellip; Number of the DB</li>
-		<li>start &hellip; start byte of the reading</li>
-		<li>{u8|s8|u16|s16|u32|s32} &hellip; defines the datatype:
-		<ul>
-			<li>u8 &hellip;. unsigned 8 Bit integer</li>
-			<li>s8 &hellip;. signed 8 Bit integer</li>
-			<li>u16 &hellip;. unsigned 16 Bit integer</li>
-			<li>s16 &hellip;. signed 16 Bit integer</li>
-			<li>u32 &hellip;. unsigned 32 Bit integer</li>
-			<li>s32 &hellip;. signed 32 Bit integer</li>
-			<li>float &hellip;. 4 byte float</li>
-		</ul>
-		</li>
-		<li>Note: the required memory area (start &ndash; start + datatypelength) need to be with in the configured PLC reading of the physical module.</li>
-	</ul>
-	<b>Attr</b><br />
-	The following parameters are used to scale every reading
-	<ul>
-		<li>multiplicator</li>
-		<li>offset</li>
-	</ul>
-	newValue = &lt;multiplicator&gt; * Value + &lt;offset&gt;
+
+This module is a logical module of the physical module S7. <br>
+This module provides analog data (signed / unsigned integer Values).<br>
+Note: you have to configure a PLC reading at the physical module (S7) first.<br>
+<br><br>
+<b>Define</b><br>
+<code>define &lt;name&gt; S7_ARead {inputs|outputs|flags|db} &lt;DB&gt; &lt;start&gt; {u8|s8|u16|s16|u32|s32}</code>
+<br><br>
+<ul>
+<li>inputs|outputs|flags|db … defines where to read.</li>
+<li>DB … Number of the DB</li>
+<li>start … start byte of the reading</li>
+<li>{u8|s8|u16|s16|u32|s32} … defines the datatype: </li>
+<ul>
+	<li>u8 …. unsigned 8 Bit integer</li>
+	<li>s8 …. signed 8 Bit integer</li>
+	<li>u16 …. unsigned 16 Bit integer</li>
+	<li>s16 …. signed 16 Bit integer</li>
+	<li>u32 …. unsigned 32 Bit integer</li>
+	<li>s32 …. signed 32 Bit integer</li>
+	<li>float …. 4 byte float </li>
+</ul>
+Note: the required memory area  (start – start + datatypelength) need to be with in the configured PLC reading of the physical module.
+</ul>
+<b>Attr</b>
+The following parameters are used to scale every reading
+<ul>
+<li>multiplicator</li>
+<li>offset</li>
+</ul>
+newValue = &lt;multiplicator&gt; * Value + &lt;offset&gt;
 </ul>
 =end html_DE
 
 =cut
-

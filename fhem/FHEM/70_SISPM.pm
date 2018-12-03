@@ -29,7 +29,7 @@
 #
 # Contributed by Kai 'wusel' Siering <wusel+fhem@uu.org> in 2010
 # Based in part on work for FHEM by other authors ...
-# $Id$
+# $Id: 70_SISPM.pm 2076 2012-11-04 13:49:43Z rudolfkoenig $
 ###########################
 
 package main;

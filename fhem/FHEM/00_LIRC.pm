@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 00_LIRC.pm 11984 2016-08-19 12:47:50Z rudolfkoenig $
 package main;
 
 use strict;
@@ -115,6 +115,8 @@ LIRC_Ready($)
 1;
 
 =pod
+=item summary    connection to the Linux Infrared Server (lirc)
+=item summary_DE Anbindung der Linux Infrared (lirc) Servers
 =begin html
 
 <a name="LIRC"></a>

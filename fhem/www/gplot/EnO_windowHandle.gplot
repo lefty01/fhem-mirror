@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_windowHandle.gplot 9554 2015-10-19 20:16:35Z klaus-schauer $
 # Display a window log
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device

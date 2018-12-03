@@ -22,7 +22,7 @@
 #  This copyright notice MUST APPEAR in all copies of the script!
 #
 ################################################################
-# $Id$
+# $Id: 23_WEBIO.pm 2076 2012-11-04 13:49:43Z rudolfkoenig $
 
 ##############################################
 package main;

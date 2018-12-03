@@ -7,9 +7,11 @@ FW_datetimeCreate(elName, devName, vArr, currVal, set, params, cmd)
 {
   if(!vArr.length || vArr[0] != "datetime" || (params && params.length))
     return undefined;
-   
+  
+  var widgetId = "datetimepicker-"+devName+"-"+set;
+  
   var newEl = $("<div style='display:inline-block'>").get(0);
-  $(newEl).append('<input type="text" id="datetimepicker'+devName+'" onfocus="blur();" >');
+  $(newEl).append('<input type="text" class="datetimepicker-'+devName+'" id="'+widgetId+'" onfocus="blur();" >');
   var inp = $(newEl).find("input");
   if(elName)
     $(inp).attr("name", elName);
@@ -39,12 +41,13 @@ FW_datetimeCreate(elName, devName, vArr, currVal, set, params, cmd)
        format:"d.m.Y H:i",
        onClose: function(current_time,$input){
                     console.log("set data");
-                    $('#datetimepicker'+devName).blur();
+                    $("#"+widgetId).blur();
                 ;}
       };
 
   for(var i1=0; i1<vArr.length; i1++) {
-    var kv = vArr[i1].split(":");
+    var kv = vArr[i1].split(/:(.*)/);
+    log("Attribute check: " + kv[0]);    
     var value;
     if(kv[1] == "false")
     {
@@ -56,8 +59,8 @@ FW_datetimeCreate(elName, devName, vArr, currVal, set, params, cmd)
     }
     else
     {
-        var number = parseInt(kv[1], 10);
-        log(number);
+        var number = Number(kv[1]);
+        log("Number check: " + number);
         if(isNaN(number))
         {
             value = kv[1];
@@ -98,7 +101,7 @@ FW_datetimeCreate(elName, devName, vArr, currVal, set, params, cmd)
     loadScript("pgm2/jquery.datetimepicker.js");
     
     $(newEl).click(function(){
-      $('#datetimepicker'+devName).datetimepicker(options);   
+      $("#"+widgetId).datetimepicker(options);   
   });
   }
 

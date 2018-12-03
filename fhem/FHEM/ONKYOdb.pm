@@ -1,38 +1,9 @@
-# $Id$
-##############################################################################
-#
-#     ONKYOdb.pm
-#     ONKYO command database for ONKYO AVR module to split DB from code
-#
-#     Copyright by Julian Pawlowski
-#     e-mail: julian.pawlowski at gmail.com
-#
-#     This file is part of fhem.
-#
-#     Fhem is free software: you can redistribute it and/or modify
-#     it under the terms of the GNU General Public License as published by
-#     the Free Software Foundation, either version 2 of the License, or
-#     (at your option) any later version.
-#
-#     Fhem is distributed in the hope that it will be useful,
-#     but WITHOUT ANY WARRANTY; without even the implied warranty of
-#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#     GNU General Public License for more details.
-#
-#     You should have received a copy of the GNU General Public License
-#     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
-#
-#
-# Version: 1.0.1
-#
-# Version History:
-# - 1.0.0 - 2013-12-21
-# -- First release
-#
-##############################################################################
+###############################################################################
+# $Id: ONKYOdb.pm 14012 2017-04-17 13:09:41Z loredo $
+package main;
+sub ONKYOdb_Initialize() { }
 
 package ONKYOdb;
-
 use strict;
 use warnings;
 
@@ -41,7 +12,7 @@ my $ONKYO_cmds_hr = {
     'dock' => {
         'command-for-docking-station-via-ri' => 'CDS'
     },
-    'main' => {
+    '1' => {
         '12v-trigger-a'                 => 'TGA',
         '12v-trigger-b'                 => 'TGB',
         '12v-trigger-c'                 => 'TGC',
@@ -72,6 +43,7 @@ my $ONKYO_cmds_hr = {
         'hd-radio-tuner-status'         => 'UHS',
         'hdmi-audio-out'                => 'HAO',
         'hdmi-output'                   => 'HDO',
+        'hdmi-cec'                      => 'CEC',
         'input'                         => 'SLI',
         'internet-radio-preset'         => 'NPR',
         'ipod-album-name-info'          => 'IAL',
@@ -94,17 +66,23 @@ my $ONKYO_cmds_hr = {
         'net-popup-message'             => 'NPU',
         'net-receiver-information'      => 'NRI',
         'net-service'                   => 'NSV',
+        'network-standby'               => 'NSB',
         'net-usb-album-name-info'       => 'NAL',
         'net-usb-artist-name-info'      => 'NAT',
         'net-usb-jacket-art'            => 'NJA',
         'net-usb-list-info'             => 'NLS',
+        'net-usb-list-info-xml'         => 'NLA',
+        'net-usb-list-title-info'       => 'NLT',
+        'net-usb-device-status'         => 'NDS',
+        'net-usb-menu-status'           => 'NMS',
         'net-usb-play-status'           => 'NST',
         'net-usb-time-info'             => 'NTM',
+        'net-usb-time-seek'             => 'NTS',
         'net-usb-title-name'            => 'NTI',
         'net-usb-track-info'            => 'NTR',
-        'network-usb'                   => 'NTC',
+        'net-usb'                       => 'NTC',
         'preset'                        => 'PRS',
-        'preset-memory'                 => 'UPM',
+        'preset-memory'                 => 'PRM',
         'pty-scan'                      => 'PTS',
         'rds-information'               => 'RDS',
         'record-output'                 => 'SLR',
@@ -121,6 +99,8 @@ my $ONKYO_cmds_hr = {
         'speaker-layout'                => 'SPL',
         'speaker-level-calibration'     => 'SLC',
         'subwoofer-temporary-level'     => 'SWL',
+        'subwoofer2-temporary-level'    => 'SW2',
+        'phase-matching-bass'           => 'PMB',
         'power'                         => 'PWR',
         'tape1-a'                       => 'CT1',
         'tape2-b'                       => 'CT2',
@@ -132,7 +112,7 @@ my $ONKYO_cmds_hr = {
         'tone-surround'                 => 'TSR',
         'tone-surround-back'            => 'TSB',
         'tp-scan'                       => 'TPS',
-        'tuning'                        => 'TUN',
+        'tunerFrequency'                => 'TUN',
         'universal-port'                => 'CPT',
         'video-information'             => 'IFV',
         'video-output'                  => 'VOS',
@@ -145,45 +125,42 @@ my $ONKYO_cmds_hr = {
         'xm-channel-number'             => 'XCH',
         'xm-title-info'                 => 'XTI'
     },
-    'zone2' => {
-        'balance'                  => 'ZBL',
-        'internet-radio-preset'    => 'NPZ',
-        'late-night'               => 'LTZ',
-        'listening-mode'           => 'LMZ',
-        'mute'                     => 'ZMT',
-        'net-receiver-information' => 'NRI',
-        'net-tune-network'         => 'NTZ',
-        'power'                    => 'ZPW',
-        'preset'                   => 'PRZ',
-        're-eq-academy-filter'     => 'RAZ',
-        'input'                    => 'SLZ',
-        'tone'                     => 'ZTN',
-        'tuning'                   => 'TUZ',
-        'volume'                   => 'ZVL'
+    '2' => {
+        'balance'               => 'ZBL',
+        'internet-radio-preset' => 'NPZ',
+        'late-night'            => 'LTZ',
+        'listening-mode'        => 'LMZ',
+        'mute'                  => 'ZMT',
+        'net-usb-z'             => 'NTZ',
+        'power'                 => 'ZPW',
+        'preset'                => 'PRZ',
+        're-eq-academy-filter'  => 'RAZ',
+        'input'                 => 'SLZ',
+        'tone'                  => 'ZTN',
+        'tunerFrequency'        => 'TUZ',
+        'volume'                => 'ZVL'
     },
-    'zone3' => {
-        'balance'                  => 'BL3',
-        'internet-radio-preset'    => 'NP3',
-        'mute'                     => 'MT3',
-        'net-receiver-information' => 'NRI',
-        'net-tune-network'         => 'NT3',
-        'power'                    => 'PW3',
-        'preset'                   => 'PR3',
-        'input'                    => 'SL3',
-        'tone'                     => 'TN3',
-        'tuning'                   => 'TU3',
-        'volume'                   => 'VL3'
+    '3' => {
+        'balance'               => 'BL3',
+        'internet-radio-preset' => 'NP3',
+        'mute'                  => 'MT3',
+        'net-usb-z'             => 'NT3',
+        'power'                 => 'PW3',
+        'preset'                => 'PR3',
+        'input'                 => 'SL3',
+        'tone'                  => 'TN3',
+        'tunerFrequency'        => 'TU3',
+        'volume'                => 'VL3'
     },
-    'zone4' => {
-        'internet-radio-preset'    => 'NP4',
-        'mute'                     => 'MT4',
-        'net-receiver-information' => 'NRI',
-        'net-tune-network'         => 'NT4',
-        'power'                    => 'PW4',
-        'preset'                   => 'PR4',
-        'input'                    => 'SL4',
-        'tuning'                   => 'TU4',
-        'volume'                   => 'VL4'
+    '4' => {
+        'internet-radio-preset' => 'NP4',
+        'mute'                  => 'MT4',
+        'net-usb-z'             => 'NT4',
+        'power'                 => 'PW4',
+        'preset'                => 'PR4',
+        'input'                 => 'SL4',
+        'tunerFrequency'        => 'TU4',
+        'volume'                => 'VL4'
     }
 };
 
@@ -214,7 +191,7 @@ my $ONKYO_values_hr = {
             'up'      => 'UP'
         }
     },
-    'main' => {
+    '1' => {
         'ADQ' => {
             'off'   => '00',
             'on'    => '01',
@@ -396,6 +373,12 @@ my $ONKYO_values_hr = {
             'zoomtg'     => 'ZOOMTG',
             'zoomup'     => 'ZOOMUP'
         },
+        'CEC' => {
+            'off'   => '00',
+            'on'    => '01',
+            'up'    => 'UP',
+            'query' => 'QSTN',
+        },
         'CEQ' => {
             'power'  => 'POWER',
             'preset' => 'PRESET'
@@ -435,37 +418,29 @@ my $ONKYO_values_hr = {
             'stop'   => 'STOP'
         },
         'CPT' => {
-            '0'       => '0',
-            '1'       => '1',
-            '10'      => '10',
-            '2'       => '2',
-            '3'       => '3',
-            '4'       => '4',
-            '5'       => '5',
-            '6'       => '6',
-            '7'       => '7',
-            '8'       => '8',
-            '9'       => '9',
-            'disp'    => 'DISP',
-            'down'    => 'DOWN',
-            'enter'   => 'ENTER',
-            'ff'      => 'FF',
-            'left'    => 'LEFT',
-            'mode'    => 'MODE',
-            'pause'   => 'PAUSE',
-            'play'    => 'PLAY',
-            'prsdn'   => 'PRSDN',
-            'prsup'   => 'PRSUP',
-            'repeat'  => 'REPEAT',
-            'return'  => 'RETURN',
-            'rew'     => 'REW',
-            'right'   => 'RIGHT',
-            'setup'   => 'SETUP',
-            'shuffle' => 'SHUFFLE',
-            'skip-f'  => 'SKIP.F',
-            'skip-r'  => 'SKIP.R',
-            'stop'    => 'STOP',
-            'up'      => 'UP'
+            '0'      => '0',
+            '1'      => '1',
+            '10'     => '10',
+            '2'      => '2',
+            '3'      => '3',
+            '4'      => '4',
+            '5'      => '5',
+            '6'      => '6',
+            '7'      => '7',
+            '8'      => '8',
+            '9'      => '9',
+            'disp'   => 'DISP',
+            'down'   => 'DOWN',
+            'enter'  => 'ENTER',
+            'ff'     => 'FF',
+            'left'   => 'LEFT',
+            'mode'   => 'MODE',
+            'pause'  => 'PAUSE',
+            'play'   => 'PLAY',
+            'skip-f' => 'SKIP.F',
+            'skip-r' => 'SKIP.R',
+            'stop'   => 'STOP',
+            'up'     => 'UP'
         },
         'CT1' => {
             'ff'     => 'FF',
@@ -605,96 +580,79 @@ my $ONKYO_values_hr = {
             'query'     => 'QSTN'
         },
         'LMD' => {
-            'action'                              => '05',
-            'all-ch-stereo'                       => '0C',
-            'audyssey-dsx'                        => '16',
-            'cinema2'                             => '50',
+            'stereo'                              => '00',
             'direct'                              => '01',
-            'dolby-ex'                            => '41',
-            'dolby-ex-audyssey-dsx'               => 'A7',
-            'dolby-virtual'                       => '14',
-            'down'                                => 'DOWN',
-            'dts-surround-sensation'              => '15',
-            'enhance'                             => '0E',
-            'enhanced-7'                          => '0E',
-            'film'                                => '03',
-            'full-mono'                           => '13',
-            'game'                                => 'GAME',
+            'surround'                            => '02',
+            'game-rpg'                            => '03',
+            'thx'                                 => '04',
             'game-action'                         => '05',
             'game-rock'                           => '06',
-            'game-rpg'                            => '03',
-            'game-sports'                         => '0E',
-            'i'                                   => '52',
-            'mono'                                => '0F',
             'mono-movie'                          => '07',
-            'movie'                               => 'MOVIE',
-            'multiplex'                           => '12',
-            'music'                               => 'MUSIC',
-            'musical'                             => '06',
-            'neo-6'                               => '8C',
-            'neo-6-cinema'                        => '82',
-            'neo-6-cinema-audyssey-dsx'           => 'A3',
-            'neo-6-cinema-dts-surround-sensation' => '91',
-            'neo-6-music'                         => '83',
-            'neo-6-music-audyssey-dsx'            => 'A4',
-            'neo-6-music-dts-surround-sensation'  => '92',
-            'neo-x-cinema'                        => '82',
-            'neo-x-game'                          => '9A',
-            'neo-x-music'                         => '83',
-            'neo-x-thx-cinema'                    => '85',
-            'neo-x-thx-games'                     => '8A',
-            'neo-x-thx-music'                     => '8C',
-            'neural-digital-music'                => '93',
-            'neural-digital-music-audyssey-dsx'   => 'A6',
-            'neural-surr'                         => '87',
-            'neural-surround'                     => '88',
-            'neural-surround-audyssey-dsx'        => 'A5',
-            'neural-thx'                          => '88',
-            'neural-thx-cinema'                   => '8D',
-            'neural-thx-games'                    => '8F',
-            'neural-thx-music'                    => '8E',
             'orchestra'                           => '08',
-            'plii'                                => '8B',
-            'plii-game-audyssey-dsx'              => 'A2',
-            'plii-movie-audyssey-dsx'             => 'A0',
-            'plii-music-audyssey-dsx'             => 'A1',
-            'pliix'                               => 'A2',
-            'pliix-game'                          => '86',
+            'unplugged'                           => '09',
+            'studio-mix'                          => '0A',
+            'tv-logic'                            => '0B',
+            'all-ch-stereo'                       => '0C',
+            'theater-dimensional'                 => '0D',
+            'game-sports'                         => '0E',
+            'mono'                                => '0F',
+            'pure-audio'                          => '11',
+            'multiplex'                           => '12',
+            'full-mono'                           => '13',
+            'dolby-virtual'                       => '14',
+            'dts-surround-sensation'              => '15',
+            'audyssey-dsx'                        => '16',
+            'whole-house'                         => '1F',
+            'straight-decode'                     => '40',
+            'dolby-ex'                            => '41',
+            'thx-cinema'                          => '42',
+            'thx-surround-ex'                     => '43',
+            'thx-music'                           => '44',
+            'thx-games'                           => '45',
+            'thx-cinema'                          => '50',
+            'thx-musicmode'                       => '51',
+            'thx-games'                           => '52',
             'pliix-movie'                         => '80',
             'pliix-music'                         => '81',
+            'neo-x-cinema'                        => '82',
+            'neo-x-music'                         => '83',
             'pliix-thx-cinema'                    => '84',
+            'neo-x-thx-cinema'                    => '85',
+            'pliix-game'                          => '86',
+            'neural-surr'                         => '87',
+            'neural-thx'                          => '88',
             'pliix-thx-games'                     => '89',
+            'neo-x-thx-games'                     => '8A',
             'pliix-thx-music'                     => '8B',
+            'neo-x-thx-music'                     => '8C',
+            'neural-thx-cinema'                   => '8D',
+            'neural-thx-music'                    => '8E',
+            'neural-thx-games'                    => '8F',
             'pliiz-height'                        => '90',
+            'neo-x-cinema-dts-surround-sensation' => '91',
+            'neo-x-music-dts-surround-sensation'  => '92',
+            'neural-digital-music'                => '93',
             'pliiz-height-thx-cinema'             => '94',
-            'pliiz-height-thx-games'              => '96',
             'pliiz-height-thx-music'              => '95',
-            'pliiz-height-thx-u2'                 => '99',
-            'pure-audio'                          => '11',
+            'pliiz-height-thx-games'              => '96',
+            'pliiz-height-thx-u2-cinema'          => '97',
+            'pliiz-height-thx-u2-music'           => '98',
+            'pliiz-height-thx-u2-games'           => '99',
+            'neo-x-game'                          => '9A',
+            'plii-movie-audyssey-dsx'             => 'A0',
+            'plii-music-audyssey-dsx'             => 'A1',
+            'plii-game-audyssey-dsx'              => 'A2',
+            'neo-x-cinema-audyssey-dsx'           => 'A3',
+            'neo-x-music-audyssey-dsx'            => 'A4',
+            'neural-surround-audyssey-dsx'        => 'A5',
+            'neural-digital-music-audyssey-dsx'   => 'A6',
+            'dolby-ex-audyssey-dsx'               => 'A7',
+            'down'                                => 'DOWN',
+            'game'                                => 'GAME',
+            'movie'                               => 'MOVIE',
+            'music'                               => 'MUSIC',
             'query'                               => 'QSTN',
-            's-cinema'                            => '50',
-            's-games'                             => '52',
-            's-music'                             => '51',
-            's2'                                  => '52',
-            's2-cinema'                           => '97',
-            's2-games'                            => '99',
-            's2-music'                            => '98',
-            'stereo'                              => '00',
-            'straight-decode'                     => '40',
-            'studio-mix'                          => '0A',
-            'surround'                            => '02',
-            'theater-dimensional'                 => '0D',
-            'thx'                                 => '04',
-            'thx-cinema'                          => '42',
-            'thx-games'                           => '52',
-            'thx-music'                           => '44',
-            'thx-musicmode'                       => '51',
-            'thx-surround-ex'                     => '43',
-            'thx-u2'                              => '52',
-            'tv-logic'                            => '0B',
-            'unplugged'                           => '09',
             'up'                                  => 'UP',
-            'whole-house'                         => '1F'
         },
         'LTN' => {
             'auto-dolby-truehd' => '03',
@@ -732,14 +690,28 @@ my $ONKYO_values_hr = {
         'NAT' => {
             'query' => 'QSTN'
         },
+        'NDS' => {
+            'nfr'   => 'nfr',
+            'query' => 'QSTN'
+        },
         'NJA' => {
-            'tp-xx-xx-xx-xx-xx-xx' => 'tp{xx}{xx}{xx}{xx}{xx}{xx}'
+            'tp-xx-xx-xx-xx-xx-xx' => 'tp{xx}{xx}{xx}{xx}{xx}{xx}',
+            'off'                  => 'DIS',
+            'on'                   => 'ENA',
+            'bmp'                  => 'BMP',
+            'link'                 => 'LINK',
+            'up'                   => 'UP',
+            'query'                => 'QSTN',
         },
         'NKY' => {
             'll' => 'll'
         },
         'NLS' => {
             'ti' => 'ti'
+        },
+        'NLA' => {
+            'Lzzzzllxxxxyyyy' => 'Lzzzzllxxxxyyyy',
+            'Izzzzllxxxx----' => 'Izzzzllxxxx----'
         },
         'NMD' => {
             'ext'   => 'EXT',
@@ -755,14 +727,35 @@ my $ONKYO_values_hr = {
         #        'NPU' => {
         #            '' => ''
         #        },
+        'NSB' => {
+            'off'   => 'OFF',
+            'on'    => 'ON',
+            'query' => 'QSTN'
+        },
         'NST' => {
             'prs'   => 'prs',
             'query' => 'QSTN'
         },
-
-        #        'NSV' => {
-        #            '' => ''
-        #        },
+        'NSV' => {
+            'DLNA'                    => '00',
+            'My_Favorites'            => '01',
+            'vTuner'                  => '02',
+            'SiriusXM_Internet_Radio' => '03',
+            'Pandora_Internet_Radio'  => '04',
+            'Rhapsody'                => '05',
+            'Last.fm_Internet_Radio'  => '06',
+            'Napster'                 => '07',
+            'Slacker_Personal_Radio'  => '08',
+            'Mediafly'                => '09',
+            'Spotify'                 => '0A',
+            'AUPEO!_PERSONAL_RADIO'   => '0B',
+            'radiko.jp'               => '0C',
+            'e-onkyo_music'           => '0D',
+            'TuneIn'                  => '0E',
+            'MP3tunes'                => '0F',
+            'simfy'                   => '10',
+            'Home_Media'              => '11',
+        },
         'NRI' => {
             'query' => 'QSTN'
         },
@@ -816,6 +809,9 @@ my $ONKYO_values_hr = {
             'mm-ss-mm-ss' => 'mm:ss/mm:ss',
             'query'       => 'QSTN'
         },
+        'NTS' => {
+            'mm-ss' => 'mm:ss',
+        },
         'NTR' => {
             'cccc-tttt' => 'cccc/tttt',
             'query'     => 'QSTN'
@@ -832,20 +828,26 @@ my $ONKYO_values_hr = {
             'up'    => 'UP',
             'video' => 'VIDEO'
         },
-        'PRM' => {
-            'xrange(1, 40)' => '(1, 40)',
-            'xrange(1, 30)' => '(1, 30)'
-        },
         'PRS' => {
+            'xrange(1, 40)' => '(1, 40)',
+            'xrange(1, 30)' => '(1, 30)',
+            'up'            => 'UP',
             'down'          => 'DOWN',
             'query'         => 'QSTN',
-            'up'            => 'UP',
+        },
+        'PRM' => {
             'xrange(1, 40)' => '(1, 40)',
             'xrange(1, 30)' => '(1, 30)'
         },
         'PTS' => {
             'enter'      => 'ENTER',
             'xrange(30)' => '(0, 30)'
+        },
+        'PMB' => {
+            'off'    => '00',
+            'on'     => '01',
+            'toggle' => 'TG',
+            'query'  => 'QSTN'
         },
         'PWR' => {
             'off'   => '00',
@@ -1022,6 +1024,12 @@ my $ONKYO_values_hr = {
             'query' => 'QSTN'
         },
         'SWL' => {
+            'down'               => 'DOWN',
+            'query'              => 'QSTN',
+            'up'                 => 'UP',
+            'xrange(-15, 9, 12)' => '(-15, 0, 12)'
+        },
+        'SW2' => {
             'down'               => 'DOWN',
             'query'              => 'QSTN',
             'up'                 => 'UP',
@@ -1214,7 +1222,7 @@ my $ONKYO_values_hr = {
             'query' => 'QSTN'
         }
     },
-    'zone2' => {
+    '2' => {
         'LMZ' => {
             'direct'    => '01',
             'dvs'       => '88',
@@ -1258,13 +1266,6 @@ my $ONKYO_values_hr = {
             'trdn'    => 'TRDN',
             'trup'    => 'TRUP',
             'up'      => 'UP'
-        },
-        'PRS' => {
-            'down'          => 'DOWN',
-            'query'         => 'QSTN',
-            'up'            => 'UP',
-            'xrange(1, 40)' => '(1, 40)',
-            'xrange(1, 30)' => '(1, 30)'
         },
         'PRZ' => {
             'down'          => 'DOWN',
@@ -1329,11 +1330,6 @@ my $ONKYO_values_hr = {
             'video7'          => '06',
             'xm'              => '31'
         },
-        'TUN' => {
-            'down'  => 'DOWN',
-            'query' => 'QSTN',
-            'up'    => 'UP'
-        },
         'TUZ' => {
             '0-in-direct-mode' => '0',
             '1-in-direct-mode' => '1',
@@ -1384,7 +1380,7 @@ my $ONKYO_values_hr = {
             'xrange(80)'  => '(0, 80)'
         }
     },
-    'zone3' => {
+    '3' => {
         'BL3' => {
             'down'  => 'DOWN',
             'query' => 'QSTN',
@@ -1428,13 +1424,6 @@ my $ONKYO_values_hr = {
             'trupz'  => 'TRUPz'
         },
         'PR3' => {
-            'down'          => 'DOWN',
-            'query'         => 'QSTN',
-            'up'            => 'UP',
-            'xrange(1, 40)' => '(1, 40)',
-            'xrange(1, 30)' => '(1, 30)'
-        },
-        'PRS' => {
             'down'          => 'DOWN',
             'query'         => 'QSTN',
             'up'            => 'UP',
@@ -1519,11 +1508,6 @@ my $ONKYO_values_hr = {
             'query'            => 'QSTN',
             'up'               => 'UP'
         },
-        'TUN' => {
-            'down'  => 'DOWN',
-            'query' => 'QSTN',
-            'up'    => 'UP'
-        },
         'VL3' => {
             'level-down'  => 'DOWN',
             'level-up'    => 'UP',
@@ -1532,7 +1516,7 @@ my $ONKYO_values_hr = {
             'xrange(80)'  => '(0, 80)'
         }
     },
-    'zone4' => {
+    '4' => {
         'MT4' => {
             'off'    => '00',
             'on'     => '01',
@@ -1568,13 +1552,6 @@ my $ONKYO_values_hr = {
             'trupz'  => 'TRUPz'
         },
         'PR4' => {
-            'down'          => 'DOWN',
-            'query'         => 'QSTN',
-            'up'            => 'UP',
-            'xrange(1, 40)' => '(1, 40)',
-            'xrange(1, 30)' => '(1, 30)'
-        },
-        'PRS' => {
             'down'          => 'DOWN',
             'query'         => 'QSTN',
             'up'            => 'UP',
@@ -1650,11 +1627,6 @@ my $ONKYO_values_hr = {
             'query'            => 'QSTN',
             'up'               => 'UP'
         },
-        'TUN' => {
-            'down'  => 'DOWN',
-            'query' => 'QSTN',
-            'up'    => 'UP'
-        },
         'VL4' => {
             'level-down'  => 'DOWN',
             'level-up'    => 'UP',
@@ -1667,7 +1639,34 @@ my $ONKYO_values_hr = {
 
 # ----------------Complete command reference database-----------------------
 my $ONKYO_cmddb = {
-    'main' => {
+    '1' => {
+        'PMB',
+        {
+            'description' => 'Phase Matching Bass Command',
+            'name'        => 'phase-matching-bass',
+            'values'      => {
+                '00',
+                {
+                    'description' => 'sets Off',
+                    'name'        => 'off'
+                },
+                '01',
+                {
+                    'description' => 'sets On',
+                    'name'        => 'on'
+                },
+                'TG',
+                {
+                    'description' => 'sets Phase Matching Bass Wrap-Around Up',
+                    'name'        => 'toggle'
+                },
+                'QSTN',
+                {
+                    'description' => 'gets Phase Matching Bass',
+                    'name'        => 'query'
+                }
+            }
+        },
         'PWR',
         {
             'description' => 'System Power Command',
@@ -2198,6 +2197,27 @@ my $ONKYO_cmddb = {
         {
             'description' => 'Subwoofer {temporary} Level Command',
             'name'        => 'subwoofer-temporary-level',
+            'values'      => {
+                '{-15,0,12}',
+                {
+                    'description' => 'sets Subwoofer Level -15dB - 0dB - +12dB',
+                    'name'        => '15db-0db-12db'
+                },
+                'UP',
+                { 'description' => 'LEVEL + Key', 'name' => 'up' },
+                'DOWN',
+                { 'description' => 'LEVEL KEY', 'name' => 'down' },
+                'QSTN',
+                {
+                    'description' => 'gets the Subwoofer Level',
+                    'name'        => 'query'
+                }
+            }
+        },
+        'SW2',
+        {
+            'description' => 'Subwoofer2 {temporary} Level Command',
+            'name'        => 'subwoofer2-temporary-level',
             'values'      => {
                 '{-15,0,12}',
                 {
@@ -3048,19 +3068,19 @@ my $ONKYO_cmddb = {
                 '03',
                 {
                     'description' => 'sets FILM, Game-RPG',
-                    'name'        => [ 'film', 'game-rpg' ]
+                    'name'        => 'game-rpg'
                 },
                 '04',
                 { 'description' => 'sets THX', 'name' => 'thx' },
                 '05',
                 {
                     'description' => 'sets ACTION, Game-Action',
-                    'name'        => [ 'action', 'game-action' ]
+                    'name'        => 'game-action'
                 },
                 '06',
                 {
                     'description' => 'sets MUSICAL, Game-Rock',
-                    'name'        => [ 'musical', 'game-rock' ]
+                    'name'        => 'game-rock'
                 },
                 '07',
                 {
@@ -3100,7 +3120,7 @@ my $ONKYO_cmddb = {
                 '0E',
                 {
                     'description' => 'sets ENHANCED 7/ENHANCE, Game-Sports',
-                    'name'        => [ 'enhanced-7', 'enhance', 'game-sports' ]
+                    'name'        => 'game-sports'
                 },
                 '0F',
                 { 'description' => 'sets MONO', 'name' => 'mono' },
@@ -3172,53 +3192,52 @@ my $ONKYO_cmddb = {
                 '50',
                 {
                     'description' => 'sets THX U2/S2/I/S Cinema/Cinema2',
-                    'name' => [ 'thx-u2', 's2', 'i', 's-cinema', 'cinema2' ]
+                    'name'        => 'thx-cinema'
                 },
                 '51',
                 {
                     'description' => 'sets THX MusicMode,THX U2/S2/I/S Music',
-                    'name' =>
-                      [ 'thx-musicmode', 'thx-u2', 's2', 'i', 's-music' ]
+                    'name'        => 'thx-musicmode'
                 },
                 '52',
                 {
                     'description' => 'sets THX Games Mode,THX U2/S2/I/S Games',
-                    'name' => [ 'thx-games', 'thx-u2', 's2', 'i', 's-games' ]
+                    'name'        => 'thx-games'
                 },
                 '80',
                 {
                     'description' => 'sets PLII/PLIIx Movie',
-                    'name'        => [ 'plii', 'pliix-movie' ]
+                    'name'        => 'pliix-movie'
                 },
                 '81',
                 {
                     'description' => 'sets PLII/PLIIx Music',
-                    'name'        => [ 'plii', 'pliix-music' ]
+                    'name'        => 'pliix-music'
                 },
                 '82',
                 {
                     'description' => 'sets Neo:6 Cinema/Neo:X Cinema',
-                    'name'        => [ 'neo-6-cinema', 'neo-x-cinema' ]
+                    'name'        => 'neo-x-cinema'
                 },
                 '83',
                 {
                     'description' => 'sets Neo:6 Music/Neo:X Music',
-                    'name'        => [ 'neo-6-music', 'neo-x-music' ]
+                    'name'        => 'neo-x-music'
                 },
                 '84',
                 {
                     'description' => 'sets PLII/PLIIx THX Cinema',
-                    'name'        => [ 'plii', 'pliix-thx-cinema' ]
+                    'name'        => 'pliix-thx-cinema'
                 },
                 '85',
                 {
                     'description' => 'sets Neo:6/Neo:X THX Cinema',
-                    'name'        => [ 'neo-6', 'neo-x-thx-cinema' ]
+                    'name'        => 'neo-x-thx-cinema'
                 },
                 '86',
                 {
                     'description' => 'sets PLII/PLIIx Game',
-                    'name'        => [ 'plii', 'pliix-game' ]
+                    'name'        => 'pliix-game'
                 },
                 '87',
                 {
@@ -3228,27 +3247,27 @@ my $ONKYO_cmddb = {
                 '88',
                 {
                     'description' => 'sets Neural THX/Neural Surround',
-                    'name'        => [ 'neural-thx', 'neural-surround' ]
+                    'name'        => 'neural-thx'
                 },
                 '89',
                 {
                     'description' => 'sets PLII/PLIIx THX Games',
-                    'name'        => [ 'plii', 'pliix-thx-games' ]
+                    'name'        => 'pliix-thx-games'
                 },
                 '8A',
                 {
                     'description' => 'sets Neo:6/Neo:X THX Games',
-                    'name'        => [ 'neo-6', 'neo-x-thx-games' ]
+                    'name'        => 'neo-x-thx-games'
                 },
                 '8B',
                 {
                     'description' => 'sets PLII/PLIIx THX Music',
-                    'name'        => [ 'plii', 'pliix-thx-music' ]
+                    'name'        => 'pliix-thx-music'
                 },
                 '8C',
                 {
                     'description' => 'sets Neo:6/Neo:X THX Music',
-                    'name'        => [ 'neo-6', 'neo-x-thx-music' ]
+                    'name'        => 'neo-x-thx-music'
                 },
                 '8D',
                 {
@@ -3273,12 +3292,12 @@ my $ONKYO_cmddb = {
                 '91',
                 {
                     'description' => 'sets Neo:6 Cinema DTS Surround Sensation',
-                    'name'        => 'neo-6-cinema-dts-surround-sensation'
+                    'name'        => 'neo-x-cinema-dts-surround-sensation'
                 },
                 '92',
                 {
                     'description' => 'sets Neo:6 Music DTS Surround Sensation',
-                    'name'        => 'neo-6-music-dts-surround-sensation'
+                    'name'        => 'neo-x-music-dts-surround-sensation'
                 },
                 '93',
                 {
@@ -3303,17 +3322,17 @@ my $ONKYO_cmddb = {
                 '97',
                 {
                     'description' => 'sets PLIIz Height + THX U2/S2 Cinema',
-                    'name'        => [ 'pliiz-height-thx-u2', 's2-cinema' ]
+                    'name'        => 'pliiz-height-thx-u2-cinema'
                 },
                 '98',
                 {
                     'description' => 'sets PLIIz Height + THX U2/S2 Music',
-                    'name'        => [ 'pliiz-height-thx-u2', 's2-music' ]
+                    'name'        => 'pliiz-height-thx-u2-music'
                 },
                 '99',
                 {
                     'description' => 'sets PLIIz Height + THX U2/S2 Games',
-                    'name'        => [ 'pliiz-height-thx-u2', 's2-games' ]
+                    'name'        => 'pliiz-height-thx-u2-games'
                 },
                 '9A',
                 {
@@ -3323,27 +3342,27 @@ my $ONKYO_cmddb = {
                 'A0',
                 {
                     'description' => 'sets PLIIx/PLII Movie + Audyssey DSX',
-                    'name'        => [ 'pliix', 'plii-movie-audyssey-dsx' ]
+                    'name'        => 'plii-movie-audyssey-dsx'
                 },
                 'A1',
                 {
                     'description' => 'sets PLIIx/PLII Music + Audyssey DSX',
-                    'name'        => [ 'pliix', 'plii-music-audyssey-dsx' ]
+                    'name'        => 'plii-music-audyssey-dsx'
                 },
                 'A2',
                 {
                     'description' => 'sets PLIIx/PLII Game + Audyssey DSX',
-                    'name'        => [ 'pliix', 'plii-game-audyssey-dsx' ]
+                    'name'        => 'plii-game-audyssey-dsx'
                 },
                 'A3',
                 {
                     'description' => 'sets Neo:6 Cinema + Audyssey DSX',
-                    'name'        => 'neo-6-cinema-audyssey-dsx'
+                    'name'        => 'neo-x-cinema-audyssey-dsx'
                 },
                 'A4',
                 {
                     'description' => 'sets Neo:6 Music + Audyssey DSX',
-                    'name'        => 'neo-6-music-audyssey-dsx'
+                    'name'        => 'neo-x-music-audyssey-dsx'
                 },
                 'A5',
                 {
@@ -3627,7 +3646,7 @@ my $ONKYO_cmddb = {
         'TUN',
         {
             'description' => 'Tuning Command {Include Tuner Pack Model Only}',
-            'name'        => 'tuning',
+            'name'        => 'tunerFrequency',
             'values'      => {
                 'nnnnn',
                 {
@@ -4194,7 +4213,7 @@ my $ONKYO_cmddb = {
         {
             'description' =>
 'Network/USB Operation Command {Network Model Only after TX-NR905}',
-            'name'   => 'network-usb',
+            'name'   => 'net-usb',
             'values' => {
                 'PLAY',
                 {
@@ -4208,12 +4227,12 @@ my $ONKYO_cmddb = {
                 'TRUP',
                 {
                     'description' => 'TRACK UP KEY',
-                    'name'        => 'trup'
+                    'name'        => 'next'
                 },
                 'TRDN',
                 {
                     'description' => 'TRACK DOWN KEY',
-                    'name'        => 'trdn'
+                    'name'        => 'previous'
                 },
                 'FF',
                 {
@@ -4409,6 +4428,19 @@ my $ONKYO_cmddb = {
                 }
             }
         },
+        'NTS',
+        {
+            'description' => 'NET/USB Time Seek',
+            'name'        => 'net-usb-time-seek',
+            'values'      => {
+                'mm:ss',
+                {
+                    'description' =>
+'mm: munites (00-99) ss: seconds (00-59). This command is only available when Time Seek is enable.',
+                    'name' => 'mm-ss'
+                },
+            }
+        },
         'NTR',
         {
             'description' => 'NET/USB Track Info',
@@ -4478,8 +4510,195 @@ my $ONKYO_cmddb = {
                 {
                     'description' =>
 'select the listed item {from Network Control Only}\n t -> Index Type {L : Line, I : Index}\nwhen t = L,\n  i -> Line number {0-9 : 1st to 10th Line [1 digit] }\nwhen t = I,\n  iiiii -> Index number {00001-99999 : 1st to 99999th Item [5 digits] }',
-                    'name' => 'ti'
+                    'name' => 'none'
                 }
+            },
+        },
+        'NLA',
+        {
+            'description' =>
+'NET/USB List Info (All item, need processing XML data, for Network Control Only)',
+            'name'   => 'net-usb-list-info-xml',
+            'values' => {
+                'tzzzzsurr<.....>',
+                {
+                    'description' => 't -> responce type \'X\' : XML
+zzzz -> sequence number (0000-FFFF)
+s -> status \'S\' : success, \'E\' : error
+u -> UI type \'0\' : List, \'1\' : Menu, \'2\' : Playback, \'3\' : Popup, \'4\' : Keyboard, ""5"" : Menu List
+rr -> reserved
+<.....> : XML data ( [CR] and [LF] are removed )
+ If s=\'S\',
+ <?xml version=""1.0"" encoding=""UFT-8""?>
+ <response status=""ok"">
+   <items offset=""xxxx"" totalitems=""yyyy"" >
+     <item icontype=""a"" title=""bbb…bbb"" />
+     …
+     <item icontype=""a"" title=""bbb…bbb"" />
+   </Items>
+ </response>
+ If s=\'E\',
+ <?xml version=""1.0"" encoding=""UFT-8""?>
+ <response status=""fail"">
+   <error code=""[error code]"" message=""[error message]"" />
+ </response>
+xxxx : index of 1st item (0000-FFFF : 1st to 65536th Item [4 HEX digits] )
+yyyy : number of items (0000-FFFF : 1 to 65536 Items [4 HEX digits] )
+a: Icon Type (for Spotify)
+ \'0\' : Playing, \'1\' : Pause, \'2\' : FF, \'3\' : FR
+ \'A\' : Artist, \'B\' : Album, \'F\' : Folder, \'G\' : Program, \'M\' : Music, \'N\' : Server, \'P\' : Playlist, \'S\' : Search, \'T\' : Track
+ \'a\' : Account, \'b\' : Playlist-C, \'c\' : Starred, \'d\' : Unstarred, \'e\' : What\'s New
+bbb...bbb : Title',
+                    'name' => 'None'
+                },
+                'tzzzzsurr<.....>',
+                {
+                    'description' => 't -> responce type \'X\' : XML
+zzzz -> sequence number (0000-FFFF)
+s -> status \'S\' : success, \'E\' : error
+u -> UI type \'0\' : List, \'1\' : Menu, \'2\' : Playback, \'3\' : Popup, \'4\' : Keyboard, ""5"" : Menu List
+rr -> reserved
+<.....> : XML data ( [CR] and [LF] are removed )
+ If s=\'S\',
+ <?xml version=""1.0"" encoding=""UFT-8""?>
+ <response status=""ok"">
+   <items offset=""xxxx"" totalitems=""yyyy"" >
+     <item iconid=""aa"" title=""bbb…bbb"" />
+     …
+     <item iconid=""aa"" title=""bbb…bbb"" />
+   </Items>
+ </response>
+ If s=\'E\',
+ <?xml version=""1.0"" encoding=""UFT-8""?>
+ <response status=""fail"">
+   <error code=""[error code]"" message=""[error message]"" />
+ </response>
+xxxx : index of 1st item (0000-FFFF : 1st to 65536th Item [4 HEX digits] )
+yyyy : number of items (0000-FFFF : 1 to 65536 Items [4 HEX digits] )
+aa : Icon ID
+ \'29\' : Folder, \'2A\' : Folder X, \'2B\' : Server, \'2C\' : Server X, \'2D\' : Title, \'2E\' : Title X,
+ \'2F\' : Program, \'31\' : USB, \'36\' : Play, \'37\' : MultiAccount,
+ for Spotify
+ \'38\' : Account, \'39\' : Album, \'3A\' : Playlist, \'3B\' : Playlist-C, \'3C\' : starred,
+ \'3D\' : What\'sNew, \'3E\' : Artist, \'3F\' : Track, \'40\' : unstarred, \'41\' : Play, \'43\' : Search, \'44\' : Folder
+ for AUPEO!
+ \'42\' : Program
+bbb...bbb : Title',
+                    'name' => 'None'
+                },
+                'Lzzzzllxxxxyyyy',
+                {
+                    'description' =>
+'specifiy to get the listed data (from Network Control Only)
+zzzz -> sequence number (0000-FFFF)
+ll -> number of layer (00-FF)
+xxxx -> index of start item (0000-FFFF : 1st to 65536th Item [4 HEX digits] )
+yyyy -> number of items (0000-FFFF : 1 to 65536 Items [4 HEX digits] )',
+                    'name' => 'none'
+                },
+                'Izzzzllxxxx----',
+                {
+                    'description' =>
+                      'select the listed item (from Network Control Only)
+zzzz -> sequence number (0000-FFFF)
+ll -> number of layer (00-FF)
+xxxx -> index number (0000-FFFF : 1st to 65536th Item [4 HEX digits] )
+---- -> not used',
+                    'name' => 'none'
+                },
+            },
+        },
+        'NLT',
+        {
+            'description' => 'NET/USB List Title Info',
+            'name'        => 'net-usb-list-title-info',
+            'values'      => {
+                'xxuycccciiiillrraabbssnnn...nnn',
+                {
+                    'description' => 'NET/USB List Title Info
+xx : Service Type
+ 00 : DLNA, 01 : Favorite, 02 : vTuner, 03 : SiriusXM, 04 : Pandora, 05 : Rhapsody, 06 : Last.fm,
+ 07 : Napster, 08 : Slacker, 09 : Mediafly, 0A : Spotify, 0B : AUPEO!, 0C : radiko, 0D : e-onkyo,
+ 0E : TuneIn Radio, 0F : MP3tunes, 10 : Simfy, 11:Home Media
+ F0 : USB Front, F1 : USB Rear, F2 : Internet Radio, F3 : NET, FF : None
+u : UI Type
+ 0 : List, 1 : Menu, 2 : Playback, 3 : Popup, 4 : Keyboard, \"\"5\"\" : Menu List
+y : Layer Info
+ 0 : NET TOP, 1 : Service Top,DLNA/USB/iPod Top, 2 : under 2nd Layer
+cccc : Current Cursor Position (HEX 4 letters)
+iiii : Number of List Items (HEX 4 letters)
+ll : Number of Layer(HEX 2 letters)
+rr : Reserved (2 leters)
+aa : Icon on Left of Title Bar
+ 00 : Internet Radio, 01 : Server, 02 : USB, 03 : iPod, 04 : DLNA, 05 : WiFi, 06 : Favorite
+ 10 : Account(Spotify), 11 : Album(Spotify), 12 : Playlist(Spotify), 13 : Playlist-C(Spotify)
+ 14 : Starred(Spotify), 15 : What\'s New(Spotify), 16 : Track(Spotify), 17 : Artist(Spotify)
+ 18 : Play(Spotify), 19 : Search(Spotify), 1A : Folder(Spotify)
+ FF : None
+bb : Icon on Right of Title Bar
+ 00 : DLNA, 01 : Favorite, 02 : vTuner, 03 : SiriusXM, 04 : Pandora, 05 : Rhapsody, 06 : Last.fm,
+ 07 : Napster, 08 : Slacker, 09 : Mediafly, 0A : Spotify, 0B : AUPEO!, 0C : radiko, 0D : e-onkyo,
+ 0E : TuneIn Radio, 0F : MP3tunes, 10 : Simfy, 11:Home Media
+ FF : None
+ss : Status Info
+ 00 : None, 01 : Connecting, 02 : Acquiring License, 03 : Buffering
+ 04 : Cannot Play, 05 : Searching, 06 : Profile update, 07 : Operation disabled
+ 08 : Server Start-up, 09 : Song rated as Favorite, 0A : Song banned from station,
+ 0B : Authentication Failed, 0C : Spotify Paused(max 1 device), 0D : Track Not Available, 0E : Cannot Skip
+nnn...nnn : Character of Title Bar (variable-length, 64 Unicode letters [UTF-8 encoded] max)',
+                    'name' => 'None'
+                },
+            }
+        },
+        'NDS',
+        {
+            'description' => 'NET Connection/USB Device Status',
+            'name'        => 'net-usb-device-status',
+            'values'      => {
+                'nfr',
+                {
+                    'description' =>
+                      'NET Connection/USB Device Status (3 letters)
+n -> NET Connection status: \"-\": no connection, \"E\": Ether, \"W\": Wireless
+f -> Front USB(USB1) Device Status: \"-\": no device, \"i\": iPod/iPhone, 
+      \"M\": Memory/NAS, \"W\": Wireless Adaptor, \"B\": Bluetooth Adaptor,
+      \"G\": Google USB, \"x\": disable
+r -> Rear USB(USB2) Device Status: \"-\": no device, \"i\": iPod/iPhone, 
+      \"M\": Memory/NAS, \"W\": Wireless Adaptor, \"B\": Bluetooth Adaptor, 
+      \"G\": Google USB, \"x\": disable',
+                    'name' => 'None'
+                },
+                'QSTN',
+                {
+                    'description' => 'gets the Net/USB Status',
+                    'name'        => 'query'
+                },
+            }
+        },
+        'NMS',
+        {
+            'description' => 'NET/USB Menu Status',
+            'name'        => 'net-usb-menu-status',
+            'values'      => {
+                'maabbstii',
+                {
+                    'description' => 'NET/USB Menu Status (7 letters)
+m -> Track Menu: \"\"M\"\": Menu is enable, \"\"x\"\": Menu is disable
+aa -> F1 button icon (Positive Feed or Mark/Unmark)
+bb -> F2 button icon (Negative Feed)
+ aa or bb : \"\"xx\"\":disable, \"\"01\"\":Like, \"\"02\"\":don\'t like, \"\"03\"\":Love, \"\"04\"\":Ban,
+                  \"\"05\"\":episode, \"\"06\"\":ratings, \"\"07\"\":Ban(black), \"\"08\"\":Ban(white),
+                  \"\"09\"\":Favorite(black), \"\"0A\"\":Favorite(white), \"\"0B\"\":Favorite(yellow)
+s -> Time Seek \"\"S\"\": Time Seek is enable \"\"x\"\": Time Seek is disable
+t -> Time Display \"\"1\"\": Elapsed Time/Total Time, \"\"2\"\": Elapsed Time, \"\"x\"\": disable
+ii-> Service icon
+ ii : \"\"00\"\":DLNA, \"\"01\"\":My Favorite, \"\"02\"\":vTuner, \"\"03\"\":SiriusXM, \"\"04\"\":Pandora,
+      \"\"05\"\":Rhapsody, \"\"06\"\":Last.fm, \"\"08\"\":Slacker, \"\"0A\"\":Spotify, \"\"0B\"\":AUPEO!,
+      \"\"0C\"\":radiko, \"\"0D\"\":e-onkyo, \"\"0E\"\":TuneIn, \"\"0F\"\":MP3tunes, \"\"10\"\":Simfy,
+      \"\"11\"\":Home Media, \"\"F0\"\": USB Front, \"\"F1: USB Rear, \"\"F2\"\":Internet Radio
+      \"\"F3\"\":NET, \"\"F4\"\":Bluetooth',
+                    'name' => 'None'
+                },
             }
         },
         'NJA',
@@ -4493,7 +4712,66 @@ my $ONKYO_cmddb = {
                     'description' =>
 'NET/USB Jacket Art/Album Art Data\nt-> Image type 0:BMP,1:JPEG\np-> Packet flag 0:Start, 1:Next, 2:End\nxxxxxxxxxxxxxx -> Jacket/Album Art Data {valiable length, 1024 ASCII HEX letters max}',
                     'name' => 'tp-xx-xx-xx-xx-xx-xx'
+                },
+
+                'DIS',
+                {
+                    'description' => 'sets Jacket Art disable',
+                    'name'        => 'off'
+                },
+
+                'ENA',
+                {
+                    'description' => 'sets Jacket Art enable',
+                    'name'        => 'on'
+                },
+
+                'BMP',
+                {
+                    'description' => 'sets Jacket Art enable and type BMP',
+                    'name'        => 'bmp'
+                },
+
+                'LINK',
+                {
+                    'description' => 'sets Jacket Art enable and type LINK',
+                    'name'        => 'link'
+                },
+
+                'UP',
+                {
+                    'description' => 'sets Jacket Art Wrap-Around up',
+                    'name'        => 'up'
+                },
+
+                'QSTN',
+                {
+                    'description' => 'gets Jacket Art enable/disable',
+                    'name'        => 'query'
                 }
+            }
+        },
+        'NSB',
+        {
+            'description' =>
+'Network Standby Settings (for Network Control Only and Available in AVR is PowerOn)',
+            'name'   => 'network-standby',
+            'values' => {
+                'OFF',
+                {
+                    'description' => 'sets Network Standby is Off',
+                    'name'        => 'off'
+                },
+                'ON',
+                {
+                    'description' => 'sets Network Standby is On',
+                    'name'        => 'on'
+                },
+                'QSTN',
+                {
+                    'description' => 'gets Network Standby Setting',
+                    'name'        => 'query'
+                },
             }
         },
         'NSV',
@@ -4501,12 +4779,96 @@ my $ONKYO_cmddb = {
             'description' => 'NET Service{for Network Control Only}',
             'name'        => 'net-service',
             'values'      => {
-                'ssiaaaa\u2026aaaabbbb\u2026bbbb',
+                '00',
                 {
-                    'description' =>
-'select Network Service directly\nss -> Network Serveice\n 00:Media Server {DLNA}\n 01:Favorite\n 02:vTuner\n 03:SIRIUS\n 04:Pandora\n 05:Rhapsody\n 06:Last.fm\n 07:Napster\n 08:Slacker\n 09:Mediafly\n 0A:Spotify\n 0B:AUPEO!\n 0C:Radiko\n 0D:e-onkyo\n\ni-> Acount Info\n 0: No\n 1: Yes\n"aaaa...aaaa": User Name { 128 Unicode letters [UTF-8 encoded] max }\n"bbbb...bbbb": Password { 128 Unicode letters [UTF-8 encoded] max }',
-                    'name' => 'None'
-                }
+                    'description' => 'Music Server (DLNA)',
+                    'name'        => 'DLNA'
+                },
+                '01',
+                {
+                    'description' => 'My Favorites',
+                    'name'        => [ 'My_Favorites', 'Favorite' ]
+                },
+                '02',
+                {
+                    'description' => 'vTuner',
+                    'name'        => 'vTuner'
+                },
+                '03',
+                {
+                    'description' => 'SiriusXM Internet Radio',
+                    'name'        => [ 'SiriusXM_Internet_Radio', 'SIRIUS' ]
+                },
+                '04',
+                {
+                    'description' => 'Pandora Internet Radio',
+                    'name'        => [ 'Pandora_Internet_Radio', 'Pandora' ]
+                },
+                '05',
+                {
+                    'description' => 'Rhapsody',
+                    'name'        => 'Rhapsody'
+                },
+                '06',
+                {
+                    'description' => 'Last.fm Internet Radio',
+                    'name'        => [ 'Last.fm_Internet_Radio', 'Last.fm' ]
+                },
+                '07',
+                {
+                    'description' => 'Napster',
+                    'name'        => 'Napster'
+                },
+                '08',
+                {
+                    'description' => 'Slacker Personal Radio',
+                    'name'        => [ 'Slacker_Personal_Radio', 'Slacker' ]
+                },
+                '09',
+                {
+                    'description' => 'Mediafly',
+                    'name'        => 'Mediafly'
+                },
+                '0A',
+                {
+                    'description' => 'Spotify',
+                    'name'        => 'Spotify'
+                },
+                '0B',
+                {
+                    'description' => 'AUPEO! PERSONAL RADIO',
+                    'name'        => [ 'AUPEO!_PERSONAL_RADIO', 'AUPEO!' ]
+                },
+                '0C',
+                {
+                    'description' => 'radiko.jp',
+                    'name'        => [ 'radiko.jp', 'radiko' ]
+                },
+                '0D',
+                {
+                    'description' => 'e-onkyo music',
+                    'name'        => [ 'e-onkyo_music', 'e-onkyo' ]
+                },
+                '0E',
+                {
+                    'description' => 'TuneIn',
+                    'name'        => 'TuneIn'
+                },
+                '0F',
+                {
+                    'description' => 'MP3tunes',
+                    'name'        => 'MP3tunes'
+                },
+                '10',
+                {
+                    'description' => 'simfy',
+                    'name'        => 'simfy'
+                },
+                '11',
+                {
+                    'description' => 'Home Media',
+                    'name'        => 'Home_Media'
+                },
             }
         },
         'NKY',
@@ -4718,6 +5080,32 @@ my $ONKYO_cmddb = {
                 { 'description' => 'I<<', 'name' => 'skip-r' },
                 'REC',
                 { 'description' => 'REC', 'name' => 'rec' }
+            }
+        },
+        'CEC' => {
+            'description' => 'HDMI CEC',
+            'name'        => 'hdmi-cec',
+            'values'      => {
+                '00',
+                {
+                    'description' => 'sets off',
+                    'name'        => 'off'
+                },
+                '01',
+                {
+                    'description' => 'sets on',
+                    'name'        => 'on'
+                },
+                'UP',
+                {
+                    'description' => 'sets HDMI CEC Wrap-Around Up',
+                    'name'        => 'up'
+                },
+                'QSTN',
+                {
+                    'description' => 'gets HDMI CEC',
+                    'name'        => 'query'
+                },
             }
         },
         'CEQ',
@@ -5371,7 +5759,7 @@ my $ONKYO_cmddb = {
         'UTN',
         {
             'description' => 'Tuning Command {Universal Port Dock Only}',
-            'name'        => 'tuning',
+            'name'        => 'tunerFrequency',
             'values'      => {
                 'nnnnn',
                 {
@@ -5641,9 +6029,14 @@ my $ONKYO_cmddb = {
                     'name' => 'up'
                 }
             }
+        },
+        'NRI',
+        {
+            'description' => 'Get device info in XML format',
+            'name'        => 'net-receiver-information',
         }
     },
-    'zone2' => {
+    '2' => {
         'ZPW',
         {
             'description' => 'Zone2 Power Command',
@@ -5959,38 +6352,10 @@ my $ONKYO_cmddb = {
                 }
             }
         },
-        'TUN',
-        {
-            'description' => 'Tuning Command',
-            'name'        => 'tuning',
-            'values'      => {
-                'nnnnn',
-                {
-                    'description' =>
-'sets Directly Tuning Frequency {FM nnn.nn MHz / AM nnnnn kHz / XM nnnnn ch}',
-                    'name' => 'None'
-                },
-                'UP',
-                {
-                    'description' => 'sets Tuning Frequency Wrap-Around Up',
-                    'name'        => 'up'
-                },
-                'DOWN',
-                {
-                    'description' => 'sets Tuning Frequency Wrap-Around Down',
-                    'name'        => 'down'
-                },
-                'QSTN',
-                {
-                    'description' => 'gets The Tuning Frequency',
-                    'name'        => 'query'
-                }
-            }
-        },
         'TUZ',
         {
             'description' => 'Tuning Command',
-            'name'        => 'tuning',
+            'name'        => 'tunerFrequency',
             'values'      => {
                 'nnnnn',
                 {
@@ -6070,40 +6435,6 @@ my $ONKYO_cmddb = {
                 }
             }
         },
-        'PRS',
-        {
-            'description' => 'Preset Command',
-            'name'        => 'preset',
-            'values'      => {
-                '{1,40}',
-                {
-                    'description' =>
-                      'sets Preset No. 1 - 40 { In hexadecimal representation}',
-                    'name' => 'no-1-40'
-                },
-                '{1,30}',
-                {
-                    'description' =>
-                      'sets Preset No. 1 - 30 { In hexadecimal representation}',
-                    'name' => 'no-1-30'
-                },
-                'UP',
-                {
-                    'description' => 'sets Preset No. Wrap-Around Up',
-                    'name'        => 'up'
-                },
-                'DOWN',
-                {
-                    'description' => 'sets Preset No. Wrap-Around Down',
-                    'name'        => 'down'
-                },
-                'QSTN',
-                {
-                    'description' => 'gets The Preset No.',
-                    'name'        => 'query'
-                }
-            }
-        },
         'PRZ',
         {
             'description' => 'Preset Command',
@@ -6142,7 +6473,7 @@ my $ONKYO_cmddb = {
         {
             'description' =>
               'Net-Tune/Network Operation Command{Net-Tune Model Only}',
-            'name'   => 'net-tune-network',
+            'name'   => 'net-usb',
             'values' => {
                 'PLAYz',
                 {
@@ -6172,7 +6503,7 @@ my $ONKYO_cmddb = {
         {
             'description' =>
               'Net-Tune/Network Operation Command{Network Model Only}',
-            'name'   => 'net-tune-network',
+            'name'   => 'net-usb',
             'values' => {
                 'PLAY',
                 {
@@ -6373,7 +6704,7 @@ my $ONKYO_cmddb = {
             }
         }
     },
-    'zone3' => {
+    '3' => {
         'PW3',
         {
             'description' => 'Zone3 Power Command',
@@ -6684,38 +7015,10 @@ my $ONKYO_cmddb = {
                 }
             }
         },
-        'TUN',
-        {
-            'description' => 'Tuning Command',
-            'name'        => 'tuning',
-            'values'      => {
-                'nnnnn',
-                {
-                    'description' =>
-'sets Directly Tuning Frequency {FM nnn.nn MHz / AM nnnnn kHz}',
-                    'name' => 'None'
-                },
-                'UP',
-                {
-                    'description' => 'sets Tuning Frequency Wrap-Around Up',
-                    'name'        => 'up'
-                },
-                'DOWN',
-                {
-                    'description' => 'sets Tuning Frequency Wrap-Around Down',
-                    'name'        => 'down'
-                },
-                'QSTN',
-                {
-                    'description' => 'gets The Tuning Frequency',
-                    'name'        => 'query'
-                }
-            }
-        },
         'TU3',
         {
             'description' => 'Tuning Command',
-            'name'        => 'tuning',
+            'name'        => 'tunerFrequency',
             'values'      => {
                 'nnnnn',
                 {
@@ -6795,40 +7098,6 @@ my $ONKYO_cmddb = {
                 }
             }
         },
-        'PRS',
-        {
-            'description' => 'Preset Command',
-            'name'        => 'preset',
-            'values'      => {
-                '{1,40}',
-                {
-                    'description' =>
-                      'sets Preset No. 1 - 40 { In hexadecimal representation}',
-                    'name' => 'no-1-40'
-                },
-                '{1,30}',
-                {
-                    'description' =>
-                      'sets Preset No. 1 - 30 { In hexadecimal representation}',
-                    'name' => 'no-1-30'
-                },
-                'UP',
-                {
-                    'description' => 'sets Preset No. Wrap-Around Up',
-                    'name'        => 'up'
-                },
-                'DOWN',
-                {
-                    'description' => 'sets Preset No. Wrap-Around Down',
-                    'name'        => 'down'
-                },
-                'QSTN',
-                {
-                    'description' => 'gets The Preset No.',
-                    'name'        => 'query'
-                }
-            }
-        },
         'PR3',
         {
             'description' => 'Preset Command',
@@ -6867,7 +7136,7 @@ my $ONKYO_cmddb = {
         {
             'description' =>
               'Net-Tune/Network Operation Command{Net-Tune Model Only}',
-            'name'   => 'net-tune-network',
+            'name'   => 'net-usb',
             'values' => {
                 'PLAYz',
                 {
@@ -6897,7 +7166,7 @@ my $ONKYO_cmddb = {
         {
             'description' =>
               'Net-Tune/Network Operation Command{Network Model Only}',
-            'name'   => 'net-tune-network',
+            'name'   => 'net-usb',
             'values' => {
                 'PLAY',
                 {
@@ -7000,7 +7269,7 @@ my $ONKYO_cmddb = {
             }
         }
     },
-    'zone4' => {
+    '4' => {
         'PW4',
         {
             'description' => 'Zone4 Power Command',
@@ -7198,8 +7467,7 @@ my $ONKYO_cmddb = {
                 '2C',
                 {
                     'description' => 'sets USB{toggle}',
-                    'name'        => 'usb
--toggle'
+                    'name'        => 'usb-toggle'
                 },
                 '40',
                 {
@@ -7240,38 +7508,10 @@ my $ONKYO_cmddb = {
                 }
             }
         },
-        'TUN',
-        {
-            'description' => 'Tuning Command',
-            'name'        => 'tuning',
-            'values'      => {
-                'nnnnn',
-                {
-                    'description' =>
-'sets Directly Tuning Frequency {FM nnn.nn MHz / AM nnnnn kHz}',
-                    'name' => 'None'
-                },
-                'UP',
-                {
-                    'description' => 'sets Tuning Frequency Wrap-Around Up',
-                    'name'        => 'up'
-                },
-                'DOWN',
-                {
-                    'description' => 'sets Tuning Frequency Wrap-Around Down',
-                    'name'        => 'down'
-                },
-                'QSTN',
-                {
-                    'description' => 'gets The Tuning Frequency',
-                    'name'        => 'query'
-                }
-            }
-        },
         'TU4',
         {
             'description' => 'Tuning Command',
-            'name'        => 'tuning',
+            'name'        => 'tunerFrequency',
             'values'      => {
                 'nnnnn',
                 {
@@ -7351,40 +7591,6 @@ my $ONKYO_cmddb = {
                 }
             }
         },
-        'PRS',
-        {
-            'description' => 'Preset Command',
-            'name'        => 'preset',
-            'values'      => {
-                '{1,40}',
-                {
-                    'description' =>
-                      'sets Preset No. 1 - 40 { In hexadecimal representation}',
-                    'name' => 'no-1-40'
-                },
-                '{1,30}',
-                {
-                    'description' =>
-                      'sets Preset No. 1 - 30 { In hexadecimal representation}',
-                    'name' => 'no-1-30'
-                },
-                'UP',
-                {
-                    'description' => 'sets Preset No. Wrap-Around Up',
-                    'name'        => 'up'
-                },
-                'DOWN',
-                {
-                    'description' => 'sets Preset No. Wrap-Around Down',
-                    'name'        => 'down'
-                },
-                'QSTN',
-                {
-                    'description' => 'gets The Preset No.',
-                    'name'        => 'query'
-                }
-            }
-        },
         'PR4',
         {
             'description' => 'Preset Command',
@@ -7423,7 +7629,7 @@ my $ONKYO_cmddb = {
         {
             'description' =>
               'Net-Tune/Network Operation Command{Net-Tune Model Only}',
-            'name'   => 'net-tune-network',
+            'name'   => 'net-usb',
             'values' => {
                 'PLAYz',
                 {
@@ -7453,7 +7659,7 @@ my $ONKYO_cmddb = {
         {
             'description' =>
               'Net-Tune/Network Operation Command{Network Model Only}',
-            'name'   => 'net-tune-network',
+            'name'   => 'net-usb',
             'values' => {
                 'PLAY',
                 {
@@ -7675,7 +7881,9 @@ sub ONKYO_GetRemotecontrolCommand($;$) {
 sub ONKYO_GetRemotecontrolValue($$;$) {
     my ( $zone, $command, $value ) = @_;
 
-    if ( !defined($value) && defined( $ONKYO_values_hr->{$zone}{$command} ) ) {
+    if (  !defined($value)
+        && defined( $ONKYO_values_hr->{$zone}{$command} ) )
+    {
         return $ONKYO_values_hr->{$zone}{$command};
     }
     elsif ( defined( $ONKYO_values_hr->{$zone}{$command}{$value} ) ) {

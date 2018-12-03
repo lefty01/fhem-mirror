@@ -1,5 +1,7 @@
-VERS=5.7
-DATE=2015-11-15
+# $Id: Makefile 17480 2018-10-07 17:10:06Z rudolfkoenig $
+
+VERS=5.9
+DATE=2018-10-07
 
 # used for nightly build
 DATEN=$(shell date +"%Y-%m-%d")
@@ -29,7 +31,7 @@ DESTDIR=fhem-$(VERS)
 all:
 	@echo "Use 'make <target>', where <target> is"
 	@echo "    install       - to install fhem"
-	@echo "    dist          - to create a .tar.gz file"
+	@echo "    dist          - to create a .tar.gz and a .zip file"
 	@echo "    deb           - to create a .deb file"
 	@echo "    synology      - to create an spk file"
 	@echo "    fb7390        - to create an AVM Fritz!Box 7390 imagefile"
@@ -43,7 +45,8 @@ install:
 	@-$(foreach DIR,$(DEST), if [ ! -e $(DIR) ]; then mkdir -p $(DIR); fi; )
 	@echo "- fixing permissions in fhem.cfg"
 	perl contrib/commandref_join.pl 
-	@find FHEM configDB.pm docs www contrib -type f -print | xargs chmod 644
+	@find FHEM configDB.pm MAINTAINER.txt docs www contrib \
+		-type f -print | xargs chmod 644
 	@cp fhem.cfg fhem.cfg.install
 	@-if [ "$(RELATIVE_PATH)" != YES ]; then\
 		perl -pi -e 's,modpath \.,modpath $(MODDIR),' fhem.cfg.install; \
@@ -73,8 +76,8 @@ install:
 dist:
 	mkdir .f
 	cp -r fhem.pl fhem.cfg CHANGED HISTORY Makefile README.SVN\
-                demolog fhem.cfg.demo README_DEMO.txt\
-		FHEM configDB.pm contrib docs www webfrontend .f
+		MAINTAINER.txt demolog fhem.cfg.demo README_DEMO.txt\
+		FHEM configDB.pm contrib docs www .f
 	mkdir .f/log
 	touch .f/log/empty_file.txt
 	(cd .f; perl contrib/commandref_join.pl)
@@ -84,11 +87,11 @@ dist:
 	find .f -name .#\* -print | xargs rm -f
 	find .f -type f -print | grep -v Makefile | grep -v SWAP |\
 		xargs perl -pi -e 's/=VERS=/$(VERS)/g;s/=DATE=/$(DATE)/g'
-	perl -pi -e 's/my \$$release\s+=.*/my \$$release = "$(VERS)";/' .f/FHEM/98_fheminfo.pm
 	@echo "    deb-nightly   - to create a nightly .deb file from current svn"
 	rm -rf .f/www/SVGcache
 	mv .f $(DESTDIR)
 	tar cf - $(DESTDIR) | gzip -9 > $(DESTDIR).tar.gz
+	zip -r $(DESTDIR).zip $(DESTDIR)
 	rm -rf $(DESTDIR)
 
 deb:
@@ -96,6 +99,7 @@ deb:
 	rm -rf .f
 	rm -rf $(DESTDIR)
 	make ROOT=`pwd`/.f install
+	cp MAINTAINER.txt .f/opt/fhem
 	cp -r contrib/DEBIAN .f
 	rm -rf .f/$(MODDIR)/contrib/FB7*/var
 	rm -rf .f/$(MODDIR)/contrib/FB7*/*.image
@@ -105,8 +109,7 @@ deb:
 	find .f -name .#\* -print | xargs rm -f
 	find .f -type f -print | grep -v Makefile |\
 		xargs perl -pi -e 's/=VERS=/$(VERSN)/g;s/=DATE=/$(DATEN)/g'
-	perl -pi -e 's/my \$$release\s+=.*/my \$$release = "$(VERS)";/' .f/$(MODDIR)/FHEM/98_fheminfo.pm
-	wget -qO .f/$(MODDIR)/FHEM/controls_fhem.txt http://fhem.de/fhemupdate/controls_fhem.txt
+	cp controls_fhem.txt .f/$(MODDIR)/FHEM/controls_fhem.txt
 	find .f -type f | xargs chmod 644
 	find .f -type d | xargs chmod 755
 	chmod 755 `cat contrib/executables`
@@ -146,5 +149,5 @@ synology:
 	sed -ie 's/\.\/log/\/var\/log/g' fhem.cfg
 	sed -ie 's/modpath \./modpath \/var\/packages\/FHEM\/target/g' fhem.cfg
 	sed -ie 's/version=".*"/version="$(DESTDIR)"/g' contrib/Synology/INFO
-	tar -vpczf contrib/Synology/package.tgz * --exclude "contrib/Synology"
+	tar -pczf contrib/Synology/package.tgz --exclude="contrib/Synology" *
 	cd contrib/Synology && tar -vcf ../../$(DESTDIR).spk *

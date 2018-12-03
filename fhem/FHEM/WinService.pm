@@ -23,7 +23,7 @@
 #
 ################################################################
 
-# $Id$
+# $Id: WinService.pm 5819 2014-05-11 14:17:21Z rudolfkoenig $
 
 package FHEM::WinService;
 
@@ -35,7 +35,7 @@ sub new($$$);
 
 use vars qw($VERSION);
 
-$VERSION = $1 if('$Id$' =~ /,v ([\d.]+) /);
+$VERSION = $1 if('$Id: WinService.pm 5819 2014-05-11 14:17:21Z rudolfkoenig $' =~ /,v ([\d.]+) /);
 
 
 ###################################################

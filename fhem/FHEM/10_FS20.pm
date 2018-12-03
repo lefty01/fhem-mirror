@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 10_FS20.pm 14888 2017-08-13 12:07:12Z rudolfkoenig $
 package main;
 
 use strict;
@@ -128,8 +128,55 @@ FS20_Initialize($)
   $hash->{ParseFn}   = "FS20_Parse";
   $hash->{AttrList}  = "IODev follow-on-for-timer:1,0 follow-on-timer ".
                        "do_not_notify:1,0 ignore:1,0 dummy:1,0 showtime:1,0 ".
-                       "$readingFnAttributes " .
+                       "useSetExtensions:0,1 $readingFnAttributes " .
                        "model:".join(",", sort keys %models);
+}
+
+sub
+FS20_Follow($$$$)
+{
+  my ($name, $arg, $na, $val) = @_;
+
+  ###########################################
+  # Set the state of a device to off if on-for-timer is called
+  if($modules{FS20}{ldata}{$name}) {
+    CommandDelete(undef, $name . "_timer");
+    delete $modules{FS20}{ldata}{$name};
+    delete $defs{$name}->{TIMED_OnOff} if( $defs{$name} );
+  }
+
+  my $newState="";
+  my $onTime = AttrVal($name, "follow-on-timer", undef);
+
+  ####################################
+  # following timers
+  if(($arg eq "on" || $arg =~ m/dim/) && $na == 2 && $onTime) {
+    $newState = "off";
+    $val = $onTime;
+
+  } elsif($arg =~ m/(on|off).*-for-timer/ && $na == 3 &&
+     AttrVal($name, "follow-on-for-timer", undef)) {
+    $newState = ($1 eq "on" ? "off" : "on");
+
+  }
+
+  if($newState) {
+    my $to = sprintf("%02d:%02d:%02d", $val/3600, ($val%3600)/60, $val%60);
+    $modules{FS20}{ldata}{$name} = $to;
+    Log3 $name, 4, "Follow: +$to setstate $name $newState";
+    CommandDefine(undef, $name."_timer at +$to ".
+      "{readingsSingleUpdate(\$defs{'$name'},'state','$newState', 1);".
+      "delete \$defs{'$name'}->{TIMED_OnOff}; undef}");
+
+    if($defs{$name}) {
+      $defs{$name}->{TIMED_OnOff} = {
+        START=>time(),
+        START_FMT=>TimeNow(),
+        DURATION=>$val,
+        CMD=>$arg 
+      }
+    }
+  }
 }
 
 ###################################
@@ -162,9 +209,11 @@ FS20_Set($@)
     }
     $list = (join(" ", sort keys %fs20_c2b) . " dim:slider,0,6.25,100")
         if(!defined($list));
-    return SetExtensions($hash, $list, @a);
-
+    return SetExtensions($hash, $list, @a)
+        if(AttrVal($name, "useSetExtensions", 1));
+    return "Unknown argument $a[1], choose one of $list";
   }
+  SetExtensionsCancel($hash);
 
   return "Bad time spec" if($na == 3 && $a[2] !~ m/^\d*\.?\d+$/);
 
@@ -196,42 +245,12 @@ FS20_Set($@)
 
   IOWrite($hash, "04", "010101" . $hash->{XMIT} . $hash->{BTN} . $c);
 
-  ###########################################
-  # Set the state of a device to off if on-for-timer is called
-  if($modules{FS20}{ldata}{$name}) {
-    CommandDelete(undef, $name . "_timer");
-    delete $modules{FS20}{ldata}{$name};
-  }
-
-  my $newState="";
-  my $onTime = AttrVal($name, "follow-on-timer", undef);
-
-  ####################################
-  # following timers
-  if(($a[1] eq "on" || $a[1] =~ m/dim/) && $na == 2 && $onTime) {
-    $newState = "off";
-    $val = $onTime;
-
-  } elsif($a[1] =~ m/(on|off).*-for-timer/ && $na == 3 &&
-     AttrVal($name, "follow-on-for-timer", undef)) {
-    $newState = ($1 eq "on" ? "off" : "on");
-
-  }
-
-  if($newState) {
-    my $to = sprintf("%02d:%02d:%02d", $val/3600, ($val%3600)/60, $val%60);
-    $modules{FS20}{ldata}{$name} = $to;
-    Log3 $name, 4, "Follow: +$to setstate $name $newState";
-    CommandDefine(undef, $name."_timer at +$to ".
-      "{readingsSingleUpdate(\$defs{'$name'},'state','$newState', 1); undef}");
-  }
-
   ##########################
   # Look for all devices with the same code, and set state, timestamp
   my $code = "$hash->{XMIT} $hash->{BTN}";
-  my $tn = TimeNow();
   my $defptr = $modules{FS20}{defptr}{$code};
   foreach my $n (keys %{ $defptr }) {
+    FS20_Follow($defptr->{$n}->{NAME}, $a[1], $na, $val);
     readingsSingleUpdate($defptr->{$n}, "state", $v, 1);
   }
   return $ret;
@@ -363,6 +382,7 @@ FS20_Parse($$)
       if($modules{FS20}{ldata}{$n}) {
         CommandDelete(undef, $n . "_timer");
         delete $modules{FS20}{ldata}{$n};
+        delete $lh->{TIMED_OnOff};
       }
 
       my $newState = "";
@@ -375,12 +395,20 @@ FS20_Parse($$)
         $newState = "off";
 
       }
+
       if($newState) {
         my $to = sprintf("%02d:%02d:%02d", $dur/3600, ($dur%3600)/60, $dur%60);
         Log3 $n, 4, "Follow: +$to setstate $n $newState";
         CommandDefine(undef, $n."_timer at +$to ".
-          "{readingsSingleUpdate(\$defs{'$n'},'state','$newState', 1); undef}");
+          "{readingsSingleUpdate(\$defs{'$n'},'state','$newState', 1); ".
+          "delete \$defs{'$n'}->{TIMED_OnOff}; undef}");
         $modules{FS20}{ldata}{$n} = $to;
+        $lh->{TIMED_OnOff} = {
+          START=>time(),
+          START_FMT=>TimeNow(),
+          DURATION=>$dur,
+          CMD=>$v
+        };
       }
 
       push(@list, $n);
@@ -429,6 +457,8 @@ four2hex($$)
 1;
 
 =pod
+=item summary    devices communicating via the ELV FS20 protocol
+=item summary_DE Anbindung von FS20 Ger&auml;ten
 =begin html
 
 <a name="FS20"></a>
@@ -636,6 +666,11 @@ four2hex($$)
     <li><a href="#do_not_notify">do_not_notify</a></li>
     <li><a href="#showtime">showtime</a></li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
+
+    <li>useSetExtensions<br>
+        Setting it to 0 you can disable using the Setextensions. Deffault is 1.
+        </li><br>
+
 
   </ul>
   <br>
@@ -879,6 +914,11 @@ four2hex($$)
     <li><a href="#do_not_notify">do_not_notify</a></li>
     <li><a href="#showtime">showtime</a></li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
+
+    <li>useSetExtensions<br>
+      Falls es auf 0 gesetzt wird, werden die SetExtensions Befehle nicht
+      angeboten. Die Voreinstellung ist 1.
+      </li><br>
 
   </ul>
   <br>

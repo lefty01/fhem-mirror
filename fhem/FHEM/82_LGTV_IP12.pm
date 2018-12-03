@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 82_LGTV_IP12.pm 15140 2017-09-26 09:20:09Z markusbloch $
 ##############################################################################
 #
 #     82_LGTV_IP12.pm
@@ -109,21 +109,23 @@ my %LGTV_IP12_rcCodes = (
 	"myApps"=>417,
 );
 
+#################################
 sub
 LGTV_IP12_Initialize($)
 {
     my ($hash) = @_;
-    
+
     $hash->{DefFn}     = "LGTV_IP12_Define";
     $hash->{DeleteFn}  = "LGTV_IP12_Delete";
+    $hash->{UndefFn}   = "LGTV_IP12_Undef";
     $hash->{SetFn}     = "LGTV_IP12_Set";
     $hash->{GetFn}     = "LGTV_IP12_Get";
     $hash->{AttrFn}    = "LGTV_IP12_Attr";
     $hash->{NotifyFn}  = "LGTV_IP12_Notify";
-    $hash->{NOTIFYDEV} = "global";
-    $hash->{AttrList}  = "do_not_notify:0,1 pairingcode request-timeout:1,2,3,4,5 disable:0,1 ".$readingFnAttributes;
+    $hash->{AttrList}  = "do_not_notify:0,1 pairingcode request-timeout:1,2,3,4,5 disable:0,1 disabledForIntervals ".$readingFnAttributes;
 }
 
+#################################
 sub
 LGTV_IP12_Define($$)
 {
@@ -135,10 +137,10 @@ LGTV_IP12_Define($$)
         return "LGTV_IP12: not enough arguments. Usage: " .
         "define <name> LGTV_IP12 <HOST>";
     }
-    
+
     $hash->{HOST} = $args[2];
     $hash->{PORT} = "8080";
-    
+
     # if an update interval was given which is greater than zero, use it.
     if(defined($args[3]) and $args[3] > 0)
     {
@@ -148,7 +150,7 @@ LGTV_IP12_Define($$)
     {
 		$hash->{helper}{OFF_INTERVAL} = 30;
     }
-      
+
     if(defined($args[4]) and $args[4] > 0)
     {
         $hash->{ON_INTERVAL} = $args[4];
@@ -159,39 +161,65 @@ LGTV_IP12_Define($$)
     {
         $hash->{INTERVAL} = $hash->{helper}{OFF_INTERVAL};
 		$hash->{helper}{ON_INTERVAL} = $hash->{helper}{OFF_INTERVAL};
-    } 
-    
-    $hash->{helper}{DISABLED} = 0 unless(exists($hash->{helper}{DISABLED}));
-    
+    }
+
     $hash->{STATE} = 'defined';
-    
+    $hash->{NOTIFYDEV} = "global";
+
     return undef;
 }
 
+#################################
 sub
 LGTV_IP12_Get($@)
 {
- # not implemented yet
- 
+    my ($hash, @a) = @_;
+    my $what;
+    my $return;
+
+    return "argument is missing" if(int(@a) != 2);
+
+    $what = $a[1];
+
+    return ReadingsVal($hash->{NAME}, $what, "") if(defined(ReadingsVal($hash->{NAME}, $what, undef)));
+
+    $return = "unknown argument $what, choose one of";
+
+    foreach my $reading (keys %{$hash->{READINGS}})
+    {
+        $return .= " $reading:noArg";
+    }
+
+    return $return;
+
 }
+
+#################################
 sub
 LGTV_IP12_Notify($$)
 {
     my ($hash,$dev) = @_;
     my $name = $hash->{NAME};
-    
-    return if($dev->{NAME} ne "global");
-    return if(!grep(m/^INITIALIZED|REREADCFG$/, @{$dev->{CHANGED}}));
-  
-    if(defined(AttrVal($name, "pairingcode", undef)) and AttrVal($name, "pairingcode", undef) =~/^\d{6}$/)
+
+    return unless(exists($dev->{NAME}) and $dev->{NAME} eq "global");
+
+    if(grep(m/^INITIALIZED|REREADCFG$/, @{$dev->{CHANGED}}))
     {
-        Log3 $name, 3, "LGTV_IP12 ($name) - try pairing with pairingcode ".AttrVal($name, "pairingcode", undef);
-        LGTV_IP12_Pair($hash, AttrVal($name, "pairingcode", undef));
+        if(defined(AttrVal($name, "pairingcode", undef)) and AttrVal($name, "pairingcode", undef) =~/^\d{6}$/)
+        {
+            Log3 $name, 3, "LGTV_IP12 ($name) - try pairing with pairingcode ".AttrVal($name, "pairingcode", undef);
+            LGTV_IP12_Pair($hash, AttrVal($name, "pairingcode", undef));
+        }
+
+        LGTV_IP12_ResetTimer($hash, 0);
     }
-    
-    LGTV_IP12_ResetTimer($hash, 0);
+    elsif(grep(m/^(?:ATTR $name disable.*|DELETEATTR $name disable.*)$/, @{$dev->{CHANGED}}))
+    {
+        LGTV_IP12_ResetTimer($hash, 0);
+    }
 }
 
+#################################
 sub
 LGTV_IP12_Set($@)
 {
@@ -221,21 +249,21 @@ LGTV_IP12_Set($@)
     {
         unless(exists($hash->{helper}{CHANNEL_LIST}))
         {
-            LGTV_IP12_RetrieveChannelList($hash);
+            LGTV_IP12_ResetTimer($hash, 0);
         }
-       
+
         my $new_channel;
- 
+
         if($what eq "channelUp" or $what eq "channelDown")
         {
             my $current_channel = ReadingsVal($name, "channel", undef);
-            
+
             if(defined($current_channel) and $current_channel =~ /^\d+$/ and $current_channel > 0)
             {
                 my $found = 0;
-                                
-                $new_channel = (grep { $found++ < 1; } grep {  ($what eq "channelUp"  ? $_ > $current_channel : $_ < $current_channel ) } sort { ($what eq "channelUp" ? $a <=> $b : $b <=> $a) } grep { defined($_) and /^\d+$/ } keys %{$hash->{helper}{CHANNEL_LIST}})[0];                
-        
+
+                $new_channel = (grep { $found++ < 1; } grep {  ($what eq "channelUp"  ? $_ > $current_channel : $_ < $current_channel ) } sort { ($what eq "channelUp" ? $a <=> $b : $b <=> $a) } grep { defined($_) and /^\d+$/ } keys %{$hash->{helper}{CHANNEL_LIST}})[0];
+
             }
         }
         elsif($what eq "channel" and exists($hash->{helper}{CHANNEL_LIST}) and exists($hash->{helper}{CHANNEL_LIST}{$arg}))
@@ -246,18 +274,18 @@ LGTV_IP12_Set($@)
         {
             return $usage;
         }
-        
+
         if(defined($new_channel))
         {
-            Log3 $hash->{NAME}, 5 , "LGTV_IP12 (".$hash->{NAME}.") - set new channel: $new_channel"; 
-                    
+            Log3 $hash->{NAME}, 5 , "LGTV_IP12 (".$hash->{NAME}.") - set new channel: $new_channel";
+
             my $xml = "<api type=\"command\"><name>HandleChannelChange</name>";
             $xml .= "<major>".$hash->{helper}{CHANNEL_LIST}{$new_channel}{major}."</major>";
             $xml .= "<minor>".$hash->{helper}{CHANNEL_LIST}{$new_channel}{minor}."</minor>";
             $xml .= "<sourceIndex>".$hash->{helper}{CHANNEL_LIST}{$new_channel}{sourceIndex}."</sourceIndex>";
-            $xml .= "<physicalNum>".$hash->{helper}{CHANNEL_LIST}{$new_channel}{physicalNum}."</physicalNum>";     
+            $xml .= "<physicalNum>".$hash->{helper}{CHANNEL_LIST}{$new_channel}{physicalNum}."</physicalNum>";
             $xml .= "</api>";
-                
+
             LGTV_IP12_HttpGet($hash, "/udap/api/command", "channel", $new_channel, $xml);
         }
     }
@@ -303,55 +331,63 @@ LGTV_IP12_Attr(@)
 
     if($a[0] eq "set" && $a[2] eq "disable")
     {
-        if($a[3] eq "0")
+        if($a[3] eq "1")
         {
-             $hash->{helper}{DISABLED} = 0;
-        }
-        elsif($a[3] eq "1")
-        {
-            $hash->{helper}{DISABLED} = 1;
             readingsSingleUpdate($hash, "state", "disabled",1);
         }
         LGTV_IP12_ResetTimer($hash, 0);
     }
     elsif($a[0] eq "del" && $a[2] eq "disable")
     {
-        $hash->{helper}{DISABLED} = 0;
         LGTV_IP12_ResetTimer($hash, 0);
-    } 
+    }
 
     return undef;
 }
 
-
+#################################
 sub
 LGTV_IP12_Delete($$)
 {
     my ($hash, $name) = @_;
-    # unpairing 
+    # unpairing
     LGTV_IP12_HttpGet($hash, "/udap/api/pairing", "removePairing", undef, "<api type=\"pairing\"><name>byebye</name><port>8080</port></api>") if(exists($hash->{helper}{PAIRED}) and $hash->{helper}{PAIRED} == 1);
 }
 
+#################################
+sub
+LGTV_IP12_Undef($$)
+{
+    my ($hash, $name) = @_;
+
+    RemoveInternalTimer($hash);
+}
+
+
+############################################################################################################
+#
+#   Begin of helper functions
+#
+############################################################################################################
 
 
 #################################
-
 # start a status request by starting the neccessary requests
-sub 
+sub
 LGTV_IP12_GetStatus($)
 {
     my ($hash) = @_;
 
     unless(exists($hash->{helper}{CHANNEL_LIST}) and ReadingsVal($hash->{NAME}, "state", "off") eq "on")
     {
-        LGTV_IP12_RetrieveChannelList($hash);
+        LGTV_IP12_HttpGet($hash, "/udap/api/data?target=channel_list", "statusRequest", "channelList", undef);
     }
-    
+
     unless(exists($hash->{helper}{APP_LIST}) and ReadingsVal($hash->{NAME}, "state", "off") eq "on")
     {
         LGTV_IP12_HttpGet($hash, "/udap/api/data?target=applist_get&type=1&index=0&number=0", "statusRequest", "appList", undef);
     }
-    
+
     LGTV_IP12_HttpGet($hash, "/udap/api/data?target=cur_channel", "statusRequest", "currentChannel");
 
     LGTV_IP12_HttpGet($hash, "/udap/api/data?target=volume_info", "statusRequest", "volumeInfo");
@@ -361,20 +397,22 @@ LGTV_IP12_GetStatus($)
     LGTV_IP12_ResetTimer($hash);
 }
 
+#################################
+# parses the HTTP response from the TV
 sub
 LGTV_IP12_ParseHttpResponse($$$)
 {
 
-    my ( $param, $err, $data ) = @_;    
-    
+    my ( $param, $err, $data ) = @_;
+
     my $hash = $param->{hash};
     my $name = $hash->{NAME};
     my $cmd = $param->{cmd};
     my $arg = $param->{arg};
-    
+
     $err = "" unless(defined($err));
     $data = "" unless(defined($data));
-    
+
     # we successfully received a HTTP status code in the response
     if($data eq "" and exists($param->{code}))
     {
@@ -382,7 +420,7 @@ LGTV_IP12_ParseHttpResponse($$$)
         if($param->{code} eq 401)
         {
             Log3 $name, 3, "LGTV_IP12 ($name) - failed to execute \"$cmd".(defined($arg) ? " ".(split("\\|", $arg))[0] : "")."\": Device is not paired";
-          
+
             if(exists($hash->{helper}{PAIRED}))
             {
                 if($hash->{helper}{PAIRED} == 1)
@@ -390,7 +428,7 @@ LGTV_IP12_ParseHttpResponse($$$)
                     $hash->{helper}{PAIRED} = 0;
                 }
             }
-            
+
             # If a pairing code is set as attribute, try one repair (when $hash->{helper}{PAIRED} == -1)
             if(defined(AttrVal($name, "pairingcode", undef)) and AttrVal($name, "pairingcode", undef) =~/^\d{6}$/)
             {
@@ -399,75 +437,77 @@ LGTV_IP12_ParseHttpResponse($$$)
                 return;
             }
         }
-        
+
         if($cmd eq "channel" and $param->{code} == 200)
         {
             readingsSingleUpdate($hash, $cmd, $arg, 1);
             LGTV_IP12_ResetTimer($hash, 2);
+            return;
         }
     }
-    
-    
+
+    readingsBeginUpdate($hash);
+
     # if an error was occured, raise a log entry
     if($err ne "")
     {
         Log3 $name, 5, "LGTV_IP12 ($name) - could not execute command \"$cmd".(defined($arg) ? " ".(split("\\|", $arg))[0] : "")."\" - $err";
-        
-        readingsSingleUpdate($hash, "state", "off", 1);
+
+        readingsBulkUpdate($hash, "state", "off");
+        readingsBulkUpdate($hash, "power", "off");
     }
-    
+
     # if the response contains data, examine it.
     if($data ne "")
     {
         Log3 $name, 5, "LGTV_IP12 ($name) - got response for \"$cmd".(defined($arg) ? " ".(split("\\|", $arg))[0] : "")."\": $data";
 
-        readingsSingleUpdate($hash, "state", "on", 1);
-        
+        readingsBulkUpdate($hash, "state", "on");
+        readingsBulkUpdate($hash, "power", "on");
+
         if($cmd eq "statusRequest")
         {
-            readingsBeginUpdate($hash);
-            
             if($arg eq "volumeInfo")
             {
                 if($data =~ /<level>(.+?)<\/level>/)
                 {
                     readingsBulkUpdate($hash, "volume", $1);
                 }
-                
+
                 if($data =~ /<mute>(.+?)<\/mute>/)
                 {
-                    readingsBulkUpdate($hash, "mute", $1);
+                    readingsBulkUpdate($hash, "mute", ($1 eq "true" ? "on" : "off"));
                 }
             }
-            
+
             if($arg eq "currentChannel")
             {
                 if($data =~ /<inputSourceName>(.+?)<\/inputSourceName>/)
                 {
                     readingsBulkUpdate($hash, "input", LGTV_IP12_html2txt($1));
                 }
-                                
+
                 if($data =~ /<labelName>(.+?)<\/labelName>/)
                 {
                     readingsBulkUpdate($hash, "inputLabel", LGTV_IP12_html2txt($1));
                 }
-                
+
                 if($data =~ /<chname>(.+?)<\/chname>/)
                 {
                     readingsBulkUpdate($hash, "channelName", LGTV_IP12_html2txt($1));
                 }
-                
+
                  if($data =~ /<major>(.+?)<\/major>/)
                 {
                     readingsBulkUpdate($hash, "channel", $1);
                 }
-                
+
                 if($data =~ /<progName>(.+?)<\/progName>/)
                 {
                     readingsBulkUpdate($hash, "currentProgram", LGTV_IP12_html2txt($1));
                 }
             }
-            
+
             if($arg eq "is3d")
             {
                 if($data =~ /<is3D>(.+?)<\/is3D>/)
@@ -475,7 +515,7 @@ LGTV_IP12_ParseHttpResponse($$$)
                     readingsBulkUpdate($hash, "3D", $1);
                 }
             }
-            
+
             if($arg eq "appList")
             {
                 while($data =~ /<data><auid>([0-9a-f]+)<\/auid><name>\s*([^<]+?)\s*<\/name><type>(\d+)<\/type><cpid>([\w\d_-]*)<\/cpid>.*?<\/data>/gci)
@@ -490,25 +530,58 @@ LGTV_IP12_ParseHttpResponse($$$)
                     $hash->{helper}{APP_LIST}{$index}{cpid} = $fields[3];
                 }
             }
-            
-            readingsEndUpdate($hash, 1);
-            
-            LGTV_IP12_RetrieveChannelList($hash) if(not exists($hash->{helper}{CHANNEL_LIST}));
+
+            if($arg eq "channelList")
+            {
+                delete($hash->{helper}{CHANNEL_LIST}) if(exists($hash->{helper}{CHANNEL_LIST}));
+
+                while($data =~ /<data>(.+?)<\/data>/gc)
+                {
+                    my $channel = $1;
+                    if($channel =~ /<major>(\d+?)<\/major>/)
+                    {
+                        my $channel_major = $1;
+                        $hash->{helper}{CHANNEL_LIST}{$channel_major}{major} = $channel_major;
+
+                        if($channel =~ /<minor>(\d+?)<\/minor>/)
+                        {
+                            $hash->{helper}{CHANNEL_LIST}{$channel_major}{minor} = $1;
+                        }
+
+                        if($channel =~ /<sourceIndex>(\d+?)<\/sourceIndex>/)
+                        {
+                            $hash->{helper}{CHANNEL_LIST}{$channel_major}{sourceIndex} = $1;
+                        }
+
+                        if($channel =~ /<physicalNum>(\d+?)<\/physicalNum>/)
+                        {
+                            $hash->{helper}{CHANNEL_LIST}{$channel_major}{physicalNum} = $1;
+                        }
+
+                        if($channel =~ /<chname>(.+?)<\/chname>/)
+                        {
+                            Log3 $name, 5 , "LGTV_IP12 ($name) - adding channel ".LGTV_IP12_html2txt($1);
+                            $hash->{helper}{CHANNEL_LIST}{$channel_major}{chname} = LGTV_IP12_html2txt($1);
+                        }
+                    }
+                }
+            }
         }
     }
+
+    readingsEndUpdate($hash, 1);
 }
 
+#################################
 # executes a http request with or without data and starts the HTTP request non-blocking to avoid timing problems for other modules (e.g. HomeMatic)
 sub
 LGTV_IP12_HttpGet($$$$;$)
 {
-my ($hash, $path, $cmd, $arg, $data) = @_;
-
-  
+    my ($hash, $path, $cmd, $arg, $data) = @_;
 
     if(defined($data))
     {
-        Log3 $hash->{NAME}, 5 , "LGTV_IP12 (".$hash->{NAME}.") - sending POST request for command \"$cmd".(defined($arg) ? " ".(split("\\|", $arg))[0] : "")."\" to url $path: $data"; 
+        Log3 $hash->{NAME}, 5 , "LGTV_IP12 (".$hash->{NAME}.") - sending POST request for command \"$cmd".(defined($arg) ? " ".(split("\\|", $arg))[0] : "")."\" to url $path: $data";
         # start a HTTP POST on the given url with content data
         HttpUtils_NonblockingGet({
                                 url        => "http://".$hash->{HOST}.":8080".$path,
@@ -526,8 +599,8 @@ my ($hash, $path, $cmd, $arg, $data) = @_;
     }
     else
     {
-        Log3 $hash->{NAME}, 5 , "LGTV_IP12 (".$hash->{NAME}.") - sending GET request for command \"$cmd".(defined($arg) ? " ".(split("\\|", $arg))[0] : "")."\" to url $path"; 
-    
+        Log3 $hash->{NAME}, 5 , "LGTV_IP12 (".$hash->{NAME}.") - sending GET request for command \"$cmd".(defined($arg) ? " ".(split("\\|", $arg))[0] : "")."\" to url $path";
+
         # start a HTTP GET on the given url
         HttpUtils_NonblockingGet({
                                 url        => "http://".$hash->{HOST}.":8080".$path,
@@ -544,78 +617,26 @@ my ($hash, $path, $cmd, $arg, $data) = @_;
     }
 }
 
+#################################
 # sends the pairing request.
 sub
 LGTV_IP12_Pair($$)
 {
     my ($hash, $code) = @_;
-    
+
     LGTV_IP12_HttpGet($hash, "/udap/api/pairing", "pairing", $code, "<api type=\"pairing\"><name>hello</name><value>$code</value><port>8080</port></api>");
-    
 }
 
-sub
-LGTV_IP12_RetrieveChannelList($)
-{
-    my ($hash) = @_;
-    my $name = $hash->{NAME};
-    
-    Log3 $name, 4 , "LGTV_IP12 ($name) - requesting channel list";
-    
-    my ($err, $channel_list) = HttpUtils_BlockingGet({
-                                url        => "http://".$hash->{HOST}.":8080/udap/api/data?target=channel_list",
-                                timeout    => AttrVal($hash->{NAME}, "request-timeout", 4),
-                                noshutdown => 1,
-                                header     => "User-Agent: Linux/2.6.18 UDAP/2.0 CentOS/5.8",
-                                loglevel   => ($hash->{helper}{AVAILABLE} ? undef : 5),
-                                httpversion => "1.1",
-                            });
-                            
-    Log3 $name, 3 , "LGTV_IP12 ($name) - error while retrieving channel list: $err" if($err ne "" and $hash->{helper}{AVAILABLE});
-    
-    return if(not defined($channel_list) or $channel_list eq "");
-    
-    delete($hash->{helper}{CHANNEL_LIST}) if(exists($hash->{helper}{CHANNEL_LIST}));
-    
-    while($channel_list =~ /<data>(.+?)<\/data>/gc)
-    {
-        my $channel = $1;
-        if($channel =~ /<major>(\d+?)<\/major>/)
-        {
-            my $channel_major = $1;
-            $hash->{helper}{CHANNEL_LIST}{$channel_major}{major} = $channel_major;
-            
-            if($channel =~ /<minor>(\d+?)<\/minor>/)
-            {
-                $hash->{helper}{CHANNEL_LIST}{$channel_major}{minor} = $1;
-            }
-            
-            if($channel =~ /<sourceIndex>(\d+?)<\/sourceIndex>/)
-            {
-                $hash->{helper}{CHANNEL_LIST}{$channel_major}{sourceIndex} = $1;
-            }
-            
-            if($channel =~ /<physicalNum>(\d+?)<\/physicalNum>/)
-            {
-                $hash->{helper}{CHANNEL_LIST}{$channel_major}{physicalNum} = $1;
-            }
-            
-            if($channel =~ /<chname>(.+?)<\/chname>/)
-            {
-                Log3 $name, 5 , "LGTV_IP12 ($name) - adding channel ".LGTV_IP12_html2txt($1);
-                $hash->{helper}{CHANNEL_LIST}{$channel_major}{chname} = LGTV_IP12_html2txt($1);
-            }
-        }
-    }
-}
 
+#################################
+# resets the status update timer according to the current state
 sub LGTV_IP12_ResetTimer($;$)
 {
     my ($hash, $interval) = @_;
-    
+
     RemoveInternalTimer($hash);
-    
-    if($hash->{helper}{DISABLED} == 0)
+
+    unless(IsDisabled($hash->{NAME}))
     {
         if(defined($interval))
         {
@@ -630,6 +651,8 @@ sub LGTV_IP12_ResetTimer($;$)
             InternalTimer(gettimeofday()+$hash->{helper}{OFF_INTERVAL}, "LGTV_IP12_GetStatus", $hash, 0);
         }
     }
+
+    return undef;
 }
 #############################
 # convert all HTML entities into UTF-8 aquivalents
@@ -648,7 +671,7 @@ sub LGTV_IP12_html2txt($)
     $string =~ s/(\xfc|&uuml;)/ü/g;
     $string =~ s/(\xdc|&Uuml;)/Ü/g;
     $string =~ s/(\xdf|&szlig;)/ß/g;
-    
+
     $string =~ s/<.+?>//g;
     $string =~ s/(^\s+|\s+$)//g;
 
@@ -659,6 +682,8 @@ sub LGTV_IP12_html2txt($)
 
 =pod
 =item device
+=item summary    controls LG SmartTV's build between 2012-2014 via LAN connection
+=item summary_DE steuert LG SmartTV's via LAN, welche zwischen 2012-2014 hergestellt wurden
 =begin html
 
 <a name="LGTV_IP12"></a>
@@ -678,31 +703,31 @@ sub LGTV_IP12_html2txt($)
     define &lt;name&gt; LGTV_IP12 &lt;ip-address&gt; [&lt;off_status_interval&gt;] [&lt;on_status_interval&gt;]
     </code>
     <br><br>
-    
+
     Defining a LGTV_IP12 device will schedule an internal task (interval can be set
     with optional parameter &lt;status_interval&gt; in seconds, if not set, the value is 30
     seconds), which periodically reads the status of the TV (power state, current channel, input, ...)
     and triggers notify/FileLog commands.
     <br><br>
-    Different status update intervals depending on the power state can be given also. 
-    If two intervals are given to the define statement, the first interval statement represents the status update 
-    interval in seconds in case the device is off, absent or any other non-normal state. The second 
+    Different status update intervals depending on the power state can be given also.
+    If two intervals are given to the define statement, the first interval statement represents the status update
+    interval in seconds in case the device is off. The second
     interval statement is used when the device is on.
-   
+
     Example:<br><br>
     <ul><code>
        define TV LGTV_IP12 192.168.0.10
        <br><br>
        # With custom status interval of 60 seconds<br>
-       define TV LGTV_IP12 192.168.0.10 60 
+       define TV LGTV_IP12 192.168.0.10 60
        <br><br>
        # With custom "off"-interval of 60 seconds and "on"-interval of 10 seconds<br>
        define TV LGTV_IP12 192.168.0.10 60 10
     </code></ul>
-   
+
   </ul>
   <br><br>
-  
+
   <a name="LGTV_IP12_set"></a>
   <b>Set </b>
   <ul>
@@ -725,10 +750,11 @@ sub LGTV_IP12_html2txt($)
   <br><br>
   <a name="LGTV_IP12get"></a>
   <b>Get</b>
-  <ul>
+ <ul>
     <code>get &lt;name&gt; &lt;reading&gt;</code>
     <br><br>
     Currently, the get command only returns the reading values. For a specific list of possible values, see section "Generated Readings/Events".
+    <br><br>
   </ul>
   <br><br>
   <a name="LGTV_IP12_attr"></a>
@@ -736,12 +762,19 @@ sub LGTV_IP12_html2txt($)
   <ul>
     <li><a href="#do_not_notify">do_not_notify</a></li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li><br>
-    <li><a name="disable">disable</a></li>
-    Optional attribute to disable the internal cyclic status update of the player. Manual status updates via statusRequest command is still possible.
+    <li><a name="LGTV_IP12_disable">disable</a></li>
+    Optional attribute to disable the internal cyclic status update of the TV. Manual status updates via statusRequest command is still possible.
     <br><br>
     Possible values: 0 => perform cyclic status update, 1 => don't perform cyclic status updates.<br><br>
+    <li><a name="LGTV_IP12_disabledForIntervals">disabledForIntervals</a> HH:MM-HH:MM HH:MM-HH-MM...</li>
+    Optional attribute to disable the internal cyclic status update of the TV during a specific time interval. The attribute contains a space separated list of HH:MM tupels.
+    If the current time is between any of these time specifications, the cyclic update will be disabled.
+    Instead of HH:MM you can also specify HH or HH:MM:SS.
+    <br><br>To specify an interval spawning midnight, you have to specify two intervals, e.g.:
+    <pre>23:00-24:00 00:00-01:00</pre>
+    Default Value is <i>empty</i> (no intervals defined, cyclic update is always active)<br><br>
     <li><a name="LGTV_IP12_request-timeout">request-timeout</a></li>
-    Optional attribute change the response timeout in seconds for all queries to the player.
+    Optional attribute change the response timeout in seconds for all queries to the TV.
     <br><br>
     Possible values: 1-5 seconds. Default value is 4 seconds.<br><br>
     <li><a name="LGTV_IP12_pairingcode">pairingcode</a></li>
@@ -757,7 +790,7 @@ sub LGTV_IP12_html2txt($)
   <li><b>input</b> - The current input source (e.g. Antenna, Sattelite, HDMI1, ...)</li>
   <li><b>inputLabel</b> - The user defined name of the current input source</li>
   <li><b>mute</b> - Reports the current mute state (can be "on" or "off")</li>
-  <li><b>presence</b> - Reports the presence state (can be "present" or "absent"). </li>
+  <li><b>power</b> - The power status (can be "on" or "off")</li>
   <li><b>volume</b> - Reports the volume state.</li>
   </ul>
 </ul>
@@ -782,13 +815,13 @@ sub LGTV_IP12_html2txt($)
     define &lt;name&gt; LGTV_IP12 &lt;IP-Addresse&gt; [&lt;Off_Interval&gt;] [&lt;On_Interval&gt;]
     </code>
     <br><br>
-    Bei der Definition eines LGTV_IP12-Moduls wird eine interne Routine in Gang gesetzt, welche regelm&auml;&szlig;ig 
+    Bei der Definition eines LGTV_IP12-Moduls wird eine interne Routine in Gang gesetzt, welche regelm&auml;&szlig;ig
     (einstellbar durch den optionalen Parameter <code>&lt;Status_Interval&gt;</code>; falls nicht gesetzt ist der Standardwert 30 Sekunden)
     den Status des TV abfragt und entsprechende Notify-/FileLog-Definitionen triggert.
     <br><br>
     Sofern 2 Interval-Argumente &uuml;bergeben werden, wird der erste Parameter <code>&lt;Off_Interval&gt;</code> genutzt
-    sofern der TV ausgeschaltet oder nicht erreichbar ist. Der zweiter Parameter <code>&lt;On_Interval&gt;</code> 
-    wird verwendet, sofern der TV eingeschaltet ist. 
+    sofern der TV ausgeschaltet ist. Der zweiter Parameter <code>&lt;On_Interval&gt;</code>
+    wird verwendet, sofern der TV eingeschaltet ist.
     <br><br>
     Beispiel:<br><br>
     <ul><code>
@@ -814,9 +847,9 @@ sub LGTV_IP12_html2txt($)
     <li><b>channelUp</b> &nbsp;&nbsp;-&nbsp;&nbsp; schaltet auf den n&auml;chsten Kanal um </li>
     <li><b>channelDown</b> &nbsp;&nbsp;-&nbsp;&nbsp; schaltet auf den vorherigen Kanal um </li>
     <li><b>removePairing</b>  &nbsp;&nbsp;-&nbsp;&nbsp; l&ouml;scht das Pairing zwischen FHEM und dem TV</li>
-    <li><b>showPairCode</b>  &nbsp;&nbsp;-&nbsp;&nbsp; zeigt den Pair-Code auf dem TV-Bildschirm an. Dieser Code muss im Attribut <a href="#LGTV_IP12_pairingcode">pairingcode</a> gesetzt werden, damit FHEM mit dem TV kommunizieren kann.</li>  
-    <li><b>startApp</b> &lt;Name&gt;&nbsp;&nbsp;-&nbsp;&nbsp; startet eine installierte App</li>   
-    <li><b>stopApp</b> &lt;Name&gt;&nbsp;&nbsp;-&nbsp;&nbsp; stoppt eine laufende App</li>   
+    <li><b>showPairCode</b>  &nbsp;&nbsp;-&nbsp;&nbsp; zeigt den Pair-Code auf dem TV-Bildschirm an. Dieser Code muss im Attribut <a href="#LGTV_IP12_pairingcode">pairingcode</a> gesetzt werden, damit FHEM mit dem TV kommunizieren kann.</li>
+    <li><b>startApp</b> &lt;Name&gt;&nbsp;&nbsp;-&nbsp;&nbsp; startet eine installierte App</li>
+    <li><b>stopApp</b> &lt;Name&gt;&nbsp;&nbsp;-&nbsp;&nbsp; stoppt eine laufende App</li>
     <li><b>statusRequest</b> &nbsp;&nbsp;-&nbsp;&nbsp; fragt den aktuellen Status ab</li>
     <li><b>remoteControl</b> up,down,... &nbsp;&nbsp;-&nbsp;&nbsp; sendet Fernbedienungsbefehle</li>
     </ul>
@@ -833,13 +866,21 @@ sub LGTV_IP12_html2txt($)
   <a name="LGTV_IP12_attr"></a>
   <b>Attribute</b>
   <ul>
-  
+
     <li><a href="#do_not_notify">do_not_notify</a></li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li><br>
     <li><a name="LGTV_IP12_disable">disable</a></li>
     Optionales Attribut zur Deaktivierung des zyklischen Status-Updates. Ein manuelles Update via statusRequest-Befehl ist dennoch m&ouml;glich.
     <br><br>
     M&ouml;gliche Werte: 0 => zyklische Status-Updates, 1 => keine zyklischen Status-Updates.<br><br>
+    <li><a name="LGTV_IP12_disabledForIntervals">disabledForIntervals</a> HH:MM-HH:MM HH:MM-HH-MM...</li>
+    Optionales Attribut zur Deaktivierung der zyklischen Status-Updates innerhalb von bestimmten Zeitintervallen.
+    Das Argument ist eine Leerzeichen-getrennte Liste von Minuszeichen-getrennten HH:MM Paaren (Stunde : Minute).
+    Falls die aktuelle Uhrzeit zwischen diese Werte f&auml;llt, dann werden zyklische Status-Updates, wie bei <a href="#LGTV_IP12_disable">disable</a>, ausgesetzt.
+    Statt HH:MM kann man auch HH oder HH:MM:SS angeben.<br><br>
+    Um einen Intervall um Mitternacht zu spezifizieren, muss man zwei einzelne Intervalle angeben, z.Bsp.:
+    <pre>23:00-24:00 00:00-01:00</pre>
+    Standardwert ist <i>nicht gesetzt</i> (dauerhaft aktiv)<br><br>
     <li><a name="LGTV_IP12_request-timeout">request-timeout</a></li>
     Optionales Attribut. Maximale Dauer einer Anfrage in Sekunden zum TV.
     <br><br>
@@ -857,7 +898,7 @@ sub LGTV_IP12_html2txt($)
   <li><b>input</b> - Die aktuelle Eingangsquelle (z.B. Antenna, Sattelite, HDMI1, ...)</li>
   <li><b>inputLabel</b> - Die benutzerdefinierte Bezeichnung der aktuellen Eingangsquelle</li>
   <li><b>mute</b> on,off - Der aktuelle Stumm-Status ("on" =&gt; Stumm, "off" =&gt; Laut)</li>
-  <li><b>presence</b> - Zeigt an, ob das Ger&auml;t aktuell empfangsbereit ist ("present" =&gt; Ger&auml;t ist empfangsbereit, "absent" =&gt; Ger&auml;t ist nicht empfangsbereit). </li>
+  <li><b>power</b> on,off - Der aktuelle Power-Status ("on" =&gt; eingeschaltet, "off" =&gt; ausgeschaltet)</li>
   <li><b>volume</b> - Der aktuelle Lautstärkepegel.</li>
   </ul>
 </ul>

@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 79_BDKM.pm 12770 2016-12-14 08:39:57Z arnoaugustin $
 ##############################################################################
 #
 #     79_BDKM.pm
@@ -173,7 +173,7 @@ my @RC35DEFAULTS =
     qw(/gateway/DateTime:0:0:DateTime
 );
 
-# extra valid value not in range which is set by gateway
+# extra valid value not in range (set by gateway)
 my %extra_value=
 qw(/heatingCircuits/hc1/fastHeatupFactor 0
    /heatingCircuits/hc1/temporaryRoomSetpoint -1
@@ -192,9 +192,11 @@ sub BDKM_Initialize($)
     $hash->{SetFn}           = "BDKM_Set";
     $hash->{GetFn}           = "BDKM_Get";
     $hash->{AttrFn}          = "BDKM_Attr";
-    
+    $hash->{DeleteFn}        = "BDKM_Undefine";
+
     $hash->{AttrList}        = 
         "BaseInterval " .
+        "InterPollDelay " .
         "PollIds:textField-long  " .
         "HttpTimeout " .
         $readingFnAttributes;
@@ -207,7 +209,6 @@ sub BDKM_Define($$)
     my @a            = split(/\s+/, $def);
     my $name                    = $a[0];
 
-    # salt will be removed in future versions and must be set by user in fhem.cfg
     my $salt = "";
     my $cryptkey="";
     my $usage="usage: \"define <devicename> BDKM <IPv4-address|hostname>  <GatewayPassword> <PrivatePassword> <md5salt>\" or\n".
@@ -266,11 +267,12 @@ sub BDKM_Define($$)
     $hash->{REALTOUSER}                       = {}; # Hash to transform real IDs to readings
     $hash->{USERTOREAL}                       = {}; # Hash to readings to real IDs
     $hash->{IDS}                              = {}; # Hash containing IDS of first full poll
-    $hash->{VERSION}                          = '$Id$';    
+    $hash->{VERSION}                          = '$Id: 79_BDKM.pm 12770 2016-12-14 08:39:57Z arnoaugustin $';    
     # init attrs to defaults:
-    map {BDKM_Attr("del",$name,$_)} qw(BaseInterval ReadBackDelay HttpTimeout);
+    map {BDKM_Attr("del",$name,$_)} qw(BaseInterval InterPollDelay ReadBackDelay HttpTimeout);
 
-    BDKM_reInit($hash);
+    # delay start to have a chance that all attrs are set
+    BDKM_Timer($hash,10,"BDKM_doSequence");
     return undef;
 }
 
@@ -290,7 +292,13 @@ sub BDKM_Attr(@)
             return $error."needs interger value >= 30";
         } else {
             $hash->{BASEINTERVAL} = $val;            
-            BDKM_reInit($hash);
+        } 
+    } elsif ($attr eq "InterPollDelay") {
+        $del and $val = 0; # default
+        if($val !~ /^\d+$/) {
+            return $error."needs interger value";
+        } else {
+            $hash->{INTERPOLLDELAY} = $val/1000;            
         } 
     } elsif($attr eq "ReadBackDelay") {
         $del and $val = 500;
@@ -368,32 +376,22 @@ sub BDKM_Attr(@)
     return undef;
 }
 
-sub BDKM_reInit($)
-{
-    my ($hash)                                = @_;
-    BDKM_RemoveTimer($hash);
-    $hash->{UPDATES} = [];
-    if($hash->{ISPOLLING}) {
-        # let sequence finish and try again
-        BDKM_Timer($hash,29,"BDKM_reInit");
-        return;
-    }
-    if(!$hash->{SEQUENCE}) { # init
-        # delay start to have a chance that all attrs are set
-        BDKM_Timer($hash,5,"BDKM_doSequence");
-    } else {
-        BDKM_Timer($hash,$hash->{BASEINTERVAL},"BDKM_doSequence");
-    }
-}
+
 
 sub BDKM_doSequence($)
 {
     my ($hash)                 = @_;
-    
+
+    # BDKM_doSequence is never called directly. It's only triggered by its own timer.
+
     # restart timer for next sequence
     BDKM_Timer($hash,$hash->{BASEINTERVAL},"BDKM_doSequence");
     # only start polling if we are not polling (e.g. due to network promlems)
-    $hash->{ISPOLLING} and return;
+    if($hash->{ISPOLLING}) {
+        Log3 $hash, 3, $hash->{NAME}." ERROR: trying to start new sequence while previous not finished";
+        Log3 $hash, 3, $hash->{NAME}." Gateway not responding? BaseInterval too short? InterPollDelay too high?";
+        return;
+    }
     $hash->{ISPOLLING}=1;
     my $seq = $hash->{SEQUENCE};
     my $h   = $hash->{POLLIDS};
@@ -445,9 +443,6 @@ sub BDKM_JobQueueNextIdHttpDone($)
     my $name                     = $hash ->{NAME};
     my $json;
 
-    my $hth= $param->{httpheader};
-    $hth =~ s/[\r\n]//g;
-    Log3 $name, 5, "$name HTTP done @{$hash->{JOBQUEUE}}[0],$hth";
     if($err) {
         readingsSingleUpdate($hash, "state", 
                              "reading ids ERROR - retrying every 60s", 1);
@@ -456,6 +451,9 @@ sub BDKM_JobQueueNextIdHttpDone($)
         BDKM_Timer($hash,60,"BDKM_JobQueueNextId");
         return; 
     }
+    my $hth= $param->{httpheader};
+    $hth =~ s/[\r\n]//g;
+    Log3 $name, 5, "$name HTTP done @{$hash->{JOBQUEUE}}[0],$hth";
     # did this type, remove from job queue:
     my $id = shift(@{$hash->{JOBQUEUE}});
 
@@ -480,13 +478,17 @@ sub BDKM_JobQueueNextIdHttpDone($)
                 $hth =~ s|HTTP/...|HTTP|;
                 $hth =~ s/\s+/_/g;
                 $hth =~ /200/ or $hash->{IDS}{$id}{HTTPHEADER} = $hth;
+                $hth =~ /200/ or $data = $hth;
             }
-                
-            Log3 $hash, 4, "$name $id - no JSON data available - raw data: $data";
+
+            Log3 $hash, 4, "$name $id: $data";
         }
     }
-    BDKM_JobQueueNextId($hash); # get next id
-
+    if($hash->{INTERPOLLDELAY}) {
+        BDKM_Timer($hash,$hash->{INTERPOLLDELAY},"BDKM_JobQueueNextId");
+    } else {
+        BDKM_JobQueueNextId($hash);
+    }
     return;
 }
 
@@ -1073,7 +1075,10 @@ sub BDKM_update_id_from_json
         } elsif ($type eq "yRecording") {
             defined $h->{TYPE} or $h->{TYPE}="Recroding";
             # ignore recordings - fhem records :-)
-        } elsif ($type eq "refEnum") { # ignore directory entry
+        } elsif ($type eq "refEnum") { 
+            # ignore directory entry
+        } elsif ($type eq "eMonitoringList") { 
+            # ignore eMonitoringList - I don't have infos about that
         } else {
             Log3 $hash, 2, "$hash->{NAME}: unknown type $type for $id";
         }
@@ -1100,6 +1105,9 @@ sub BDKM_MapSwitchPrograms
 # perl ./contrib/commandref_join.pl 
 
 =pod
+=item device
+=item summary support for Buderus KM-Gateways
+=item summary_DE Unterst&uuml;tzung f&uuml;r Buderus KM-Gateways
 =begin html
 
 <a name="BDKM"></a>
@@ -1233,6 +1241,15 @@ sub BDKM_MapSwitchPrograms
       The interval time in seconds between poll cycles.
       It defaults to 120 seconds. Which means that every 120 seconds a
       new poll collects values of IDs which turn it is.
+    </li><br>
+    <li>InterPollDelay<br>
+      The delay time in milliseconds between reading of two IDs from 
+      the gateway. It defaults to 0 (read as fast as possible).
+      Some gateways/heatings seem to stop answering after a while
+      when you are reading a lot of IDs. (verbose 2 "communication ERROR").
+      To avoid gateway hangups always try to read only as many IDs as 
+      really required. If it doesn't help try to increase the 
+      InterPollDelay value. E.g. start with 100.
     </li><br>
     <li>ReadBackDelay<br>
       Read back delay for the set command in milliseconds.  This value

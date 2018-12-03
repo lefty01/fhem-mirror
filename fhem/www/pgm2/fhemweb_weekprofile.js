@@ -1,4 +1,4 @@
-// $Id$
+FW_version["fhemweb_weekprofile.js"] = "$Id: fhemweb_weekprofile.js 16213 2018-02-18 13:10:19Z Risiko $";
 
 var language = 'de';
 //for tooltip
@@ -132,12 +132,28 @@ function FW_weekprofileMultiSelDialog(title, elementNames, elementLabels, select
     });
 }
 
+function FW_GetTranslation(widget,translate)
+{
+  if (widget.TRANSLATIONS == null)
+    return translate;
+  
+  var translated = widget.TRANSLATIONS[translate];
+  if (translated.length == 0)
+    return translate;
+  
+  return translated;
+}
+
 function weekprofile_DoEditWeek(devName,newPage)
 {
   var widget = $('div[informid="'+devName+'"]').get(0);
  
   if (newPage == 1) {
-    window.location.assign(FW_root+'?cmd={weekprofile_editOnNewpage("'+widget.DEVICE+'","'+widget.CURTOPIC+':'+widget.CURPRF+'");;}');
+    var csrfToken = $("body").attr('fwcsrf');
+    var url = FW_root+'?cmd={weekprofile_editOnNewpage("'+widget.DEVICE+'","'+widget.CURTOPIC+':'+widget.CURPRF+'");;}';
+    if (csrfToken)
+      url = url + '&fwcsrf='+ csrfToken;
+    window.location.assign(url);
   } else {
     widget.MODE = 'EDIT';
     $(widget.MENU.BASE).hide();
@@ -183,9 +199,12 @@ function FW_weekprofileRestoreTopic(devName,bnt)
   FW_weekprofileInputDialog(["<p>Restore topic: '"+widget.CURTOPIC+"'&nbsp;?</p>"],["hidden"],null,bnt,function(name,ok){
     if (ok == 1)
         FW_cmd(FW_root+'?cmd=set '+devName+' restore_topic '+widget.CURTOPIC+'&XHR=1',function(data){
-        console.log(devName+" error restore topic '" +data+"'");
-        FW_errmsg(devName+" error restore topic '" +data+"'",5000);
-        return;
+        if (data != "")
+        {
+			console.log(devName+" error restore topic '" +data+"'");
+			FW_errmsg(devName+" error restore topic '" +data+"'",5000);
+			return;
+		}
       });
     });
 }
@@ -481,8 +500,8 @@ function FW_weekprofileEditDelInterval(tr)
 
 function FW_weekprofileTransDay(devName,day,bnt)
 {
-  var widget = $('div[informid="'+devName+'"]').get(0)
-  var srcDay = $(widget.CONTENT).find("table[id*=\"weekprofile."+widget.DEVICE+"."+shortDays[day]+"\"]");
+  var widget = $('div[informid="'+devName+'"]').get(0);
+  var srcDay = $(widget.CONTENT).find("table[id*=\"weekprofile."+widget.DEVICE+"\"][data-day*=\""+shortDays[day]+"\"]");
   
   var dayNames = [];
   var dayAlias = [];
@@ -498,7 +517,7 @@ function FW_weekprofileTransDay(devName,day,bnt)
         if (!selDays || selDays.length==0)
           return;
         for (var k=0; k < selDays.length; k++) {
-          var destDay = $(widget.CONTENT).find("table[id*=\"weekprofile."+widget.DEVICE+"."+selDays[k]+"\"]");
+          var destDay = $(widget.CONTENT).find("table[id*=\"weekprofile."+widget.DEVICE+"\"][data-day*=\""+selDays[k]+"\"]");
           destDay.empty();
           destDay.append(srcDay.clone().contents());
         }
@@ -525,7 +544,7 @@ function FW_weekprofileEditDay(widget,day)
   $(div).append(html);
   
   var table = $("<table>").get(0);
-  $(table).attr('id',"weekprofile."+widget.DEVICE+"."+shortDays[day]);
+  $(table).attr('id',"weekprofile."+widget.DEVICE).attr("data-day", shortDays[day]);
   $(table).attr('class',"block wide weekprofile");
   
   html = '';
@@ -545,11 +564,32 @@ function FW_weekprofileEditDay(widget,day)
     html += "<td><input type=\"text\" name=\"ENDTIME\" size=\"5\" maxlength=\"5\" align=\"center\" value=\""+endTime+"\" onblur=\"FW_weekprofileEditTime_changed(this)\"/></td>"; 
     
     //temp
+    var tempOn = widget.TEMP_ON;
+    var tempOff = widget.TEMP_OFF;
+
+    if (tempOn == null)
+      tempOn = 30;
+    
+    if (tempOff == null)
+      tempOff = 5;
+      
+    if (tempOff > tempOn)
+    {
+		var tmp = tempOn;
+		tempOn = tempOff;
+		tempOff = tmp;
+	}
+    
     html += "<td><select name=\"TEMP\" size=\"1\" onchange=\"FW_weekprofileTemp_chached(this)\">";
-    for (var k=5; k <= 30; k+=.5)
+    for (var k=tempOff; k <= tempOn; k+=.5)
     {
         var selected = (k == temps[i]) ? "selected " : "";
-        html += "<option "+selected+"value=\""+k.toFixed(1)+"\">"+k.toFixed(1)+"</option>";
+        if (k == widget.TEMP_OFF)
+          html += "<option "+selected+"value=\"off\">off</option>";
+        else if (k == widget.TEMP_ON)
+          html += "<option "+selected+"value=\"on\">on</option>";
+        else
+          html += "<option "+selected+"value=\""+k.toFixed(1)+"\">"+k.toFixed(1)+"</option>";
     }
     html += "</select></td>";    
     //ADD-Button
@@ -589,8 +629,9 @@ function FW_weekprofileEditWeek(widget)
   
   tr.append("<td><table><tr>");
   tr = tr.find("tr:last");
-  tr.append("<td><input type=\"button\" value=\"Speichern\" onclick=\"FW_weekprofilePrepAndSendProf('"+widget.DEVICE+"')\">");
-  tr.append("<td><input type=\"button\" value=\"Abbrechen\" onclick=\"FW_weekprofileEditAbort('"+widget.DEVICE+"')\">");
+  
+  tr.append("<td><input type=\"button\" value=\""+FW_GetTranslation(widget,'Speichern')+"\" onclick=\"FW_weekprofilePrepAndSendProf('"+widget.DEVICE+"')\">");
+  tr.append("<td><input type=\"button\" value=\""+FW_GetTranslation(widget,'Abbrechen')+"\" onclick=\"FW_weekprofileEditAbort('"+widget.DEVICE+"')\">");
 }
 
 function FW_weekprofileSendCallback(devName, data)
@@ -621,9 +662,8 @@ function FW_weekprofilePrepAndSendProf(devName)
       return;
     }
     
-    var id = $(tableDay[i]).attr('id').split('.');
-    var day = id[id.length-1];
-    
+    var day = $(tableDay[i]).attr("data-day");
+      
     prf[day] = new Object();
     prf[day]['time'] = new Array();
     prf[day]['temp'] = new Array();
@@ -655,9 +695,13 @@ function FW_weekprofileBack(widget)
   if (widget.JMPBACK){
     var isInIframe = (window.location != window.parent.location) ? true : false;
     if (isInIframe) {
-      parent.history.back();
+      parent.history.back();      
     } else
-      window.history.back();
+      if (document.referrer) {
+            window.location.assign(document.referrer)
+      } else {
+        window.history.back() //maybe problems with reload
+        }       
   }
   else {
     widget.MODE = "SHOW";
@@ -750,6 +794,14 @@ function FW_weekprofileGetValues(devName,what,data)
         widget.CURTOPIC = widget.TOPICNAMES[0];
       }
       FW_weekprofileChacheTo(devName,widget.CURTOPIC,null);
+  } else if (what == "TRANSLATE") {
+      var arr = data.split(',');
+      widget.TRANSLATIONS = new Array();
+      for (var k = 0; k < arr.length; ++k) {
+        var trans = arr[k].split(':');
+        if (trans.length == 2)
+          widget.TRANSLATIONS[trans[0].trim()] = trans[1].trim();
+      }
   }
 }
 
@@ -788,6 +840,8 @@ FW_weekprofileCreate(elName, devName, vArr, currVal, set, params, cmd)
   widget.JMPBACK = null;
   widget.MODE = 'SHOW';
   widget.USETOPICS = 0;
+  widget.TEMP_ON = null;
+  widget.TEMP_OFF = null;
 
   for (var i = 1; i < vArr.length; ++i) {
     var arg = vArr[i].split(':');
@@ -797,6 +851,8 @@ FW_weekprofileCreate(elName, devName, vArr, currVal, set, params, cmd)
       case "MASTERDEV": widget.MASTERDEV = arg[1];      break;
       case "USETOPICS": widget.USETOPICS = arg[1];      break;
       case "DAYINROW":  widget.EDIT_DAYSINROW = arg[1]; break;
+      case "TEMP_ON":   widget.TEMP_ON = parseFloat(arg[1]); break;
+      case "TEMP_OFF":  widget.TEMP_OFF = parseFloat(arg[1]);break;
     }
   }
   
@@ -811,6 +867,7 @@ FW_weekprofileCreate(elName, devName, vArr, currVal, set, params, cmd)
   widget.activateFn = function(arg){
     FW_queryValue('get '+devName+' profile_data '+widget.CURTOPIC+':'+widget.CURPRF, widget);
     FW_cmd(FW_root+'?cmd={AttrVal("'+devName+'","widgetWeekdays","")}&XHR=1',function(data){FW_weekprofileGetValues(devName,"WEEKDAYS",data);});
+    FW_cmd(FW_root+'?cmd={AttrVal("'+devName+'","widgetTranslations","")}&XHR=1',function(data){FW_weekprofileGetValues(devName,"TRANSLATE",data);}); 
     if (widget.USETOPICS == 1) {
       FW_cmd(FW_root+'?cmd=get '+devName+' topic_names&XHR=1',function(data){FW_weekprofileGetValues(devName,"TOPICNAMES",data);});
     } else {
@@ -834,3 +891,15 @@ FW_weekprofileCreate(elName, devName, vArr, currVal, set, params, cmd)
 FW_widgets['weekprofile'] = {
   createFn:FW_weekprofileCreate,
 };
+
+/*
+=pod
+=begin html
+
+=end html
+
+=begin html_DE
+
+=end html_DE
+=cut
+*/

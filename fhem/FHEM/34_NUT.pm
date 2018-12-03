@@ -1,5 +1,5 @@
 #
-# $Id$
+# $Id: 34_NUT.pm 9023 2015-08-05 09:00:12Z narsskrarc $
 #
 # Abfrage einer UPS über die Network UPS Tools (www.networkupstools.org)
 #

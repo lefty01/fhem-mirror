@@ -1,7 +1,7 @@
 ###################LoTT Uniroll###################
 # First release by D. Fuchs and rudolfkoenig
-# improved by c-herrmann
-# $Id$
+# improved by C_Herrmann
+# $Id: 10_UNIRoll.pm 12819 2016-12-18 14:27:48Z C_Herrmann $
 # 
 # UNIRoll:no synchronisation, the message protocoll begins directly with datas
 # group address  16 Bit like an housecode
@@ -378,6 +378,10 @@ DOCMD:
 
 
 =pod
+=item device
+=item summary	controls UNIRoll devices with wireless extension
+=item summary_DE	Steuert UNIRoll-Gurtwickler mit Fernbedienungs-Modul
+
 =begin html_DE
 
 <a name="UNIRoll"></a>

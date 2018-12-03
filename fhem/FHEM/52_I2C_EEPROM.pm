@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id$
+# $Id: 52_I2C_EEPROM.pm 17863 2018-11-27 23:28:39Z klausw $
 ##############################################################################
 # Modul for I2C EEPROM
 #
@@ -286,6 +286,9 @@ sub I2C_EEPROM_BytefromReading($@) {
 1;
 
 =pod
+=item device
+=item summary reads the content from an via I2C connected EEPROM
+=item summary_DE lesen des Inhals eines &uuml;ber I2C angeschlossenen EEPROM
 =begin html
 
 <a name="I2C_EEPROM"></a>
@@ -300,7 +303,8 @@ sub I2C_EEPROM_BytefromReading($@) {
 	<b>Define</b>
 	<ul>
 		<code>define &lt;name&gt; I2C_EEPROM &lt;I2C Address&gt;</code><br>
-		where <code>&lt;I2C Address&gt;</code> is without direction bit<br>
+		<code>&lt;I2C Address&gt;</code> may be an 2 digit hexadecimal value (0xnn) or an decimal value<br>
+		For example 0x40 (hexadecimal) = 64 (decimal). An I2C address are 7 MSB, the LSB is the R/W bit.<br>
 	</ul>
 
 	<a name="I2C_EEPROMSet"></a>
@@ -335,11 +339,11 @@ sub I2C_EEPROM_BytefromReading($@) {
 	<a name="I2C_EEPROMAttr"></a>
 	<b>Attributes</b>
 	<ul>
-		<li>poll_interval<br>
+		<li><a name="poll_interval">poll_interval</a><br>
 			Set the polling interval in minutes to query the EEPROM content<br>
 			Default: -, valid values: decimal number<br><br>
 		</li>
-		<li>EEPROM_size<br>
+		<li><a name="EEPROM_size">EEPROM_size</a><br>
 			Sets the storage size of the EEPROM<br>
 			Default: 128, valid values: 128 (128bit), 2k (2048bit)<br><br>
 		</li>
@@ -367,7 +371,8 @@ sub I2C_EEPROM_BytefromReading($@) {
 	<b>Define</b>
 	<ul>
 		<code>define &lt;name&gt; I2C_EEPROM &lt;I2C Address&gt;</code><br>
-		Der Wert <code>&lt;I2C Address&gt;</code> ist ohne das Richtungsbit
+		<code>&lt;I2C Address&gt;</code> kann ein zweistelliger Hex-Wert (0xnn) oder ein Dezimalwert sein<br>
+		Beispielsweise 0x40 (hexadezimal) = 64 (dezimal). Als I2C Adresse verstehen sich die 7 MSB, das LSB ist das R/W Bit.<br>
 	</ul>
 
 	<a name="I2C_EEPROMSet"></a>
@@ -401,11 +406,11 @@ sub I2C_EEPROM_BytefromReading($@) {
 	<a name="I2C_EEPROMAttr"></a>
 	<b>Attribute</b>
 	<ul>
-		<li>poll_interval<br>
+		<li><a name="poll_interval">poll_interval</a><br>
 			Aktualisierungsintervall aller Werte in Minuten.<br>
 			Standard: -, g&uuml;ltige Werte: Dezimalzahl<br><br>
 		</li>
-		<li>EEPROM_size<br>
+		<li><a name="EEPROM_size">EEPROM_size</a><br>
 			Speichergröße des EEPROM<br>
 			Standard: 128, g&uuml;ltige Werte: 128 (128bit), 2k (2048bit)<br><br>
 		</li>

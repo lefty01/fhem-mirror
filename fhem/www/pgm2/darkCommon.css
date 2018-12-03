@@ -13,3 +13,14 @@ div.ui-widget-content a {color: #CCCCCC!important; text-decoration: none!importa
 div.detLink { display:inline-block; margin-right:0.5em; }
 
 .fhemlog { color:#FFFFFF; }
+
+svg.zw_nr .zwBox { stroke:#fff; stroke-width:2px; fill:#000; }
+svg.zw_nr .zwDongle { stroke:red; stroke-width:2px; fill:#000; }
+svg.zw_nr .zwMargin { stroke:#fff; stroke-width:1px; fill:none; }
+svg.zw_nr .zwLine { stroke:#fff; stroke-width:1px; }
+svg.zw_nr .zwArrowHead { fill:#fff; stroke-width:1px; }
+svg.zw_nr { height:auto; width:auto; margin:0; }
+
+#errmsg { background-color: #000000; color: #FFFFFF;
+          position:fixed; top:0px; left:40px; z-index: 10; }
+

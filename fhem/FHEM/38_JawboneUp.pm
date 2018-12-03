@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 38_JawboneUp.pm 10774 2016-02-08 19:50:04Z domschlo $
 #
 # See: http://www.fhemwiki.de/wiki/Jawbone_Up
 # Forum: http://forum.fhem.de/index.php/topic,24889.msg179505.html#msg179505

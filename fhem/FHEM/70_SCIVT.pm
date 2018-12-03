@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 70_SCIVT.pm 3738 2013-08-18 14:13:59Z rudolfkoenig $
 package main;
 
 use strict;

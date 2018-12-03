@@ -1,10 +1,11 @@
 ##############################################
-# $Id$
+# $Id: 93_FHEM2FHEM.pm 17361 2018-09-17 11:44:10Z rudolfkoenig $
 package main;
 
 use strict;
 use warnings;
 use Time::HiRes qw(gettimeofday);
+use HttpUtils;
 
 
 sub FHEM2FHEM_Read($);
@@ -25,12 +26,14 @@ FHEM2FHEM_Initialize($)
   $hash->{WriteFn} = "FHEM2FHEM_Write";
   $hash->{ReadyFn} = "FHEM2FHEM_Ready";
   $hash->{SetFn}   = "FHEM2FHEM_Set";
+  $hash->{AttrFn}  = "FHEM2FHEM_Attr";
   $hash->{noRawInform} = 1;
 
 # Normal devices
   $hash->{DefFn}   = "FHEM2FHEM_Define";
   $hash->{UndefFn} = "FHEM2FHEM_Undef";
-  $hash->{AttrList}= "dummy:1,0 disable:0,1 disabledForIntervals";
+  $hash->{AttrList}= "addStateEvent:1,0 dummy:1,0 disable:0,1 ".
+                     "disabledForIntervals eventOnly:1,0 excludeEvents";
 }
 
 #####################################
@@ -56,9 +59,10 @@ FHEM2FHEM_Define($$)
     my $iodev = $defs{$rdev};
     return "Undefined local device $rdev" if(!$iodev);
     $hash->{rawDevice} = $rdev;
-    $hash->{Clients} = $iodev->{Clients};
-    $hash->{Clients} = $modules{$iodev->{TYPE}}{Clients}
-        if(!$hash->{Clients});
+
+    my $iomod = $modules{$iodev->{TYPE}};
+    $hash->{Clients} = $iodev->{Clients} ? $iodev->{Clients} :$iomod->{Clients};
+    $hash->{MatchList} = $iomod->{MatchList} if($iomod->{MatchList});
 
   }
 
@@ -110,6 +114,7 @@ FHEM2FHEM_Write($$)
     syswrite($hash->{TCPDev2}, $hash->{portpassword} . "\n")
         if($hash->{portpassword});
   }
+
   my $rdev = $hash->{rawDevice};
   syswrite($hash->{TCPDev2}, "iowrite $rdev $fn $msg\n");
 }
@@ -136,6 +141,7 @@ FHEM2FHEM_Read($)
   }
 
   return if(IsDisabled($name));
+  my $excl = AttrVal($name, "excludeEvents", undef);
 
   my $data = $hash->{PARTIAL};
   #Log3 $hash, 5, "FHEM2FHEM/RAW: $data/$buf";
@@ -147,24 +153,33 @@ FHEM2FHEM_Read($)
     $rmsg =~ s/\r//;
 
     if($hash->{informType} eq "LOG") {
-      my ($type, $name, $msg) = split(" ", $rmsg, 3);
+      my ($type, $rname, $msg) = split(" ", $rmsg, 3);
       next if(!defined($msg)); # Bogus data
       my $re = $hash->{regexp};
-      next if($re && !($name =~ m/^$re$/ || "$name:$msg" =~ m/^$re$/));
-      Log3 $name, 4, "$name: $rmsg";
+      next if($re && !($rname =~ m/^$re$/ || "$rname:$msg" =~ m/^$re$/));
+      next if($excl && ($rname =~ m/^$excl$/ || "$rname:$msg" =~ m/^$excl$/));
+      Log3 $name, 4, "$rname: $rmsg";
 
-      if(!$defs{$name}) {
-        #LoadModule($type); Why do we need this line?
-        $defs{$name}{NAME}  = $name;
-        $defs{$name}{TYPE}  = $type;
-        $defs{$name}{STATE} = $msg;
-        $defs{$name}{FAKEDEVICE} = 1; # Avoid set/attr/delete/etc in notify
-        $defs{$name}{TEMPORARY} = 1;  # Do not save it
-        DoTrigger($name, $msg);
-        delete($defs{$name});
+      if(!$defs{$rname}) {
+        $defs{$rname}{NAME}  = $rname;
+        $defs{$rname}{TYPE}  = $type;
+        $defs{$rname}{STATE} = $msg;
+        $defs{$rname}{FAKEDEVICE} = 1; # Avoid set/attr/delete/etc in notify
+        $defs{$rname}{TEMPORARY} = 1;  # Do not save it
+        DoTrigger($rname, $msg);
+        delete($defs{$rname});
+        delete($attr{$rname}); # Forum #73490
 
       } else {
-        DoTrigger($name, $msg);
+        if(AttrVal($name,"eventOnly",0)) {
+          DoTrigger($rname, $msg);
+        } else {
+          if($msg =~ m/^([^:]*): (.*)$/) {
+            readingsSingleUpdate($defs{$rname}, $1, $2, 1);
+          } else {
+            readingsSingleUpdate($defs{$rname}, "state", $msg, 1);
+          }
+        }
 
       }
 
@@ -222,56 +237,49 @@ FHEM2FHEM_OpenDev($$)
   Log3 $name, 3, "FHEM2FHEM opening $name at $dev"
         if(!$reopen);
 
-  # This part is called every time the timeout (5sec) is expired _OR_
-  # somebody is communicating over another TCP connection. As the connect
-  # for non-existent devices has a delay of 3 sec, we are sitting all the
-  # time in this connect. NEXT_OPEN tries to avoid this problem.
-  if($hash->{NEXT_OPEN} && time() < $hash->{NEXT_OPEN}) {
-    return;
-  }
-
+  return if($hash->{NEXT_OPEN} && time() <= $hash->{NEXT_OPEN});
   return if(IsDisabled($name));
 
-  my $conn;
-  if($hash->{SSL}) {
-    eval "use IO::Socket::SSL";
-    Log3 $name, 1, $@ if($@);
-    $conn = IO::Socket::SSL->new(PeerAddr => "$dev") if(!$@);
-  } else {
-    $conn = IO::Socket::INET->new(PeerAddr => $dev);
-  }
+  my $doTailWork = sub($$$) {
+    my ($h, $err, undef) = @_;
 
-  if($conn) {
+    if($err) {
+      Log3($name, 3, "Can't connect to $dev: $!") if(!$reopen);
+      $readyfnlist{"$name.$dev"} = $hash;
+      $hash->{STATE} = "disconnected";
+      $hash->{NEXT_OPEN} = time()+60;
+      return;
+    }
+    my $conn = $h->{conn};
     delete($hash->{NEXT_OPEN});
     $conn->setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1);
+    $hash->{TCPDev} = $conn;
+    $hash->{FD} = $conn->fileno();
+    delete($readyfnlist{"$name.$dev"});
+    $selectlist{"$name.$dev"} = $hash;
 
-  } else {
-    Log3($name, 3, "Can't connect to $dev: $!") if(!$reopen);
-    $readyfnlist{"$name.$dev"} = $hash;
-    $hash->{STATE} = "disconnected";
-    $hash->{NEXT_OPEN} = time()+60;
-    return "";
-  }
+    if($reopen) {
+      Log3 $name, 1, "FHEM2FHEM $dev reappeared ($name)";
+    } else {
+      Log3 $name, 3, "FHEM2FHEM device opened ($name)";
+    }
 
-  $hash->{TCPDev} = $conn;
-  $hash->{FD} = $conn->fileno();
-  delete($readyfnlist{"$name.$dev"});
-  $selectlist{"$name.$dev"} = $hash;
+    $hash->{STATE}= "connected";
+    DoTrigger($name, "CONNECTED") if($reopen);
+    syswrite($hash->{TCPDev}, $hash->{portpassword} . "\n")
+          if($hash->{portpassword});
+    my $type = AttrVal($hash->{NAME},"addStateEvent",0) ? "onWithState" : "on";
+    my $msg = $hash->{informType} eq "LOG" ? 
+                  "inform $type $hash->{regexp}" : "inform raw";
+    syswrite($hash->{TCPDev}, $msg . "\n");
+  };
 
-  if($reopen) {
-    Log3 $name, 1, "FHEM2FHEM $dev reappeared ($name)";
-  } else {
-    Log3 $name, 3, "FHEM2FHEM device opened ($name)";
-  }
-
-  $hash->{STATE}= "connected";
-  DoTrigger($name, "CONNECTED") if($reopen);
-  syswrite($hash->{TCPDev}, $hash->{portpassword} . "\n")
-        if($hash->{portpassword});
-  my $msg = $hash->{informType} eq "LOG" ? 
-                "inform on $hash->{regexp}" : "inform raw";
-  syswrite($hash->{TCPDev}, $msg . "\n");
-  return undef;
+  return HttpUtils_Connect({     # Nonblocking
+    url     => $hash->{SSL} ? "https://$dev/" : "http://$dev/",
+    NAME    => $name,
+    noConn2 => 1,
+    callback=> $doTailWork
+  });
 }
 
 sub
@@ -324,10 +332,25 @@ FHEM2FHEM_Set($@)
   return undef;
 }
 
+sub
+FHEM2FHEM_Attr(@)
+{
+  my ($type, $devName, $attrName, @param) = @_;
+  my $hash = $defs{$devName};
+
+  return undef if($attrName ne "addStateEvent");
+  $attr{$devName}{$attrName} = 1;
+  FHEM2FHEM_CloseDev($hash);
+  FHEM2FHEM_OpenDev($hash, 1);
+  return undef;
+}
+
 1;
 
 =pod
 =item helper
+=item summary    connect two FHEM instances
+=item summary_DE verbindet zwei FHEM Installationen
 =begin html
 
 <a name="FHEM2FHEM"></a>
@@ -338,7 +361,8 @@ FHEM2FHEM_Set($@)
   <a name="FHEM2FHEMdefine"></a>
   <b>Define</b>
   <ul>
-    <code>define &lt;name&gt; FHEM2FHEM &lt;host&gt;[:&lt;portnr&gt;][:SSL] [LOG:regexp|RAW:devicename] {portpassword}
+    <code>define &lt;name&gt; FHEM2FHEM &lt;host&gt;[:&lt;portnr&gt;][:SSL]
+    [LOG:regexp|RAW:devicename] {portpassword}
     </code>
   <br>
   <br>
@@ -346,9 +370,19 @@ FHEM2FHEM_Set($@)
   port on the remote FHEM, defaults to 7072. The optional :SSL suffix is
   needed, if the remote FHEM configured SSL for this telnet port. In this case
   the IO::Socket::SSL perl module must be installed for the local host too.<br>
-
-  Note: if the remote FHEM is on a separate host, the telnet port on the remote
-  FHEM musst be specified with the global option.<br>
+  <br>
+  Notes:
+  <ul>
+    <li>if the remote FHEM is on a separate host, the telnet port on the remote
+      FHEM must be specified with the global option.</li>
+    <li>as of FHEM 5.9 the telnet instance is not configured in default fhem.cfg, so
+    it has to be defined, e.g. as
+    <ul><code>
+    define telnetPort telnet 7072 global
+    </code></ul>
+    </li>
+  </ul>
+  <br>
 
   The next parameter specifies the connection
   type:
@@ -365,8 +399,10 @@ FHEM2FHEM_Set($@)
     FHEM. It is possible to create a device with the same name on both FHEM
     instances, but if both of them receive the same event (e.g. because both
     of them have a CUL attached), then all associated FileLogs/notifys will be
-    triggered twice.  </li>
-
+    triggered twice.<br>
+    If the remote device is created with the same name locally (e.g. as dummy),
+    then the local readings are also updated.
+    </li>
   <li>RAW<br>
     By using this type the local FHEM will receive raw events from the remote
     FHEM device <i>devicename</i>, just like if it would be attached to the
@@ -414,6 +450,19 @@ FHEM2FHEM_Set($@)
     <li><a href="#dummy">dummy</a></li>
     <li><a href="#disable">disable</a></li>
     <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
+    <li><a name="#eventOnly">eventOnly</a><br>
+      if set, generate only events, do not set corresponding readings.
+      This is a compatibility feature, available only for LOG-Mode.
+      </li>
+    <li><a name="#addStateEvent">addStateEvent</a><br>
+      if set, state events are transmitted correctly. Notes: this is relevant
+      only with LOG mode, setting it will generate an additional "reappeared"
+      Log entry, and the remote FHEM must support inform onWithState (i.e. must
+      be up to date).
+      </li>
+    <li><a name="#excludeEvents">excludeEvents &lt;regexp&gt;</a>
+      do not publish events matching &lt;regexp&gt;
+      </li>
   </ul>
 
 </ul>
@@ -440,8 +489,23 @@ FHEM2FHEM_Set($@)
     SSL-Verschl&uuml;sselung voraussetzt.  Auch auf dem lokalen Host muss dann
     das Perl-Modul IO::Socket::SSL installiert sein.<br>
 
-   Anmerkung: Wenn das remote FHEM auf einem eigenen Host l&auml;uft, muss
-   "telnetPort" des remote FHEM als global festgelegt sein.  <br>
+  <br>
+  Achtung:
+  <ul>
+    <li>
+     Wenn das remote FHEM auf einem eigenen Host l&auml;uft, muss
+     "telnetPort" des remote FHEM mit der global Option definiert sein.
+      </li>
+    <li>ab FHEM Version 5.9 wird in der ausgelieferten Initialversion der fhem.cfg
+      keine telnet Instanz vorkonfiguriert, man muss sie z.Bsp.
+      folgenderma&szlig;en definieren:
+      <ul><code>
+      define telnetPort telnet 7072 global
+      </code></ul>
+      </li>
+  </ul>
+  <br>
+
 
    Der n&auml;chste Parameter spezifiziert den Verbindungs-Typ:
    <ul>
@@ -459,7 +523,11 @@ FHEM2FHEM_Set($@)
     angesprochen werden.  Auf beiden FHEM-Installationen k&ouml;nnen
     Ger&auml;te gleichen Namens angelegt werden, aber wenn beide dasselbe
     Ereignis empfangen (z.B. wenn an beiden Installationen CULs angeschlossen
-    sind), werden alle FileLogs und notifys doppelt ausgel&ouml;st.  </li>
+    sind), werden alle FileLogs und notifys doppelt ausgel&ouml;st.<br>
+    Falls man lokal Ger&auml;te mit dem gleichen Namen (z.Bsp. als dummy)
+    angelegt hat, dann werden die Readings von dem lokalen Ger&auml;t
+    aktualisiert.
+    </li>
 
    <li>RAW<br>
     Bei diesem Verbindungstyp werden unaufbereitete Ereignisse (raw messages)
@@ -509,8 +577,22 @@ FHEM2FHEM_Set($@)
    <b>Attribute</b>
    <ul>
      <li><a href="#dummy">dummy</a></li>
-      <li><a href="#disable">disable</a></li>
-      <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
+     <li><a href="#disable">disable</a></li>
+     <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
+     <li><a name="#eventOnly">eventOnly</a><br>
+       falls gesetzt, werden nur die Events generiert, und es wird kein
+       Reading aktualisiert. Ist nur im LOG-Mode aktiv.
+       </li>
+     <li><a name="#addStateEvent">addStateEvent</a><br>
+       falls gesetzt, werden state Events als solche uebertragen. Zu beachten:
+       das Attribut ist nur f&uuml;r LOG-Mode relevant, beim Setzen wird eine
+       zus&auml;tzliche reopened Logzeile generiert, und die andere Seite muss
+       aktuell sein.
+       </li>
+     <li><a name="#excludeEvents">excludeEvents &lt;regexp&gt;</a>
+       die auf das &lt;regexp&gt; zutreffende Events werden nicht
+       bereitgestellt.
+       </li>
    </ul>
 
 </ul>

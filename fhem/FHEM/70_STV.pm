@@ -6,7 +6,7 @@
 #
 # written 2012 by Gabriel Bentele <gabriel at bentele.de>>
 #
-# $Id$
+# $Id: 70_STV.pm 12857 2016-12-21 11:59:33Z Zwiebel $
 #
 # Version = 1.5
 #
@@ -661,11 +661,13 @@ sub STV_Set($@)
     }
     return $ret;
   }
+  return undef;
 }
 
 1;
 
 =pod
+=item summary device to communicate with an Samsung Television
 =begin html
 
 <a name="STV"></a>

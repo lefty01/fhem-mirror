@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_keycard.gplot 9548 2015-10-19 19:55:47Z klaus-schauer $
 # Display a keycard log
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device

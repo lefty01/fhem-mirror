@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 75_LGTV_RS232.pm 9954 2015-11-21 13:58:15Z markusbloch $
 #
 # created by Markus Bloch (Notausstieg0309@googlemail.com)
 #

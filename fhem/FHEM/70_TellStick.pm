@@ -29,7 +29,7 @@
 #
 # Contributed by Kai 'wusel' Siering <wusel+fhem@uu.org> in 2012
 # Based in part on work for FHEM by other authors ...
-# $Id$
+# $Id: 70_TellStick.pm 11307 2016-04-25 08:02:06Z rudolfkoenig $
 ###########################
 
 package main;
@@ -346,8 +346,6 @@ sub nonblockGetLinesTellStick {
     <code>define &lt;name&gt; TellStick &lt;/path/to/tdtool&gt;</code>
     <br><br>
 
-    <!--<div style="background-color: #ffaaaa;"> -->
-    <div>
     Defines a path to the program "tdtool", which is used to control a (locally attached)
     "Telldus TellStick [Duo]" USB device. A TellStick controls a wide range of 433 MHz
     devices, like the widely available switchable power outlets from InterTechno.<br><br>

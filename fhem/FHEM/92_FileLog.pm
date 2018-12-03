@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 92_FileLog.pm 17181 2018-08-20 17:23:26Z rudolfkoenig $
 package main;
 
 use strict;
@@ -9,6 +9,7 @@ use IO::File;
 # This block is only needed when FileLog is loaded bevore FHEMWEB
 sub FW_pO(@);
 sub FW_pH(@);
+sub FW_addContent(;$);
 use vars qw($FW_ME);      # webname (default is fhem)
 use vars qw($FW_RET);     # Returned data (html)
 use vars qw($FW_RETTYPE); 
@@ -47,7 +48,11 @@ FileLog_Initialize($)
     createGluedFile:0,1
     disable:0,1
     disabledForIntervals
+    eventOnThreshold
+    ignoreRegexp
+    label
     logtype
+    mseclog:1,0
     nrarchive
     reformatFn 
   );
@@ -108,11 +113,12 @@ FileLog_Define($@)
   }
 
   $hash->{FH} = $fh;
+  $hash->{FD} = $fh->fileno() if($fh);
   $hash->{REGEXP} = $a[3];
   $hash->{logfile} = $a[2];
   $hash->{currentlogfile} = $f;
   $hash->{STATE} = "active";
-  notifyRegexpChanged($hash, $a[3]);
+  InternalTimer(0, sub(){  notifyRegexpChanged($hash, $a[3]); }, $hash);
 
   return undef;
 }
@@ -157,6 +163,8 @@ FileLog_Switch($)
       return 0;
     }
     $log->{FH} = $fh;
+    $log->{FD} = $fh->fileno();
+    setReadingsVal($log, "linesInTheFile", 0, TimeNow());
     return 1;
   }
   return 0;
@@ -177,17 +185,24 @@ FileLog_Log($$)
 
   my $n = $dev->{NAME};
   my $re = $log->{REGEXP};
+  my $iRe = AttrVal($ln, "ignoreRegexp", undef);
   my $max = int(@{$events});
   my $tn = $dev->{NTFY_TRIGGERTIME};
+  if($log->{mseclog}) {
+    my ($seconds, $microseconds) = gettimeofday();
+    $tn .= sprintf(".%03d", $microseconds/1000);
+  }
   my $ct = $dev->{CHANGETIME};
   my $fh;
   my $switched;
+  my $written = 0;
 
   for (my $i = 0; $i < $max; $i++) {
     my $s = $events->[$i];
     $s = "" if(!defined($s));
     my $t = (($ct && $ct->[$i]) ? $ct->[$i] : $tn);
     if($n =~ m/^$re$/ || "$n:$s" =~ m/^$re$/ || "$t:$n:$s" =~ m/^$re$/) {
+      next if($iRe && ($n =~ m/^$iRe$/ || "$n:$s" =~ m/^$iRe$/));
       $t =~ s/ /_/; # Makes it easier to parse with gnuplot
 
       if(!$switched) {
@@ -195,14 +210,26 @@ FileLog_Log($$)
         $switched = 1;
       }
       $fh = $log->{FH};
+      $s =~ s/\n/ /g;
       print $fh "$t $n $s\n";
+      $written++;
     }
   }
+  return "" if(!$written);
+
   if($fh) {
     $fh->flush;
     # Skip sync, it costs too much HD strain, esp. on SSD
     # $fh->sync if !($^O eq 'MSWin32'); #not implemented in Windows
   }
+  my $owr = ReadingsVal($ln, "linesInTheFile", 0);
+  my $eot = AttrVal($ln, "eventOnThreshold", 0);
+  if($eot && ($owr+$written) % $eot == 0) {
+    readingsSingleUpdate($log, "linesInTheFile", $owr+$written, 1);
+  } else {
+    setReadingsVal($log, "linesInTheFile", $owr+$written, $tn);
+  }
+
   return "";
 }
 
@@ -212,6 +239,17 @@ FileLog_Attr(@)
 {
   my @a = @_;
   my $do = 0;
+
+  if($a[2] eq "mseclog") {
+    $defs{$a[1]}{mseclog} = ($a[0] eq "set" && (!defined($a[3]) || $a[3]) );
+    return;
+  }
+
+  if($a[0] eq "set" && $a[2] eq "ignoreRegexp") {
+    return "Missing argument for ignoreRegexp" if(!defined($a[3]));
+    eval { "HALLO" =~ m/$a[3]/ };
+    return $@;
+  }
 
   if($a[0] eq "set" && $a[2] eq "disable") {
     $do = (!defined($a[3]) || $a[3]) ? 1 : 2;
@@ -232,25 +270,34 @@ FileLog_Set($@)
   my $me = $hash->{NAME};
 
   return "no set argument specified" if(int(@a) < 2);
-  my %sets = (reopen=>0, absorb=>1, addRegexpPart=>2, removeRegexpPart=>1);
+  my %sets = (reopen=>0, clear=>0, absorb=>1, addRegexpPart=>2, 
+              removeRegexpPart=>1);
   
   my $cmd = $a[1];
   if(!defined($sets{$cmd})) {
     my $r = "Unknown argument $cmd, choose one of ".join(" ",sort keys %sets);
     my $fllist = join(",", grep { $me ne $_ } devspec2array("TYPE=FileLog"));
     $r =~ s/absorb/absorb:$fllist/;
+    $r =~ s/clear/clear:noArg/;
+    $r =~ s/reopen/reopen:noArg/;
     return $r;
   }
   return "$cmd needs $sets{$cmd} parameter(s)" if(@a-$sets{$cmd} != 2);
 
-  if($cmd eq "reopen") {
+  if(($cmd eq "reopen") or ($cmd eq "clear")) {
     if(!FileLog_Switch($hash)) { # No rename, reopen anyway
       my $fh = $hash->{FH};
       my $cn = $hash->{currentlogfile};
       $fh->close();
-      $fh = new IO::File(">>$cn");
+      if($cmd eq "clear") {
+        $fh = new IO::File(">$cn");
+        setReadingsVal($hash, "linesInTheFile", 0, TimeNow());
+      } else {
+        $fh = new IO::File(">>$cn");
+      }
       return "Can't open $cn" if(!defined($fh));
       $hash->{FH} = $fh;
+      $hash->{FD} = $fh->fileno();
     }
 
   } elsif($cmd eq "addRegexpPart") {
@@ -312,6 +359,7 @@ FileLog_Set($@)
     rename("$mylogfile.new", $mylogfile);
     $fh = new IO::File(">>$mylogfile");
     $hash->{FH} = $fh;
+    $hash->{FD} = $fh->fileno();
 
     $hash->{REGEXP} .= "|".$vh->{REGEXP};
     $hash->{DEF} = $hash->{logfile} . " ". $hash->{REGEXP};
@@ -457,7 +505,7 @@ FileLog_logWrapper($)
   my $ret = "";
 
   if(!$d || !$type || !$file) {
-    FW_pO '<div id="content">FileLog_logWrapper: bad arguments</div>';
+    FW_addContent(">FileLog_logWrapper: bad arguments</div");
     return 0;
   }
 
@@ -468,7 +516,7 @@ FileLog_logWrapper($)
         if($path =~ m/%/ && $attr{global}{logdir});
     $path = AttrVal($d,"archivedir","") . "/$file" if(!-f $path);
 
-    FW_pO "<div id=\"content\">";
+    FW_addContent();
     FW_pO "<div class=\"tiny\">" if($FW_ss);
     FW_pO "<pre class=\"log\">";
     my $suffix = "</pre>".($FW_ss ? "</div>" : "")."</div>";
@@ -480,7 +528,7 @@ FileLog_logWrapper($)
     }
 
     if(!open(FH, $path)) {
-      FW_pO "<div id=\"content\">$path: $!</div></body></html>";
+      FW_addContent(">$path: $!</div></body></html");
       return 0;
     }
     my $cnt = join("", reverse <FH>);
@@ -493,7 +541,7 @@ FileLog_logWrapper($)
   } else {
     FileLog_loadSVG();
     FW_pO "<script type='text/javascript' src='$FW_ME/pgm2/svg.js'></script>";
-    FW_pO "<div id=\"content\">";
+    FW_addContent();
     FW_pO "<br>";
     if(AttrVal($d,"plotmode",$FW_plotmode) ne "gnuplot") {
       FW_pO SVG_zoomLink("$cmd;zoom=-1", "Zoom-in", "zoom in");
@@ -548,8 +596,8 @@ FileLog_Get($@)
   
   return "Usage: get $a[0] <infile> <outfile> <from> <to> [<column_spec>...]\n".
          "  where column_spec is <col>:<regexp>:<default>:<fn>\n" .
-         "  see the FileLogGrep entries in he .gplot files\n" .
-         "  <infile> is without direcory, - means the current file\n" .
+         "  see the FileLogGet entries in the .gplot files\n" .
+         "  <infile> is without directory, - means the current file\n" .
          "  <outfile> is a prefix, - means stdout\n"
         if(int(@a) < 4);
   shift @a;
@@ -582,13 +630,9 @@ FileLog_Get($@)
         $linf = $hash->{logfile};
         my ($Y,$m,$d) = ($1,$2,$3);
         sub expandFileWildcards($$$$) {
-            my $f=shift;
-            my ($Y,$m,$d)=@_;
-            $f =~ s/%Y/$Y/g;
-            $f =~ s/%m/$m/g;
-            $f =~ s/%d/$d/g;
-            $f =~ s/%L/$attr{global}{logdir}/g if($attr{global}{logdir});
-            return($f);
+           my ($f,$Y,$m,$d)=@_;
+           return ResolveDateWildcards($f,
+                        localtime(time_str2num("$Y-$m-$d 00:00:00")));
         };
         $linf=expandFileWildcards($linf,$Y,$m,$d);
         if(AttrVal($name, "createGluedFile", 0)) {
@@ -750,7 +794,7 @@ RESCAN:
             my $ts = "12:00:00";            # middle timestamp
             $ts = "$lda[1]:30:00" if($hd == 13);
             my $v = $fld[$col]-$h->{last1};
-            $v = 0 if($v < 0);              # Skip negative delta
+#            $v = 0 if($v < 0);              # Skip negative delta (why?)
             $dte = "$lda[0]_$ts";
             $val = sprintf("%g", $v);
             if($hd == 13) {                 # Generate missing 0 values / hour
@@ -823,6 +867,11 @@ RESCAN:
       my $end = $hash->{pos}{"$inf:$from"};
       my $start = $end - 1024;
       $start = 0 if($start < 0);
+
+      $ifh->seek($end, 0);
+      my $l = <$ifh>;
+      $end = $ifh->tell if($l && $l lt $from);
+
       $ifh->seek($start, 0);
       sysread($ifh, $buf, $end-$start);
       @rescanArr = split("\n", $buf);
@@ -874,11 +923,11 @@ RESCAN:
     }
 
     my $j = $i+1;
-    $data{"min$j"} = $min[$i] == 999999 ? "undef" : $min[$i];
-    $data{"max$j"} = $max[$i] == -999999 ? "undef" : $max[$i];
-    $data{"avg$j"} = $cnt[$i] ? sprintf("%0.1f", $sum[$i]/$cnt[$i]) : "undef";
+    $data{"min$j"} = $min[$i];
+    $data{"max$j"} = $max[$i];
+    $data{"avg$j"} = $cnt[$i] ? sprintf("%0.1f", $sum[$i]/$cnt[$i]) : 0;
     $data{"sum$j"} = $sum[$i];
-    $data{"cnt$j"} = $cnt[$i] ? $cnt[$i] : "undef";
+    $data{"cnt$j"} = $cnt[$i];
     $data{"currval$j"} = $lastv[$i];
     $data{"currdate$j"} = $lastd[$i];
     $data{"firstval$j"} = $firstv[$i];
@@ -1051,6 +1100,8 @@ FileLog_regexpFn($$)
 
 =pod
 =item helper
+=item summary    log events to a file
+=item summary_DE schreibt Events in eine Logdatei
 =begin html
 
 <a name="FileLog"></a>
@@ -1113,6 +1164,11 @@ FileLog_regexpFn($$)
       <ul>
         Reopen a FileLog after making some manual changes to the
         logfile.
+      </ul>
+      </li>
+    <li>clear
+      <ul>
+        Clears and reopens the logfile.
       </ul>
       </li>
     <li>addRegexpPart &lt;device&gt; &lt;regexp&gt;
@@ -1220,6 +1276,8 @@ FileLog_regexpFn($$)
   <a name="FileLogattr"></a>
   <b>Attributes</b>
   <ul>
+    <li><a href="#addStateEvent">addStateEvent</a></li><br><br>
+
     <a name="archivedir"></a>
     <a name="archivecmd"></a>
     <a name="nrarchive"></a>
@@ -1236,7 +1294,9 @@ FileLog_regexpFn($$)
 
         If this attribute is not set, but nrarchive is set, then nrarchive old
         logfiles are kept along the current one while older ones are moved to
-        archivedir (or deleted if archivedir is not set).  <br>
+        archivedir (or deleted if archivedir is not set).<br>
+        Note: "old" means here the first ones in the alphabetically soreted
+        list. <br>
 
         Note: setting these attributes for the global instance will effect the
         <a href="#logfile">FHEM logfile</a> only.
@@ -1257,53 +1317,40 @@ FileLog_regexpFn($$)
 
     <li><a href="#disable">disable</a></li>
     <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
+    <br>
 
+    <a name="eventOnThreshold"></a>
+    <li>eventOnThreshold<br>
+        If set (to a nonzero number), the event linesInTheFile will be
+        generated, if the lines in the file is a multiple of the set number.
+        Note: the counter is only correct for files created after this
+        feature was implemented. A FHEM crash or kill will falsify the counter.
+        </li><br>
+
+    <li><a href="#ignoreRegexp">ignoreRegexp</a></li>
+
+    <li><a href="#label">label</a><br></li>
+      
     <a name="logtype"></a>
     <li>logtype<br>
-        Used by the pgm2 webfrontend to offer gnuplot/SVG images made from the
+        Used by FHEMWEB to offer gnuplot/SVG images made from the
         logs.  The string is made up of tokens separated by comma (,), each
-        token specifies a different gnuplot program. The token may contain a
+        token specifies a different configuration. The token may contain a
         colon (:), the part before the colon defines the name of the program,
-        the part after is the string displayed in the web frontend. Currently
-        following types of gnuplot programs are implemented:<br>
-        <ul>
-           <li>fs20<br>
-               Plots on as 1 and off as 0. The corresponding filelog definition
-               for the device fs20dev is:<br>
-               define fslog FileLog log/fs20dev-%Y-%U.log fs20dev
-          </li>
-           <li>fht<br>
-               Plots the measured-temp/desired-temp/actuator lines. The
-               corresponding filelog definitions (for the FHT device named
-               fht1) looks like:<br>
-               <code>define fhtlog1 FileLog log/fht1-%Y-%U.log fht1:.*(temp|actuator).*</code>
-
-          </li>
-           <li>temp4rain10<br>
-               Plots the temperature and rain (per hour and per day) of a
-               ks300. The corresponding filelog definitions (for the KS300
-               device named ks300) looks like:<br>
-               define ks300log FileLog log/fht1-%Y-%U.log ks300:.*H:.*
-          </li>
-           <li>hum6wind8<br>
-               Plots the humidity and wind values of a
-               ks300. The corresponding filelog definition is the same as
-               above, both programs evaluate the same log.
-          </li>
-           <li>text<br>
-               Shows the logfile as it is (plain text). Not gnuplot definition
-               is needed.
-          </li>
-        </ul>
+        the part after is the string displayed in the web frontend.<br>
         Example:<br>
-           attr ks300log1 logtype temp4rain10:Temp/Rain,hum6wind8:Hum/Wind,text:Raw-data
+           attr ks300log1 logtype
+                temp4rain10:Temp/Rain,hum6wind8:Hum/Wind,text:Raw-data
     </li><br>
+
+    <li><a href="#mseclog">mseclog</a></li><br>
 
     <a name="reformatFn"></a>
     <li>reformatFn<br>
-      used to convert "foreign" logfiles for the SVG Module, contains the name(!)
-      of a function, which will be called with a "raw" line from the original
-      file, and has to return a line in "FileLog" format.<br>
+      used to convert "foreign" logfiles for the SVG Module, contains the
+      name(!) of a function, which will be called with a "raw" line from the
+      original file, and has to return a line in "FileLog" format.<br>
+
       E.g. to visualize the NTP loopstats, set reformatFn to ntpLoopstats, and
       copy the following into your 99_myUtils.pm:
       <pre><code>
@@ -1394,6 +1441,10 @@ FileLog_regexpFn($$)
       <ul>
         Erneutes &Ouml;ffnen eines FileLogs nach h&auml;ndischen
         &Auml;nderungen in dieser Datei.
+      </ul></li>
+    <li>clear
+      <ul>
+        L&ouml;schen und erneutes &Ouml;ffnen eines FileLogs.
       </ul></li>
     <li>addRegexpPart &lt;device&gt; &lt;regexp&gt;
       <ul>
@@ -1516,6 +1567,8 @@ FileLog_regexpFn($$)
   <a name="FileLogattr"></a>
   <b>Attribute</b>
   <ul>
+    <li><a href="#addStateEvent">addStateEvent</a></li><br><br>
+
     <a name="archivedir"></a>
     <a name="archivecmd"></a>
     <a name="nrarchive"></a>
@@ -1535,6 +1588,8 @@ FileLog_regexpFn($$)
         werden nrarchive viele Logfiles im aktuellen Verzeichnis gelassen, und
         &auml;ltere Dateien in das Archivverzeichnis (archivedir) verschoben
         (oder gel&ouml;scht, falls kein archivedir gesetzt wurde).<br>
+        Achtung: "&auml;ltere Dateien" sind die, die in der alphabetisch
+        sortierten Liste oben sind.<br>
 		
         Hinweis: Werden diese Attribute als global instance gesetzt, hat das
         auschlie&szlig;lich auf das <a href="#logfile">FHEM logfile</a>
@@ -1554,7 +1609,20 @@ FileLog_regexpFn($$)
         </li><br>
 
     <li><a href="#disable">disable</a></li>
-    <li><a href="#addStateEvent">addStateEvent</a></li>
+    <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
+    <br>
+
+    <a name="eventOnThreshold"></a>
+    <li>eventOnThreshold<br>
+        Falls es auf eine (nicht Null-) Zahl gesetzt ist, dann wird das
+        linesInTheFile Event generiert, falls die Anzahl der Zeilen in der
+        Datei ein Mehrfaches der gesetzen Zahl ist. Achtung: der Z&auml;hler ist
+        nur f&uuml;r solche Dateien korrekt, die nach dem Impementieren dieses
+        Features angelegt wurden. Ein Absturz/Abschu&szlig; von FHEM
+        verf&auml;lscht die Z&auml;hlung.
+        </li><br>
+
+    <li><a href="#ignoreRegexp">ignoreRegexp</a></li>
 
     <a name="logtype"></a>
     <li>logtype<br>
@@ -1577,7 +1645,8 @@ FileLog_regexpFn($$)
                Zeichnet die Ist-Temperatur/Soll-temperatur/Aktor Kurven. Die
                passende FileLog-Definition (f&uuml;r das FHT-Ger&auml;t mit
                Namen fht1)sieht wie folgt aus: <br>
-               <code>define fhtlog1 FileLog log/fht1-%Y-%U.log fht1:.*(temp|actuator).*</code>
+               <code>define fhtlog1 FileLog log/fht1-%Y-%U.log
+                fht1:.*(temp|actuator).*</code>
           </li>
            <li>temp4rain10<br>
                Zeichnet eine Kurve aus der Temperatur und dem Niederschlag (pro
@@ -1600,6 +1669,8 @@ FileLog_regexpFn($$)
         Beispiel:<br> attr ks300log1 logtype
         temp4rain10:Temp/Rain,hum6wind8:Hum/Wind,text:Raw-data
     </li><br>
+
+    <li><a href="#mseclog">mseclog</a></li><br>
 
     <a name="reformatFn"></a>
     <li>reformatFn<br>

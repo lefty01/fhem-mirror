@@ -1,35 +1,9 @@
-# $Id$
-##############################################################################
-#
-#     msgSchema.pm
-#     Schema database for FHEM modules and their messaging options.
-#     These commands are being used as default setting for FHEM command 'msg'
-#     unless there is an explicit msgCmd* attribute.
-#
-#     FHEM module authors may request to extend this file
-#
-#     Copyright by Julian Pawlowski
-#     e-mail: julian.pawlowski at gmail.com
-#
-#     This file is part of fhem.
-#
-#     Fhem is free software: you can redistribute it and/or modify
-#     it under the terms of the GNU General Public License as published by
-#     the Free Software Foundation, either version 2 of the License, or
-#     (at your option) any later version.
-#
-#     Fhem is distributed in the hope that it will be useful,
-#     but WITHOUT ANY WARRANTY; without even the implied warranty of
-#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#     GNU General Public License for more details.
-#
-#     You should have received a copy of the GNU General Public License
-#     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
-#
-##############################################################################
+###############################################################################
+# $Id: msgSchema.pm 17853 2018-11-27 12:49:07Z loredo $
+package main;
+sub msgSchema_Initialize() { }
 
 package msgSchema;
-
 use strict;
 use warnings;
 
@@ -37,44 +11,51 @@ use warnings;
 my $db = {
     'audio' => {
 
-        'AMAD' => {
-            'Normal'        => 'set %DEVICE% ttsMsg %MSG%',
-            'ShortPrio'     => 'set %DEVICE% ttsMsg %MSGSH%',
-            'Short'         => 'set %DEVICE% ttsMsg %MSGSH%',
+        'AMADDevice' => {
+            'Normal'        => 'set %DEVICE% ttsMsg &%LANG%;; %MSGSHRT%',
+            'ShortPrio'     => 'set %DEVICE% ttsMsg &%LANG%;; %SHOUTOUT%',
+            'Short'         => 'set %DEVICE% ttsMsg &%LANG%;; %SHOUTOUT%',
             'defaultValues' => {
+                'Normal' => {
+                    'LANG' => 'de',
+                },
                 'ShortPrio' => {
-                    'MSGSH' => 'Achtung!',
+                    'LANG'     => 'de',
+                    'SHOUTOUT' => 'Achtung!',
                 },
                 'Short' => {
-                    'MSGSH' => 'Hinweis!',
+                    'LANG'     => 'de',
+                    'SHOUTOUT' => 'Hinweis!',
                 },
             },
         },
 
         'SB_PLAYER' => {
-            'Normal'        => 'set %DEVICE% talk |%TITLE%| %MSG%',
-            'ShortPrio'     => 'set %DEVICE% talk |%TITLE%| %MSGSH%',
-            'Short'         => 'set %DEVICE% talk |%TITLE%| %MSGSH%',
+            'Normal'        => 'set %DEVICE% talk |%TITLE%| %MSGSHRT%',
+            'ShortPrio'     => 'set %DEVICE% talk |%TITLE%| %SHOUTOUT%',
+            'Short'         => 'set %DEVICE% talk |%TITLE%| %SHOUTOUT%',
             'defaultValues' => {
                 'Normal' => {
                     'TITLE' => 'Announcement',
                 },
                 'ShortPrio' => {
-                    'MSGSH' => 'Achtung!',
-                    'TITLE' => 'Announcement',
+                    'SHOUTOUT' => 'Achtung!',
+                    'TITLE'    => 'Announcement',
                 },
                 'Short' => {
-                    'MSGSH' => '',
-                    'TITLE' => 'Announcement',
+                    'SHOUTOUT' => '',
+                    'TITLE'    => 'Announcement',
                 },
             },
         },
 
         'SONOSPLAYER' => {
-            'Normal' => 'set %DEVICE% Speak %VOLUME% %LANG% |%TITLE%| %MSG%',
+            'Normal' =>
+              'set %DEVICE% Speak %VOLUME% %LANG% |%TITLE%| %MSGSHRT%',
             'ShortPrio' =>
-              'set %DEVICE% Speak %VOLUME% %LANG% |%TITLE%| %MSGSH%',
-            'Short' => 'set %DEVICE% Speak %VOLUME% %LANG% |%TITLE%| %MSGSH%',
+              'set %DEVICE% Speak %VOLUME% %LANG% |%TITLE%| %SHOUTOUT%',
+            'Short' =>
+              'set %DEVICE% Speak %VOLUME% %LANG% |%TITLE%| %SHOUTOUT%',
             'defaultValues' => {
                 'Normal' => {
                     'VOLUME' => 38,
@@ -82,43 +63,56 @@ my $db = {
                     'TITLE'  => 'Announcement',
                 },
                 'ShortPrio' => {
-                    'VOLUME' => 33,
-                    'LANG'   => 'de',
-                    'MSGSH'  => 'Achtung!',
-                    'TITLE'  => 'Announcement',
+                    'VOLUME'   => 33,
+                    'LANG'     => 'de',
+                    'TITLE'    => 'Announcement',
+                    'SHOUTOUT' => 'Achtung!',
                 },
                 'Short' => {
-                    'VOLUME' => 28,
-                    'LANG'   => 'de',
-                    'MSGSH'  => '',
-                    'TITLE'  => 'Announcement',
+                    'VOLUME'   => 28,
+                    'LANG'     => 'de',
+                    'TITLE'    => 'Announcement',
+                    'SHOUTOUT' => '',
                 },
             },
         },
 
         'Text2Speech' => {
-            'Normal'        => 'set %DEVICE% tts %MSG%',
-            'ShortPrio'     => 'set %DEVICE% tts %MSGSH%',
-            'Short'         => 'set %DEVICE% tts %MSGSH%',
+            'Normal'        => 'set %DEVICE% tts %MSGSHRT%',
+            'ShortPrio'     => 'set %DEVICE% tts %SHOUTOUT%',
+            'Short'         => 'set %DEVICE% tts %SHOUTOUT%',
             'defaultValues' => {
                 'ShortPrio' => {
-                    'MSGSH' => 'Achtung!',
+                    'SHOUTOUT' => 'Achtung!',
                 },
                 'Short' => {
-                    'MSGSH' => 'Hinweis!',
+                    'SHOUTOUT' => 'Hinweis!',
                 },
             },
         },
 
+        'FULLY' => {
+            'Normal'        => 'set %DEVICE% speak %MSGSHRT%',
+            'ShortPrio'     => 'set %DEVICE% speak %SHOUTOUT%',
+            'Short'         => 'set %DEVICE% speak %SHOUTOUT%',
+            'defaultValues' => {
+                'ShortPrio' => {
+                    'SHOUTOUT' => 'Achtung!',
+                },
+                'Short' => {
+                    'SHOUTOUT' => 'Hinweis!',
+                },
+            },
+        },
     },
 
     'light' => {
 
         'HUEDevice' => {
             'Normal' =>
-'{ my $dev=\'%DEVICE%\'; my $state=ReadingsVal($dev,"state","off"); fhem "set $dev blink 2 1"; fhem "sleep 4.25; set $dev:FILTER=state!=$state $state"; }',
+'{ my $d=\'%DEVICE%\'; my $state=ReadingsVal($d,"state","off"); fhem "set $d blink 2 1"; fhem "sleep 4.25; set $d:FILTER=state!=$state $state"; }',
             'High' =>
-'{ my $dev=\'%DEVICE%\'; my $state=ReadingsVal($dev,"state","off"); fhem "set $dev blink 10 1"; fhem "sleep 20.25; set $dev:FILTER=state!=$state $state"; }',
+'{ my $d=\'%DEVICE%\'; my $state=ReadingsVal($d,"state","off"); fhem "set $d blink 10 1"; fhem "sleep 20.25; set $d:FILTER=state!=$state $state"; }',
             'Low' => 'set %DEVICE% alert select',
         },
 
@@ -128,11 +122,11 @@ my $db = {
 
         'fhemMsgMail' => {
             'Normal' =>
-'{ my $dev=\'%DEVICE%\'; my $title=\'%TITLE%\'; my $msg=\'%MSG%\'; system("echo \'$msg\' | /usr/bin/mail -s \'$title\' \'$dev\'"); }',
+'{ my $d=\'%DEVICE%\'; my $title=\'%TITLE%\'; my $msg=\'%MSG%\'; system("echo \'$msg\' | /usr/bin/mail -s \'$title\' \'$d\'"); }',
             'High' =>
-'{ my $dev=\'%DEVICE%\'; my $title=\'%TITLE%\'; my $msg=\'%MSG%\'; system("echo \'$msg\' | /usr/bin/mail -s \'$title\' \'$dev\'"); }',
+'{ my $d=\'%DEVICE%\'; my $title=\'%TITLE%\'; my $msg=\'%MSG%\'; system("echo \'$msg\' | /usr/bin/mail -s \'$title\' \'$d\'"); }',
             'Low' =>
-'{ my $dev=\'%DEVICE%\'; my $title=\'%TITLE%\'; my $msg=\'%MSG%\'; system("echo \'$msg\' | /usr/bin/mail -s \'$title\' \'$dev\'"); }',
+'{ my $d=\'%DEVICE%\'; my $title=\'%TITLE%\'; my $msg=\'%MSG%\'; system("echo \'$msg\' | /usr/bin/mail -s \'$title\' \'$d\'"); }',
             'defaultValues' => {
                 'Normal' => {
                     'TITLE' => 'System Message',
@@ -168,18 +162,18 @@ my $db = {
         },
 
         'Jabber' => {
-            'Normal' => 'set %DEVICE% msg%JabberMsgType% %RECIPIENT% %MSG%',
-            'High'   => 'set %DEVICE% msg%JabberMsgType% %RECIPIENT% %MSG%',
-            'Low'    => 'set %DEVICE% msg%JabberMsgType% %RECIPIENT% %MSG%',
+            'Normal' => 'set %DEVICE% msg%Jabber_MTYPE% %RECIPIENT% %MSG%',
+            'High'   => 'set %DEVICE% msg%Jabber_MTYPE% %RECIPIENT% %MSG%',
+            'Low'    => 'set %DEVICE% msg%Jabber_MTYPE% %RECIPIENT% %MSG%',
             'defaultValues' => {
                 'Normal' => {
-                    'JabberMsgType' => '',
+                    'Jabber_MTYPE' => '',
                 },
                 'High' => {
-                    'JabberMsgType' => '',
+                    'Jabber_MTYPE' => '',
                 },
                 'Low' => {
-                    'JabberMsgType' => '',
+                    'Jabber_MTYPE' => '',
                 },
             },
         },
@@ -209,52 +203,85 @@ my $db = {
 
         'Pushover' => {
             'Normal' =>
-'set %DEVICE% msg \'%TITLE%\' \'%MSG%\' \'%RECIPIENT%\' %PRIORITY% \'%Pushover_SOUND%\' %RETRY% %EXPIRE% %URLTITLE% %ACTION%',
+'set %DEVICE% %Pushover_MTYPE% title=\'%TITLE%\' device=\'%RECIPIENT%:%TERMINAL%\' priority=%PRIORITY% url_title="%URLTITLE%" message=\'%MSG%\'',
             'High' =>
-'set %DEVICE% msg \'%TITLE%\' \'%MSG%\' \'%RECIPIENT%\' %PRIORITY% \'%Pushover_SOUND%\' %RETRY% %EXPIRE% %URLTITLE% %ACTION%',
+'set %DEVICE% %Pushover_MTYPE% title=\'%TITLE%\' device=\'%RECIPIENT%:%TERMINAL%\' priority=%PRIORITY% url_title="%URLTITLE%" retry=%RETRY% expire=%EXPIRE% message=\'%MSG%\'',
             'Low' =>
-'set %DEVICE% msg \'%TITLE%\' \'%MSG%\' \'%RECIPIENT%\' %PRIORITY% \'%Pushover_SOUND%\' %RETRY% %EXPIRE% %URLTITLE% %ACTION%',
+'set %DEVICE% %Pushover_MTYPE% title=\'%TITLE%\' device=\'%RECIPIENT%:%TERMINAL%\' priority=%PRIORITY% url_title="%URLTITLE%" message=\'%MSG%\'',
             'defaultValues' => {
                 'Normal' => {
                     'RECIPIENT'      => '',
-                    'RETRY'          => '',
-                    'EXPIRE'         => '',
+                    'TERMINAL'       => '',
                     'URLTITLE'       => '',
-                    'ACTION'         => '',
-                    'Pushover_SOUND' => '',
+                    'Pushover_MTYPE' => 'msg',
                 },
                 'High' => {
                     'RECIPIENT'      => '',
+                    'TERMINAL'       => '',
                     'RETRY'          => '120',
                     'EXPIRE'         => '600',
                     'URLTITLE'       => '',
-                    'ACTION'         => '',
-                    'Pushover_SOUND' => '',
+                    'Pushover_MTYPE' => 'msg',
                 },
                 'Low' => {
                     'RECIPIENT'      => '',
-                    'RETRY'          => '',
-                    'EXPIRE'         => '',
+                    'TERMINAL'       => '',
                     'URLTITLE'       => '',
-                    'ACTION'         => '',
-                    'Pushover_SOUND' => '',
+                    'Pushover_MTYPE' => 'msg',
+                },
+            },
+        },
+
+        'Pushsafer' => {
+            'Normal' =>
+'set %DEVICE% message "%MSG%" title="%TITLE%" key="%RECIPIENT%" device="%TERMINAL%" vibration="%Pushsafer_VIBRATION%" url="%ACTION%" urlText="%URLTITLE%" ttl="%EXPIRE%"',
+            'High' =>
+'set %DEVICE% message "%MSG%" title="%TITLE%" key="%RECIPIENT%" device="%TERMINAL%" vibration="%Pushsafer_VIBRATION%" url="%ACTION%" urlText="%URLTITLE%" ttl="%EXPIRE%"',
+            'Low' =>
+'set %DEVICE% message "%MSG%" title="%TITLE%" key="%RECIPIENT%" device="%TERMINAL%" url="%ACTION%" urlText="%URLTITLE%" ttl="%EXPIRE%"',
+            'defaultValues' => {
+                'Normal' => {
+                    'RECIPIENT'           => '',
+                    'TERMINAL'            => '',
+                    'EXPIRE'              => '',
+                    'URLTITLE'            => '',
+                    'ACTION'              => '',
+                    'Pushsafer_VIBRATION' => '1',
+                },
+                'High' => {
+                    'RECIPIENT'           => '',
+                    'TERMINAL'            => '',
+                    'EXPIRE'              => '',
+                    'URLTITLE'            => '',
+                    'ACTION'              => '',
+                    'Pushsafer_VIBRATION' => '2',
+                },
+                'Low' => {
+                    'RECIPIENT' => '',
+                    'TERMINAL'  => '',
+                    'EXPIRE'    => '',
+                    'URLTITLE'  => '',
+                    'ACTION'    => '',
                 },
             },
         },
 
         'TelegramBot' => {
-            'Normal'        => 'set %DEVICE% message %RECIPIENT% %MSG%',
-            'High'          => 'set %DEVICE% message %RECIPIENT% %MSG%',
-            'Low'           => 'set %DEVICE% message %RECIPIENT% %MSG%',
+            'Normal' => 'set %DEVICE% %TelegramBot_MTYPE% %RECIPIENT% %MSG%',
+            'High'   => 'set %DEVICE% %TelegramBot_MTYPE% %RECIPIENT% %MSG%',
+            'Low'    => 'set %DEVICE% %TelegramBot_MTYPE% %RECIPIENT% %MSG%',
             'defaultValues' => {
                 'Normal' => {
-                    'RECIPIENT' => '',
+                    'RECIPIENT'         => '',
+                    'TelegramBot_MTYPE' => 'message',
                 },
                 'High' => {
-                    'RECIPIENT' => '',
+                    'RECIPIENT'         => '',
+                    'TelegramBot_MTYPE' => 'message',
                 },
                 'Low' => {
-                    'RECIPIENT' => '',
+                    'RECIPIENT'         => '',
+                    'TelegramBot_MTYPE' => 'message',
                 },
             },
         },
@@ -269,39 +296,117 @@ my $db = {
 
     'screen' => {
 
-        'AMAD' => {
+        'AMADDevice' => {
             'Normal' => 'set %DEVICE% screenMsg %MSG%',
             'High'   => 'set %DEVICE% screenMsg %MSG%',
             'Low'    => 'set %DEVICE% screenMsg %MSG%',
         },
 
         'ENIGMA2' => {
-            'Normal' => 'set %DEVICE% msg %ENIGMA2_TYPE% %TIMEOUT% %MSG%',
-            'High'   => 'set %DEVICE% msg %ENIGMA2_TYPE% %TIMEOUT% %MSG%',
-            'Low'    => 'set %DEVICE% msg %ENIGMA2_TYPE% %TIMEOUT% %MSG%',
+            'Normal' => 'set %DEVICE% msg %ENIGMA2_MTYPE% %TIMEOUT% %MSG%',
+            'High'   => 'set %DEVICE% msg %ENIGMA2_MTYPE% %TIMEOUT% %MSG%',
+            'Low'    => 'set %DEVICE% msg %ENIGMA2_MTYPE% %TIMEOUT% %MSG%',
             'defaultValues' => {
                 'Normal' => {
-                    'ENIGMA2_TYPE' => 'info',
-                    'TIMEOUT'      => 8,
+                    'ENIGMA2_MTYPE' => 'info',
+                    'TIMEOUT'       => 8,
                 },
                 'High' => {
-                    'ENIGMA2_TYPE' => 'attention',
-                    'TIMEOUT'      => 12,
+                    'ENIGMA2_MTYPE' => 'attention',
+                    'TIMEOUT'       => 12,
                 },
                 'Low' => {
-                    'ENIGMA2_TYPE' => 'message',
-                    'TIMEOUT'      => 8,
+                    'ENIGMA2_MTYPE' => 'message',
+                    'TIMEOUT'       => 8,
+                },
+            },
+        },
+
+        'KODI' => {
+            'Normal' =>
+'{ my $d=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $d msg \'$title\' \'$msg\' $timeout %KODI_ICON%"; }',
+            'High' =>
+'{ my $d=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $d msg \'$title\' \'$msg\' $timeout %KODI_ICON%"; }',
+            'Low' =>
+'{ my $d=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $d msg \'$title\' \'$msg\' $timeout %KODI_ICON%"; }',
+            'defaultValues' => {
+                'Normal' => {
+                    'TIMEOUT'   => 8,
+                    'TITLE'     => 'Info',
+                    'KODI_ICON' => 'info',
+                },
+                'High' => {
+                    'TIMEOUT'   => 12,
+                    'TITLE'     => 'Warning',
+                    'KODI_ICON' => 'warning',
+                },
+                'Low' => {
+                    'TIMEOUT'   => 8,
+                    'TITLE'     => 'Notice',
+                    'KODI_ICON' => '',
+                },
+            },
+        },
+
+        'PostMe' => {
+            'Normal' =>
+'set %DEVICE% create %TITLESHRT2%_%MSGID%; set %DEVICE% add %TITLESHRT2%_%MSGID% %MSGDATETIME%; set %DEVICE% add %TITLESHRT2%_%MSGID% %TITLE%; set %DEVICE% add %TITLESHRT2%_%MSGID% %PostMe_TO%%SRCALIAS% (%SOURCE%); set %DEVICE% add %TITLESHRT2%_%MSGID% _________________________; set %DEVICE% add %TITLESHRT2%_%MSGID% %MSG%',
+            'High' =>
+'set %DEVICE% create %TITLESHRT2%_%MSGID%; set %DEVICE% add %TITLESHRT2%_%MSGID% %MSGDATETIME%; set %DEVICE% add %TITLESHRT2%_%MSGID% %TITLE%; set %DEVICE% add %TITLESHRT2%_%MSGID% %PostMe_PRIO%%PRIOCAT%/%PRIORITY%; set %DEVICE% add %TITLESHRT2%_%MSGID% %PostMe_TO%%SRCALIAS% (%SOURCE%); set %DEVICE% add %TITLESHRT2%_%MSGID% _________________________; set %DEVICE% add %TITLESHRT2%_%MSGID% %MSG%',
+            'Low' =>
+'set %DEVICE% create %TITLESHRT2%_%MSGID%; set %DEVICE% add %TITLESHRT2%_%MSGID% %MSGDATETIME%; set %DEVICE% add %TITLESHRT2%_%MSGID% %TITLE%; set %DEVICE% add %TITLESHRT2%_%MSGID% %PostMe_PRIO%%PRIOCAT%/%PRIORITY%; set %DEVICE% add %TITLESHRT2%_%MSGID% %PostMe_TO%%SRCALIAS% (%SOURCE%); set %DEVICE% add %TITLESHRT2%_%MSGID% _________________________; set %DEVICE% add %TITLESHRT2%_%MSGID% %MSG%',
+            'defaultValues' => {
+                'Normal' => {
+                    'TITLE'       => 'Info',
+                    'PostMe_TO'   => 'To: ',
+                    'PostMe_SUB'  => 'Subject: ',
+                    'PostMe_PRIO' => 'Priority: ',
+                },
+                'High' => {
+                    'TITLE'       => 'Warning',
+                    'PostMe_TO'   => 'To',
+                    'PostMe_SUB'  => 'Subject',
+                    'PostMe_PRIO' => 'Priority',
+                },
+                'Low' => {
+                    'TITLE'       => 'Notice',
+                    'PostMe_TO'   => 'To: ',
+                    'PostMe_SUB'  => 'Subject: ',
+                    'PostMe_PRIO' => 'Priority: ',
+                },
+            },
+        },
+
+        'LaMetric' => {
+            'Normal' =>
+'set %DEVICE% msg \'%LaMatric_ICON%\' \'%MSG%\' \'%LaMetric_SOUND%\'',
+            'High' =>
+'set %DEVICE% msg \'%LaMatric_ICON%\' \'%MSG%\' \'%LaMetric_SOUND%\'',
+            'Low' =>
+'set %DEVICE% msg \'%LaMatric_ICON%\' \'%MSG%\' \'%LaMetric_SOUND%\'',
+            'defaultValues' => {
+                'Normal' => {
+                    'LaMatric_ICON'  => 'a21844',
+                    'LaMetric_SOUND' => 'notifications:notification',
+                },
+                'High' => {
+                    'LaMatric_ICON'  => 'a4787',
+                    'LaMetric_SOUND' => 'alarms:alarm13',
+                },
+                'Low' => {
+                    'LaMatric_ICON'  => 'a22098',
+                    'LaMetric_SOUND' => 'notifications:positive5',
                 },
             },
         },
 
         'XBMC' => {
             'Normal' =>
-'{ my $dev=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $dev msg \'$title\' \'$msg\' $timeout %XBMC_ICON%"; }',
+'{ my $d=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $d msg \'$title\' \'$msg\' $timeout %XBMC_ICON%"; }',
             'High' =>
-'{ my $dev=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $dev msg \'$title\' \'$msg\' $timeout %XBMC_ICON%"; }',
+'{ my $d=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $d msg \'$title\' \'$msg\' $timeout %XBMC_ICON%"; }',
             'Low' =>
-'{ my $dev=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $dev msg \'$title\' \'$msg\' $timeout %XBMC_ICON%"; }',
+'{ my $d=\'%DEVICE%\'; my $msg=\'%MSG%\'; my $title=\'%TITLE%\'; my $timeout=%TIMEOUT%*1000; fhem "set $d msg \'$title\' \'$msg\' $timeout %XBMC_ICON%"; }',
             'defaultValues' => {
                 'Normal' => {
                     'TIMEOUT'   => 8,

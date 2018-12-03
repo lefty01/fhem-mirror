@@ -1,5 +1,5 @@
 ################################################################
-# $Id$
+# $Id: 98_backup.pm 17053 2018-07-30 17:16:17Z rudolfkoenig $
 # vim: ts=2:et
 #
 #  (c) 2012 Copyright: Martin Fischer (m_fischer at gmx dot de)
@@ -29,7 +29,7 @@ use warnings;
 sub CommandBackup($$);
 sub parseConfig($);
 sub readModpath($$);
-sub createArchiv($$);
+sub createArchiv($$$);
 
 my @pathname;
 
@@ -38,7 +38,7 @@ sub
 backup_Initialize($$)
 {
   my %hash = (  Fn => "CommandBackup",
-               Hlp => ",create a backup of fhem configuration, state and modpath" );
+      Hlp => ",create a backup of fhem configuration, state and modpath" );
   $cmds{backup} = \%hash;
 }
 
@@ -48,9 +48,17 @@ CommandBackup($$)
 {
   my ($cl, $param) = @_;
 
-  my $modpath = $attr{global}{modpath};
-  my $configfile = AttrVal("global", "configfile", undef);
-  my $statefile  = AttrVal("global", "statefile", undef);
+  my $byUpdate = ($param && $param eq "startedByUpdate");
+  my $modpath    = AttrVal("global", "modpath","");
+  my $configfile = AttrVal("global", "configfile", "");
+  my $statefile  = AttrVal("global", "statefile", "");
+  my $now = gettimeofday();
+  my @t = localtime($now);
+  $statefile = ResolveDateWildcards($statefile, @t);
+
+  # prevent duplicate entries in backup list for default config, forum #54826
+  $configfile = '' if ($configfile eq 'fhem.cfg' || configDBUsed());
+  $statefile  = '' if ($statefile  eq "./log/fhem.save");
   my $msg;
   my $ret;
 
@@ -87,16 +95,16 @@ CommandBackup($$)
     Log 4, "backup include: 'configDB.conf'";
   } else {
     # get pathnames to archiv
-    push @pathname, $configfile;
+    push @pathname, $configfile if($configfile);
     Log 4, "backup include: '$configfile'";
     $ret = parseConfig($configfile);
-    push @pathname, $statefile;
+    push @pathname, $statefile if($statefile);
     Log 4, "backup include: '$statefile'";
   }
   $ret = readModpath($modpath,$backupdir);
 
   # create archiv
-  $ret = createArchiv($backupdir, $cl);
+  $ret = createArchiv($backupdir, $cl, $byUpdate);
 
   @pathname = [];
   undef @pathname;
@@ -108,6 +116,8 @@ sub
 parseConfig($)
 {
   my $configfile = shift;
+  # we need default value to read included files
+  $configfile = $configfile ? $configfile : 'fhem.cfg';
   my $fh;
   my $msg;
   my $ret;
@@ -159,9 +169,9 @@ readModpath($$)
 }
 
 sub
-createArchiv($$)
+createArchiv($$$)
 {
-  my ($backupdir,$cl) = @_;
+  my ($backupdir,$cl,$byUpdate) = @_;
   my $backupcmd = (!defined($attr{global}{backupcmd}) ? undef : $attr{global}{backupcmd});
   my $symlink = (!defined($attr{global}{backupsymlink}) ? "no" : $attr{global}{backupsymlink});
   my $tarOpts;
@@ -172,6 +182,8 @@ createArchiv($$)
   $dateTime =~ s/ /_/g;
   $dateTime =~ s/(:|-)//g;
 
+  my $pathlist = join( "\" \"", @pathname );
+
   my $cmd="";
   if (!defined($backupcmd)) {
     if (lc($symlink) eq "no") {
@@ -180,16 +192,23 @@ createArchiv($$)
       $tarOpts = "chf";
     }
 
-    # prevents tar's output of "Removing leading /" and return total bytes of archive
-    $cmd = "tar -$tarOpts - @pathname |gzip > $backupdir/FHEM-$dateTime.tar.gz";
+    # prevents tar's output of "Removing leading /" and return total bytes of
+    # archive
+    $cmd = "tar -$tarOpts - \"$pathlist\" |gzip > $backupdir/FHEM-$dateTime.tar.gz";
 
   } else {
-    $cmd = "$backupcmd \"@pathname\"";
+    $cmd = "$backupcmd \"$pathlist\"";
 
   }
   Log 2, "Backup with command: $cmd";
-  if($cl && ref($cl) eq "HASH" && $cl->{TYPE} && $cl->{TYPE} eq "FHEMWEB") {
-    system("($cmd; echo Backup done) 2>&1 &");
+  if(!$fhemForked && !$byUpdate) {
+    use Blocking;
+    our $BC_telnetDevice;
+    BC_searchTelnet("backup");
+    my $tp = $defs{$BC_telnetDevice}{PORT};
+
+    system("($cmd; echo Backup done;".
+                "$^X $0 localhost:$tp 'trigger global backup done')2>&1 &");
     return "Started the backup in the background, watch the log for details";
   }
   $ret = `($cmd) 2>&1`;
@@ -201,6 +220,7 @@ createArchiv($$)
   if (!defined($backupcmd) && -e "$backupdir/FHEM-$dateTime.tar.gz") {
     my $size = -s "$backupdir/FHEM-$dateTime.tar.gz";
     $msg = "backup done: FHEM-$dateTime.tar.gz ($size Bytes)";
+    DoTrigger("global", $msg);
     Log 1, $msg;
     $ret .= "\n".$msg;
   }
@@ -211,6 +231,8 @@ createArchiv($$)
 
 =pod
 =item command
+=item summary    create a backup of the FHEM installation
+=item summary_DE erzeugt eine Sicherungsdatei der FHEM Installation
 =begin html
 
 <a name="backup"></a>

@@ -1,21 +1,24 @@
 ##############################################
-# $Id$
+# $Id: HttpUtils.pm 17831 2018-11-24 15:09:17Z rudolfkoenig $
 package main;
 
 use strict;
 use warnings;
-use IO::Socket::INET;
 use MIME::Base64;
 use Digest::MD5 qw(md5_hex);
 use vars qw($SSL_ERROR);
 
+# Note: video does not work for every browser (Forum #73214)
 my %ext2MIMEType= qw{
+  bmp   image/bmp
   css   text/css
   gif   image/gif
   html  text/html
   ico   image/x-icon
   jpg   image/jpeg
   js    text/javascript
+  mp3   audio/mpeg
+  mp4   video/mp4
   pdf   application/pdf
   png   image/png
   svg   image/svg+xml
@@ -45,7 +48,14 @@ filename2MIMEType($) {
 sub
 urlEncode($) {
   $_= $_[0];
-  s/([\x00-\x2F,\x3A-\x40,\x5B-\x60,\x7B-\xFF])/sprintf("%%%02x",ord($1))/eg;
+  s/([\x00-\x2F \x3A-\x40 \x5B-\x60 \x7B-\xFF])/sprintf("%%%02x",ord($1))/eg;
+  return $_;
+}
+
+sub
+urlEncodePath($) {
+  $_= $_[0];
+  s/([\x00-\x20 \x25 \x3F \x7B-\xFF])/sprintf("%%%02x",ord($1))/eg;
   return $_;
 }
 
@@ -63,28 +73,41 @@ HttpUtils_Close($)
   my ($hash) = @_;
   delete($hash->{FD});
   delete($selectlist{$hash});
-  $hash->{conn}->close() if(defined($hash->{conn}));
+  if(defined($hash->{conn})) {  # Forum #85640
+    my $ref = eval { $hash->{conn}->can('close') };
+    if($ref) {
+      $hash->{conn}->close();
+    } else {
+      stacktrace();
+    }
+  }
   delete($hash->{conn});
   delete($hash->{hu_sslAdded});
   delete($hash->{hu_filecount});
   delete($hash->{hu_blocking});
+  delete($hash->{hu_portSfx});
+  delete($hash->{hu_proxy});
+  delete($hash->{hu_port});
   delete($hash->{directReadFn});
   delete($hash->{directWriteFn});
+  delete($hash->{compress});
 }
 
 sub
-HttpUtils_Err($$)
+HttpUtils_Err($)
 {
-  my ($hash, $errtxt) = @_;
-  $hash = $hash->{hash};
+  my ($lhash, $errtxt) = @_;
+  my $hash = $lhash->{hash};
+
+  if($lhash->{sts} && $lhash->{sts} == $selectTimestamp) { # busy loop check
+    Log 4, "extending '$lhash->{msg} $hash->{addr}' timeout due to busy loop";
+    InternalTimer(gettimeofday()+1, "HttpUtils_Err", $lhash);
+    return;
+  }
   return if(!defined($hash->{FD})); # Already closed
   HttpUtils_Close($hash);
-  $hash->{callback}($hash, "$errtxt to $hash->{addr} timed out", "");
+  $hash->{callback}($hash, "$lhash->{msg} $hash->{addr} timed out", "");
 }
-
-sub HttpUtils_ConnErr($) { my ($hash) = @_; HttpUtils_Err($hash, "connect to");}
-sub HttpUtils_ReadErr($) { my ($hash) = @_; HttpUtils_Err($hash, "read from"); }
-sub HttpUtils_WriteErr($){ my ($hash) = @_; HttpUtils_Err($hash, "write to"); }
 
 sub
 HttpUtils_File($)
@@ -103,6 +126,180 @@ HttpUtils_File($)
 }
 
 sub
+ip2str($)
+{
+  my ($addr) = @_;
+
+  return sprintf("%d.%d.%d.%d", unpack("C*", $addr)) if(length($addr) == 4);
+  my $h = join(":",map { sprintf("%x",$_) } unpack("n*",$addr));
+  $h =~ s/(:0)+/:/g;
+  $h =~ s/^0://g;
+  return "[$h]";
+}
+
+# https://mislove.org/teaching/cs4700/spring11/handouts/project1-primer.pdf
+my %HU_dnsCache;
+sub
+HttpUtils_dnsParse($$$)
+{
+  my ($a,$ql,$try6) = @_;    # $ql: query length
+  my $ml = length($a);
+  return "short DNS answer" if(length($a) <= $ql);
+  return "wrong message ID" if(unpack("H*",substr($a,0,2)) ne "7072");
+
+  return "Cant find host" if(unpack("n",substr($a,6,2)) == 0);
+
+  while($ml >= $ql+16) {        # there is a header
+    my $l = unpack("C",substr($a,$ql, 1));
+    if(($l & 0xC0) == 0xC0) { # DNS packed compression
+      $ql += 2;
+    } else {
+      while($l != 0 && ($ql+$l+1)<$ml) {        # skip a name
+        $ql += $l+1;
+        $l = unpack("C",substr($a,$ql,2));
+        if(($l & 0xC0) == 0xC0) { # DNS packed compression
+          $ql++;
+          last;
+        }
+      }
+      $ql++;
+    }
+    return (undef, substr($a,$ql+10,16),unpack("N",substr($a,$ql+4,4)))
+        if($ql+4<= $ml && unpack("N",substr($a,$ql,4)) == 0x1c0001 && $try6);
+    return (undef, substr($a,$ql+10,4), unpack("N",substr($a,$ql+4,4)))
+        if($ql+4 <= $ml && unpack("N",substr($a,$ql,4)) == 0x10001 && !$try6);
+    $ql += 10+unpack("n",substr($a,$ql+8)) if($ql+10 <= $ml);
+  }
+  return "No A record found";
+}
+
+# { HttpUtils_gethostbyname({timeout=>4}, "google.com", 1,
+#   sub(){my($h,$e,$a)=@_;; Log 1, $e ? "ERR:$e": ("IP:".ip2str($a)) }) }
+sub
+HttpUtils_gethostbyname($$$$)
+{
+  my ($hash, $host, $try6, $fn) = @_;
+
+  if($host =~ m/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/ &&        # IP-Address
+     $1<256 && $2<256 && $3<256 && $4<256) {
+    $fn->($hash, undef, pack("CCCC", $1, $2, $3, $4));
+    return;
+  }
+
+  my $dnsServer = AttrVal("global", "dnsServer", undef);
+
+  if(!$dnsServer) { # use the blocking libc to get the IP
+    if($haveInet6) {
+      $host = $1 if($host =~ m/^\[([a-f0-9:]+)\]+$/); # remove [] from IPV6
+      my $iaddr = Socket6::inet_pton(AF_INET6, $host);  # Try it as IPV6
+      return $fn->($hash, undef, $iaddr) if($iaddr);
+
+      $iaddr = Socket6::inet_pton(AF_INET , $host);     # Try it as IPV4
+      return $fn->($hash, undef, $iaddr) if($iaddr);
+
+      my ($s4, $s6);
+      my @res = Socket6::getaddrinfo($host, 80);        # gethostbyname, blocks
+      for(my $i=0; $i+5<=@res; $i+=5) {
+        $s4 = $res[$i+3] if($res[$i] == AF_INET  && !$s4);
+        $s6 = $res[$i+3] if($res[$i] == AF_INET6 && !$s6);
+      }
+      if($s6) {
+        (undef, $iaddr) = Socket6::unpack_sockaddr_in6($s6);
+        return $fn->($hash, undef, $iaddr);
+      }
+      if($s4) {
+        (undef, $iaddr) = sockaddr_in($s4);
+        return $fn->($hash, undef, $iaddr);
+      }
+      $fn->($hash, "gethostbyname $host failed", undef);
+
+    } else {
+      my $iaddr = inet_aton($host);
+      my $err;
+      if(!defined($iaddr)) {
+        $iaddr = gethostbyname($host); # This is still blocking
+        $err = (($iaddr && length($iaddr)==4) ? 
+                          undef : "gethostbyname $host failed");
+      }
+      $fn->($hash, $err, $iaddr);
+    }
+
+    return;
+  }
+
+  return $fn->($hash, undef, $HU_dnsCache{$host}{addr}) # check the cache
+        if($HU_dnsCache{$host} &&
+           $HU_dnsCache{$host}{TS}+$HU_dnsCache{$host}{TTL} > gettimeofday());
+
+  my $dh = AttrVal("global", "dnsHostsFile", "undef");
+  if($dh) {
+    my $fh;
+    if(open($fh, $dh)) {
+      while(my $line = <$fh>) {
+        if($line =~ m/^([^# \t]+).*\b\Q$host\E\b/) {
+          if($1 =~ m/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/ &&        # IP-Address
+             $1<256 && $2<256 && $3<256 && $4<256) {
+            $fn->($hash, undef, pack("CCCC", $1, $2, $3, $4));
+            close($fh);
+            return;
+          }
+        }
+      }
+      close($fh);
+    }
+  }
+
+  # Direct DNS Query via UDP
+  my $c = IO::Socket::INET->new(Proto=>'udp', PeerAddr=>"$dnsServer:53");
+  return $fn->($hash, "Cant create UDP socket:$!", undef) if(!$c);
+
+  my %dh = ( conn=>$c, FD=>$c->fileno(), NAME=>"DNS", origHash=>$hash,
+             addr=>$dnsServer, callback=>$fn );
+  my %timerHash = ( hash=>\%dh, msg=>"DNS" );
+  my $bhost = join("", map { pack("CA*",length($_),$_) } split(/\./, $host));
+  my $qry = pack("nnnnnn", 0x7072,0x0100,1,0,0,0) .
+                $bhost . pack("Cnn", 0,$try6 ? 28:1,1);
+  my $ql = length($qry);
+  Log 5, "DNS QUERY ".unpack("H*", $qry);
+
+  $dh{directReadFn} = sub() {                           # Parse the answer
+    RemoveInternalTimer(\%timerHash);
+    my $buf;
+    my $len = sysread($dh{conn},$buf,65536);
+    HttpUtils_Close(\%dh);
+    Log 5, "DNS ANSWER ".($len?$len:0).":".($buf ? unpack("H*", $buf):"N/A");
+    my ($err, $addr, $ttl) = HttpUtils_dnsParse($buf,$ql,$try6);
+    return HttpUtils_gethostbyname($hash, $host, 0, $fn) if($err && $try6);
+    return $fn->($hash, "DNS: $err", undef) if($err);
+    Log 4, "DNS result for $host: ".ip2str($addr).", ttl:$ttl";
+    $HU_dnsCache{$host}{TS} = gettimeofday();
+    $HU_dnsCache{$host}{TTL} = $ttl;
+    $HU_dnsCache{$host}{addr} = $addr;
+    return $fn->($hash, undef, $addr);
+  };
+  $selectlist{\%dh} = \%dh;
+
+  my $dnsQuery;
+  my $dnsTo = 0.25;
+  my $lSelectTs = $selectTimestamp;
+  $dnsQuery = sub()
+  {
+    $dnsTo *= 2 if($lSelectTs != $selectTimestamp);
+    $lSelectTs = $selectTimestamp;
+    return HttpUtils_Err(\%timerHash) if($dnsTo > $hash->{timeout}/2);
+    my $ret = syswrite $dh{conn}, $qry;
+    if(!$ret || $ret != $ql) {
+      my $err = $!;
+      HttpUtils_Close(\%dh);
+      return $fn->($hash, "DNS write error: $err", undef);
+    }
+    InternalTimer(gettimeofday()+$dnsTo, $dnsQuery, \%timerHash);
+  };
+  $dnsQuery->();
+}
+
+
+sub
 HttpUtils_Connect($)
 {
   my ($hash) = @_;
@@ -113,16 +310,21 @@ HttpUtils_Connect($)
   $hash->{displayurl} = $hash->{hideurl} ? "<hidden>" : $hash->{url};
   $hash->{sslargs}    = {} if(!defined($hash->{sslargs}));
 
-  Log3 $hash, $hash->{loglevel}, "HttpUtils url=$hash->{displayurl}";
+  Log3 $hash, $hash->{loglevel}+1, "HttpUtils url=$hash->{displayurl}";
 
-  if($hash->{url} !~
-           /^(http|https):\/\/(([^:\/]+):([^:\/]+)@)?([^:\/]+)(:\d+)?(\/.*)$/) {
+  if($hash->{url} !~ /
+      ^(http|https):\/\/                # $1: proto
+       (([^:\/]+):([^:\/]+)@)?          # $2: auth, $3:user, $4:password
+       ([^:\/]+|\[[0-9a-f:]+\])         # $5: host or IPv6 address
+       (:\d+)?                          # $6: port
+       (\/.*)$                          # $7: path
+    /xi) {
     return "$hash->{displayurl}: malformed or unsupported URL";
   }
 
   my ($authstring,$user,$pwd,$port,$host);
   ($hash->{protocol},$authstring,$user,$pwd,$host,$port,$hash->{path})
-        = ($1,$2,$3,$4,$5,$6,$7);
+        = (lc($1),$2,$3,$4,$5,$6,$7);
   $hash->{host} = $host;
   
   if(defined($port)) {
@@ -130,28 +332,73 @@ HttpUtils_Connect($)
   } else {
     $port = ($hash->{protocol} eq "https" ? 443: 80);
   }
+  $hash->{hu_portSfx} = ($port =~ m/^(80|443)$/ ? "" : ":$port");
+  $hash->{hu_port} = $port;
   $hash->{path} = '/' unless defined($hash->{path});
   $hash->{addr} = "$hash->{protocol}://$host:$port";
-  $hash->{auth} = "$user:$pwd" if($authstring);
+  
+  if($authstring) {
+   $hash->{auth} = 1;
+   $hash->{user} = urlDecode("$user");
+   $hash->{pwd} = urlDecode("$pwd");
+  } elsif(defined($hash->{user}) && defined($hash->{pwd})) {
+   $hash->{auth} = 1;
+  } else  {
+   $hash->{auth} = 0;
+  }
+  
+
+  my $proxy = AttrVal("global", "proxy", undef);
+  if($proxy) {
+    my $pe = AttrVal("global", "proxyExclude", undef);
+    if(!$pe || $host !~ m/$pe/) {
+      my @hp = split(":", $proxy);
+      $host = $hp[0];
+      $port = $hp[1] if($hp[1]);
+      $hash->{hu_proxy} = 1;
+    }
+  }
+
+  if((!defined($hash->{compress}) || $hash->{compress}) &&
+      AttrVal("global", "httpcompress", 1)) {
+    if(!defined($HU_use_zlib)) {
+      $HU_use_zlib = 1;
+      eval { require Compress::Zlib; };
+      $HU_use_zlib = 0 if($@);
+    }
+    $hash->{compress} = $HU_use_zlib;
+  }
+
 
   return HttpUtils_Connect2($hash) if($hash->{conn} && $hash->{keepalive});
 
   if($hash->{callback}) { # Nonblocking staff
-    $hash->{conn} = IO::Socket::INET->new(Proto=>'tcp', Blocking=>0);
-    if($hash->{conn}) {
-      my $iaddr = inet_aton($host);
-      if(!defined($iaddr)) {
-        my @addr = gethostbyname($host); # This is still blocking
-        return "gethostbyname $host failed" if(!$addr[0]);
-        $iaddr = $addr[4];
+    HttpUtils_gethostbyname($hash, $host, $haveInet6, sub($$$) {
+      my ($hash, $err, $iaddr) = @_;
+      $hash = $hash->{origHash} if($hash->{origHash});
+      if($err) {
+        HttpUtils_Close($hash);
+        Log3 $hash, $hash->{loglevel}, "HttpUtils: $err";
+        return $hash->{callback}($hash, $err, "") ;
       }
-      my $ret = connect($hash->{conn}, sockaddr_in($port, $iaddr));
+      Log3 $hash, $hash->{loglevel}, "IP: $host -> ".ip2str($iaddr);
+      $hash->{conn} = length($iaddr) == 4 ?
+                      IO::Socket::INET ->new(Proto=>'tcp', Blocking=>0) :
+                      IO::Socket::INET6->new(Proto=>'tcp', Blocking=>0);
+      if(!$hash->{conn}) {
+        Log3 $hash, $hash->{loglevel}, "HttpUtils: Creating socket: $!";
+        return $hash->{callback}($hash, "Creating socket: $!", "");
+      }
+      my $sa = length($iaddr)==4 ?  sockaddr_in($port, $iaddr) : 
+                        Socket6::pack_sockaddr_in6($port, $iaddr);
+      my $ret = connect($hash->{conn}, $sa);
       if(!$ret) {
-        if($!{EINPROGRESS} || int($!)==10035 ||
+        if($!{EINPROGRESS} ||
+            int($!)==10035 ||   # WSAEWOULDBLOCK
            (int($!)==140 && $^O eq "MSWin32")) { # Nonblocking connect
 
           $hash->{FD} = $hash->{conn}->fileno();
-          my %timerHash = ( hash => $hash );
+          my %timerHash = (hash=>$hash,sts=>$selectTimestamp,msg=>"connect to");
           $hash->{directWriteFn} = sub() {
             delete($hash->{FD});
             delete($hash->{directWriteFn});
@@ -160,38 +407,48 @@ HttpUtils_Connect($)
             RemoveInternalTimer(\%timerHash);
             my $packed = getsockopt($hash->{conn}, SOL_SOCKET, SO_ERROR);
             my $errno = unpack("I",$packed);
-            return $hash->{callback}($hash, "$host: ".strerror($errno), "")
-                if($errno);
+            if($errno) {
+              HttpUtils_Close($hash);
+              my $msg = "$host: ".strerror($errno);
+              Log3 $hash, $hash->{loglevel}, "HttpUtils: $msg";
+              return $hash->{callback}($hash, $msg, "");
+            }
 
             my $err = HttpUtils_Connect2($hash);
-            $hash->{callback}($hash, $err, "") if($err);
+            if($err) {
+              Log3 $hash, $hash->{loglevel}, "HttpUtils: $err";
+              $hash->{callback}($hash, $err, "");
+            }
             return $err;
           };
-          $hash->{NAME}="" if(!defined($hash->{NAME}));# Delete might check this
+          $hash->{NAME}="" if(!defined($hash->{NAME}));#Delete might check it
           $selectlist{$hash} = $hash;
           InternalTimer(gettimeofday()+$hash->{timeout},
-                        "HttpUtils_ConnErr", \%timerHash, 0);
+                        "HttpUtils_Err", \%timerHash);
           return undef;
+
         } else {
-          return "connect: $!";
+          HttpUtils_Close($hash);
+          my $msg = "connect to $hash->{addr}: $!";
+          Log3 $hash, $hash->{loglevel}, "HttpUtils: $msg";
+          $hash->{callback}($hash, $msg, "");
+          return undef;
+
         }
       }
-    }
-                
-  } else {
-    $hash->{conn} = IO::Socket::INET->new(
-                PeerAddr=>"$host:$port", Timeout=>$hash->{timeout});
-    return "$hash->{displayurl}: Can't connect(1) to $hash->{addr}: $@"
-      if(!$hash->{conn});
-  }
+    });
+    return;
 
-  if($hash->{compress}) {
-    if(!defined($HU_use_zlib)) {
-      $HU_use_zlib = 1;
-      eval { require Compress::Zlib; };
-      $HU_use_zlib = 0 if($@);
+  } else {
+    $hash->{conn} = $haveInet6 ?
+      IO::Socket::INET6->new(PeerAddr=>"$host:$port",Timeout=>$hash->{timeout}):
+      IO::Socket::INET ->new(PeerAddr=>"$host:$port",Timeout=>$hash->{timeout});
+
+    if(!$hash->{conn}) {
+      my $msg = "$hash->{displayurl}: Can't connect(1) to $hash->{addr}: $@";
+      Log3 $hash, $hash->{loglevel}, "HttpUtils: $msg";
+      return $msg;
     }
-    $hash->{compress} = $HU_use_zlib;
   }
 
   return HttpUtils_Connect2($hash);
@@ -201,22 +458,56 @@ sub
 HttpUtils_Connect2($)
 {
   my ($hash) = @_;
+  my $usingSSL;
 
   $hash->{host} =~ s/:.*//;
   if($hash->{protocol} eq "https" && $hash->{conn} && !$hash->{hu_sslAdded}) {
     eval "use IO::Socket::SSL";
     if($@) {
-      Log3 $hash, $hash->{loglevel}, $@;
+      my $errstr = "$hash->{addr}: $@";
+      Log3 $hash, $hash->{loglevel}, $errstr;
+      HttpUtils_Close($hash);
+      return $errstr;
     } else {
       $hash->{conn}->blocking(1);
-      my $sslVersion = AttrVal($hash->{NAME}, "sslVersion", 
-                       AttrVal("global", "sslVersion", "SSLv23:!SSLv3:!SSLv2"));
-      IO::Socket::SSL->start_SSL($hash->{conn}, {
-          Timeout     => $hash->{timeout},
-          SSL_version => $sslVersion,
-          SSL_hostname => $hash->{host},
-          %{$hash->{sslargs}}
-        }) || undef $hash->{conn};
+      $usingSSL = 1;
+
+      if($hash->{hu_proxy}) {   # can block!
+        my $pw = AttrVal("global", "proxyAuth", "");
+        $pw = "Proxy-Authorization: Basic $pw\r\n" if($pw);
+        my $hdr = "CONNECT $hash->{host}:$hash->{hu_port} HTTP/1.0\r\n".
+                  "User-Agent: fhem\r\n$pw\r\n";
+        syswrite $hash->{conn}, $hdr;
+        my $buf;
+        my $len = sysread($hash->{conn},$buf,65536);
+        if(!defined($len) || $len <= 0 || $buf !~ m/HTTP.*200/) {
+          HttpUtils_Close($hash);
+          return "Proxy denied CONNECT";
+        }
+      }
+
+      my $sslVersion = AttrVal("global", "sslVersion", "SSLv23:!SSLv3:!SSLv2");
+      $sslVersion = AttrVal($hash->{NAME}, "sslVersion", $sslVersion)
+        if($hash->{NAME});
+      my %par = %{$hash->{sslargs}};
+      $par{Timeout}      = $hash->{timeout};
+      $par{SSL_version}  = $sslVersion if(!$par{SSL_version});
+      $par{SSL_hostname} = $hash->{host} 
+        if(IO::Socket::SSL->can('can_client_sni') &&
+           IO::Socket::SSL->can_client_sni() &&
+           (!$hash->{sslargs} || !defined($hash->{sslargs}{SSL_hostname})));
+      $par{SSL_verify_mode} = 0
+        if(!$hash->{sslargs} || !defined($hash->{sslargs}{SSL_verify_mode}));
+
+      eval {
+        IO::Socket::SSL->start_SSL($hash->{conn}, \%par) || undef $hash->{conn};
+      };
+      if($@) {
+        Log3 $hash, $hash->{loglevel}, $@;
+        HttpUtils_Close($hash);
+        return $@;
+      }
+      
       $hash->{hu_sslAdded} = 1 if($hash->{keepalive});
     }
   }
@@ -229,6 +520,11 @@ HttpUtils_Connect2($)
       $err .= " ".($SSL_ERROR ? $SSL_ERROR : IO::Socket::SSL::errstr());
     }
     return "$hash->{displayurl}: Can't connect(2) to $hash->{addr}: $err"; 
+  }
+
+  if($hash->{noConn2}) {
+    $hash->{callback}($hash);
+    return undef;
   }
 
   my $data;
@@ -254,8 +550,12 @@ HttpUtils_Connect2($)
   $method = ($data ? "POST" : "GET") if( !$method );
 
   my $httpVersion = $hash->{httpversion} ? $hash->{httpversion} : "1.0";
-  my $hdr = "$method $hash->{path} HTTP/$httpVersion\r\n";
-  $hdr .= "Host: $hash->{host}\r\n";
+
+  my $path = $hash->{path};
+  $path = "$hash->{protocol}://$hash->{host}$hash->{hu_portSfx}$path"
+        if($hash->{hu_proxy});
+  my $hdr = "$method $path HTTP/$httpVersion\r\n";
+  $hdr .= "Host: $hash->{host}$hash->{hu_portSfx}\r\n";
   $hdr .= "User-Agent: fhem\r\n"
         if(!$hash->{header} || $hash->{header} !~ "User-Agent:");
   $hdr .= "Accept-Encoding: gzip,deflate\r\n" if($hash->{compress});
@@ -263,8 +563,9 @@ HttpUtils_Connect2($)
   $hdr .= "Connection: Close\r\n"
                               if($httpVersion ne "1.0" && !$hash->{keepalive});
 
-  $hdr .= "Authorization: Basic ".encode_base64($hash->{auth}, "")."\r\n"
-              if(defined($hash->{auth}) && 
+  $hdr .= "Authorization: Basic ".
+                      encode_base64($hash->{user}.":".$hash->{pwd}, "")."\r\n"
+              if($hash->{auth} && !$hash->{digest} &&
                  !($hash->{header} &&
                    $hash->{header} =~ /^Authorization:\s*Digest/mi));
   $hdr .= $hash->{header}."\r\n" if($hash->{header});
@@ -273,6 +574,11 @@ HttpUtils_Connect2($)
     $hdr .= "Content-Type: application/x-www-form-urlencoded\r\n"
                 if ($hdr !~ "Content-Type:");
   }
+  if(!$usingSSL) {
+    my $pw = AttrVal("global", "proxyAuth", "");
+    $hdr .= "Proxy-Authorization: Basic $pw\r\n" if($pw);
+  }
+  Log3 $hash, $hash->{loglevel}+1, "HttpUtils request header:\n$hdr";
   $hdr .= "\r\n";
 
   my $s = $hash->{shutdown};
@@ -282,19 +588,27 @@ HttpUtils_Connect2($)
   if($hash->{callback}) { # Nonblocking read
     $hash->{FD} = $hash->{conn}->fileno();
     $hash->{buf} = "";
+    delete($hash->{httpdatalen});
+    delete($hash->{httpheader});
     $hash->{NAME} = "" if(!defined($hash->{NAME})); 
-    my %timerHash = ( hash => $hash );
+    my %timerHash = (hash=>$hash, checkSTS=>$selectTimestamp, msg=>"write to");
     $hash->{directReadFn} = sub() {
       my $buf;
       my $len = sysread($hash->{conn},$buf,65536);
       $hash->{buf} .= $buf if(defined($len) && $len > 0);
-      if(!defined($len) || $len <= 0 || HttpUtils_DataComplete($hash->{buf})) {
+      if(!defined($len) || $len <= 0 || 
+         HttpUtils_DataComplete($hash)) {
         delete($hash->{FD});
         delete($hash->{directReadFn});
         delete($selectlist{$hash});
         RemoveInternalTimer(\%timerHash);
-        my ($err, $ret, $redirect) = HttpUtils_ParseAnswer($hash, $hash->{buf});
+        my ($err, $ret, $redirect) = HttpUtils_ParseAnswer($hash);
         $hash->{callback}($hash, $err, $ret) if(!$redirect);
+
+      } elsif($hash->{incrementalTimeout}) {    # Forum #85307
+        RemoveInternalTimer(\%timerHash);
+        InternalTimer(gettimeofday()+$hash->{timeout},
+                      "HttpUtils_Err", \%timerHash);
       }
     };
 
@@ -312,13 +626,13 @@ HttpUtils_Connect2($)
         shutdown($hash->{conn}, 1) if($s);
         delete($hash->{directWriteFn});
         RemoveInternalTimer(\%timerHash);
+        $timerHash{msg} = "read from";
         InternalTimer(gettimeofday()+$hash->{timeout},
-                      "HttpUtils_ReadErr", \%timerHash, 0);
+                      "HttpUtils_Err", \%timerHash);
       }
     };
     $selectlist{$hash} = $hash;
-    InternalTimer(gettimeofday()+$hash->{timeout},
-                  "HttpUtils_WriteErr", \%timerHash, 0);
+    InternalTimer(gettimeofday()+$hash->{timeout}, "HttpUtils_Err",\%timerHash);
     return undef;
 
   } else {
@@ -335,13 +649,51 @@ HttpUtils_Connect2($)
 sub
 HttpUtils_DataComplete($)
 {
-  my ($ret) = @_;
-  return 0 if($ret !~ m/^(.*?)\r?\n\r?\n(.*)$/s);
-  my $hdr = $1;
-  my $data = $2;
-  return 0 if($hdr !~ m/Content-Length:\s*(\d+)/si);
-  return 0 if(length($data) < $1);
-  return 1;
+  my ($hash) = @_;
+  my $hl = $hash->{httpdatalen};
+  if(!defined($hl)) {
+    return 0 if($hash->{buf} !~ m/^(.*?)\r?\n\r?\n(.*)$/s);
+    my ($hdr, $data) = ($1, $2);
+    if($hdr =~ m/Transfer-Encoding:\s*chunked/si) {
+      $hash->{httpheader} = $hdr;
+      $hash->{httpdata} = "";
+      $hash->{buf} = $data;
+      $hash->{httpdatalen} = -1;
+
+    } elsif($hdr =~ m/Content-Length:\s*(\d+)/si) {
+      $hash->{httpdatalen} = $1;
+      $hash->{httpheader} = $hdr;
+      $hash->{httpdata} = $data;
+      $hash->{buf} = "";
+
+    } else {
+      $hash->{httpdatalen} = -2;
+
+    }
+    $hl = $hash->{httpdatalen};
+  }
+  return 0 if($hl == -2);
+
+  if($hl == -1) {       # chunked
+    while($hash->{buf} =~ m/^[\r\n]*([0-9A-F]+)\r?\n(.*)$/si) {
+      my ($l, $r) = (hex($1), $2);
+      if($l == 0) {
+        $hash->{buf} = "";
+        return 1;
+      }
+      return 0 if(length($r) < $l);
+      $hash->{httpdata} .= substr($r, 0, $l);
+      $hash->{buf} = substr($r, $l);
+    }
+    return 0;
+
+  } else {
+    $hash->{httpdata} .= $hash->{buf};
+    $hash->{buf} = "";
+    return 0 if(length($hash->{httpdata}) < $hash->{httpdatalen});
+    return 1;
+    
+  }
 }
 
 sub
@@ -350,16 +702,16 @@ HttpUtils_DigestHeader($$)
   my ($hash, $header) = @_;
   my %digdata;
  
-  while($header =~ /(\w+)="?([^"]+?)"?(?:,\s+|$)/gc) {
+  while($header =~ /(\w+)="?([^"]+?)"?(?:\s*,\s*|$)/gc) {
     $digdata{$1} = $2;
   } 
  
   my ($ha1, $ha2, $response);
-  my ($user,$passwd) = split(/:/, $hash->{auth}, 2);
+  my ($user,$passwd) = ($hash->{user}, $hash->{pwd});
 
   if(exists($digdata{qop})) {
     $digdata{nc} = "00000001";
-    $digdata{cnonce} = md5_hex(rand.time);
+    $digdata{cnonce} = md5_hex(rand().time());
   }
   $digdata{uri} = $hash->{path};
   $digdata{username} = $user;
@@ -395,16 +747,16 @@ HttpUtils_DigestHeader($$)
 }
 
 sub
-HttpUtils_ParseAnswer($$)
+HttpUtils_ParseAnswer($)
 {
-  my ($hash, $ret) = @_;
+  my ($hash) = @_;
 
   if(!$hash->{keepalive}) {
     $hash->{conn}->close();
     undef $hash->{conn};
   }
 
-  if(!$ret) {
+  if(!$hash->{buf} && !$hash->{httpheader}) {
     # Server answer: Keep-Alive: timeout=2, max=200
     if($hash->{keepalive} && $hash->{hu_filecount}) {
       my $bc = $hash->{hu_blocking};
@@ -422,11 +774,23 @@ HttpUtils_ParseAnswer($$)
   $hash->{hu_filecount} = 0 if(!$hash->{hu_filecount});
   $hash->{hu_filecount}++;
 
-  $ret=~ s/(.*?)\r?\n\r?\n//s; # Not greedy: separate the header (F:#43482)
-  return ("", $ret) if(!defined($1));
+  if(!defined($hash->{httpheader})) {   # response without Content-Length
+    if($hash->{buf} =~ m/^(HTTP.*?)\r?\n\r?\n(.*)$/s) {
+      $hash->{httpheader} = $1;
+      $hash->{httpdata} = $2;
+      delete($hash->{buf});
+    } else {
+      my $ret = $hash->{buf};
+      delete($hash->{buf});
+      return ("", $ret);
+    }
+  }
+  my $ret = $hash->{httpdata};
+  $ret = "" if(!defined($ret));
+  delete $hash->{httpdata};
+  delete $hash->{httpdatalen};
 
-  $hash->{httpheader} = $1;
-  my @header= split("\r\n", $1);
+  my @header= split("\r\n", $hash->{httpheader});
   my @header0= split(" ", shift @header);
   my $code= $header0[1];
 
@@ -442,7 +806,7 @@ HttpUtils_ParseAnswer($$)
   $hash->{code} = $code;
 
   # if servers requests digest authentication
-  if($code==401 && defined($hash->{auth}) &&
+  if($code==401 && $hash->{auth} &&
     !($hash->{header} && $hash->{header} =~ /^Authorization:\s*Digest/mi) &&
     $hash->{httpheader} =~ /^WWW-Authenticate:\s*Digest\s*(.+?)\s*$/mi) {
    
@@ -458,8 +822,8 @@ HttpUtils_ParseAnswer($$)
       return HttpUtils_BlockingGet($hash);
     }
    
-  } elsif($code==401 && defined($hash->{auth})) {
-   return ("$hash->{displayurl}: wrong authentication", "")
+  } elsif($code==401 && $hash->{auth}) {
+    return ("$hash->{displayurl}: wrong authentication", "")
 
   }
   
@@ -483,40 +847,26 @@ HttpUtils_ParseAnswer($$)
       }
     }
   }
-
-  if( $hash->{httpheader} =~ m/^Transfer-Encoding: Chunked/mi ) {
-    my $data;
-    my $header;
-    my ($size, $offset) = (length($ret), 0);
-    while( $offset < $size ) {
-      my $next = index($ret, "\r\n", $offset);
-      last if( $next == -1 );
-      if( substr($ret,$offset,$next-$offset) =~ m/([\da-f]+)/i ) {
-        my $len = hex($1);
-        $offset = $next + 2;
-        $data .= substr($ret,$offset,$len);
-        $offset += $len + 2;
-        next if( $len > 0 );
-      }
-
-    $hash->{httpheader} .= substr($ret,$offset);
-
+  
+  if($HU_use_zlib) {
+    if($hash->{httpheader} =~ /^Content-Encoding: gzip/mi) {
+      eval { $ret =  Compress::Zlib::memGunzip($ret) };
+      return ($@, $ret) if($@);
     }
-
-    $ret = $data;
+  
+    if($hash->{httpheader} =~ /^Content-Encoding: deflate/mi) {
+      eval { my $i =  Compress::Zlib::inflateInit();
+             my $out = $i->inflate($ret);
+             $ret = $out if($out) };
+      return ($@, $ret) if($@);
+    }
   }
 
   # Debug
-  Log3 $hash, $hash->{loglevel},
-       "HttpUtils $hash->{displayurl}: Got data, length: ".  length($ret);
-  if(!length($ret)) {
-    Log3 $hash, $hash->{loglevel}, "HttpUtils $hash->{displayurl}: ".
-         "Zero length data, header follows:";
-    for (@header) {
-      Log3 $hash, $hash->{loglevel}, "  $_";
-    }
-  }
-
+  Log3 $hash, $hash->{loglevel}+1,
+    "HttpUtils $hash->{displayurl}: Got data, length: ". length($ret);
+  Log3 $hash, $hash->{loglevel}+1,
+    "HttpUtils response header:\n$hash->{httpheader}" if($hash->{httpheader});
   return ("", $ret);
 }
 
@@ -524,15 +874,13 @@ HttpUtils_ParseAnswer($$)
 #  mandatory:
 #    url, callback
 #  optional(default):
-#    hideurl(0),timeout(4),data(""),loglevel(4),header("" or HASH),
+#    digest(0),hideurl(0),timeout(4),data(""),loglevel(4),header("" or HASH),
 #    noshutdown(1),shutdown(0),httpversion("1.0"),ignoreredirects(0)
-#    method($data ? "POST" : "GET"),keepalive(0),sslargs({})
+#    method($data?"POST":"GET"),keepalive(0),sslargs({}),user(),pwd()
+#    compress(1), incrementalTimeout(0)
 # Example:
-#   HttpUtils_NonblockingGet({
-#     url=>"http://192.168.178.112:8888/fhem",
-#     myParam=>7,
-#     callback=>sub($$$){ Log 1,"$_[0]->{myParam} ERR:$_[1] DATA:$_[2]" }
-#   })
+#   { HttpUtils_NonblockingGet({ url=>"http://fhem.de/MAINTAINER.txt",
+#     callback=>sub($$$){ Log 1,"ERR:$_[1] DATA:".length($_[2]) } }) }
 sub
 HttpUtils_NonblockingGet($)
 {
@@ -551,14 +899,18 @@ sub
 HttpUtils_BlockingGet($)
 {
   my ($hash) = @_;
+  delete $hash->{callback}; # Forum #80712
   $hash->{hu_blocking} = 1;
   my ($isFile, $fErr, $fContent) = HttpUtils_File($hash);
   return ($fErr, $fContent) if($isFile);
   my $err = HttpUtils_Connect($hash);
   return ($err, undef) if($err);
   
-  my ($buf, $ret) = ("", "");
+  my $buf = "";
   $hash->{conn}->timeout($hash->{timeout});
+  $hash->{buf} = "";
+  delete($hash->{httpdatalen});
+  delete($hash->{httpheader});
   for(;;) {
     my ($rout, $rin) = ('', '');
     vec($rin, $hash->{conn}->fileno(), 1) = 1;
@@ -570,10 +922,10 @@ HttpUtils_BlockingGet($)
 
     my $len = sysread($hash->{conn},$buf,65536);
     last if(!defined($len) || $len <= 0);
-    $ret .= $buf;
-    last if(HttpUtils_DataComplete($ret));
+    $hash->{buf} .= $buf;
+    last if(HttpUtils_DataComplete($hash));
   }
-  return HttpUtils_ParseAnswer($hash, $ret);
+  return HttpUtils_ParseAnswer($hash);
 }
 
 # Deprecated, use GetFileFromURL/GetFileFromURLQuiet

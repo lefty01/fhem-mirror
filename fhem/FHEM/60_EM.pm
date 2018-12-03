@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 60_EM.pm 11984 2016-08-19 12:47:50Z rudolfkoenig $
 package main;
 
 use strict;
@@ -425,6 +425,8 @@ EmGetDevData($)
 1;
 
 =pod
+=item summary    basis module for the ELV EM1010PC
+=item summary_DE Anbindung der ELV EM1010PC
 =begin html
 
 <a name="EM"></a>

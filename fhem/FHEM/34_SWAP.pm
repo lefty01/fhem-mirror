@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 34_SWAP.pm 12056 2016-08-22 19:30:31Z justme1968 $
 #
 # TODO:
 # transmitted queue -> remove if status is received
@@ -58,12 +58,13 @@ my %default_registers = (
   0x0A => { name => 'PeriodicTxInterval', size => 2, direction => OUT },
 );
 
-my %system_sate = (
+my %system_state = (
   0x00 => 'RESTART',
   0x01 => 'RXON',
   0x02 => 'RXOFF',
   0x03 => 'SYNC',
   0x04 => 'LOWBAT',
+  0x05 => 'FLASH',
 );
 
 my $developers = {};
@@ -1050,7 +1051,11 @@ SWAP_Parse($$)
       $rhash->{"SWAP_".$rid."-".$default_registers{$reg}->{name}} = $data;
     }
 
-    if( $reg == 0x09
+    if( $reg == 0x03 ) {
+      $data = $system_state{$data} if( defined($system_state{$data}) );
+      DoTrigger( $rname, "$default_registers{$reg}->{name}: $data" );
+    
+    } elsif( $reg == 0x09
         && $data eq "FF" ) {
       my $addr = SWAP_findFreeAddress($hash,$data);
       if( $addr ne $data ) {
@@ -1236,7 +1241,7 @@ SWAP_Attr(@)
 
             $str .= ", " if( $str );
             my $regname = SWAP_regName(sprintf("%02X",$reg),$i,$endpoint);
-            $str .= lc($endpoint->{name}) .":". $regname ." ". "{hex(ReadingsVal(\$name,\"$regname\",\"0\"))$func}";
+            $str .= lc($endpoint->{name}) .":". $regname .".* ". "{hex(ReadingsVal(\$name,\"$regname\",\"0\"))$func}";
           }
           ++$i;
         }
@@ -1253,6 +1258,8 @@ SWAP_Attr(@)
 1;
 
 =pod
+=item summary    generic module for SWAP devices
+=item summary_DE generisches Modul für SWAP Ger&auml;te
 =begin html
 
 <a name="SWAP"></a>

@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 98_notice.pm 11984 2016-08-19 12:47:50Z rudolfkoenig $
 # vim: ts=2:et
 ################################################################
 #
@@ -587,6 +587,8 @@ notice_Read($$$)
 
 =pod
 =item command
+=item summary    read and confirm system messages
+=item summary_DE Systemnachrichten anzeigen und best&auml;tigen
 =begin html
 
 <a name="notice"></a>

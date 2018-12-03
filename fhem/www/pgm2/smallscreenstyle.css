@@ -9,6 +9,7 @@ textarea { font-family:Arial, sans-serif; font-size:16px;}
 #menu    { position:absolute; top: 2px; left:65px; }
 #hdr     { position:absolute; top:40px; left:65px; }
 #content { position:absolute; top:85px; left: 0px; right: 0px;}
+#right   { position:absolute; top:30px; left: 0px; right: 0px; }
 #errmsg  { left:0px; }
 
 .devType { font-size:12px;}
@@ -55,20 +56,36 @@ button.dist { margin:5px; }
 
 /* Portrait mode */
 @media all and (orientation:portrait) {
-  table.block select, table.block input { width: 0px; display: none; }
+/*table.block select, table.block input { width: 0px; display: none; } */
   table.block tr td:nth-child(n+3) { width: 0px; display: none; }
 }
 
 /* Landscape mode */
 @media all and (orientation:landscape) {
-  div.col1 { width: 282px; }
-  div.col2 { width: 108px; }
-  div.col3 { width: 108px; height: 30px; }
+  div.col1 { width:282px; }
+  div.col2 { width:108px; }
+  div.col3 { width:100%; min-width:108px; height:30px; }
 
   table.block input { text-align: center; }
   table.block tr td:nth-child(3) { text-align: center; }
 
-  table.block div.slider { width: 108px; text-align: center; }
+  table.block div.slider { min-width: 108px; text-align: center; }
   table.block slider { float: none; }
   table.block select { text-align: center; }
 }
+
+
+body.commandref ul { -webkit-padding-start:0; }
+body.commandref div#menuScrollArea div#menu a { margin-left:10px; }
+body.commandref table.class_device { word-break:break-all; }
+
+body.commandref div#right { top:48px; }
+body.commandref div#logo { display:none; }
+body.commandref div#menu {
+  position:fixed; z-index:30; background-color:#FFFFE7;
+  top:0px; left:0px; right:10px; height:48px; 
+}
+body.commandref div#menu a { margin:20px; }
+body.commandref div#menu br { display:none; }
+body.commandref div#menu h3 { display:none; }
+body.commandref div#right { left:5px; right:5px }

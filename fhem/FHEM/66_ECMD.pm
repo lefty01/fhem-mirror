@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 66_ECMD.pm 16372 2018-03-10 13:09:24Z neubert $
 
 ##############################################################################
 #
@@ -25,9 +25,30 @@
 
 package main;
 
-#
-# Potential future extensions: add support for PARTIALly received datagrams
-# http://forum.fhem.de/index.php/topic,24280.msg174330.html#msg174330
+
+=for comment
+
+General rule:
+
+ECMD handles raw data, i.e. data that might contain control and non-printable characters.
+User input for raw data, e.g. setting attributes, and display of raw data is perl-encoded.
+Perl-encoded raw data in logs is not enclosed in double quotes.
+
+A carriage return/line feed (characters 13 and 10) is encoded as
+\r\n
+and logged as
+\r\n (\010\012)
+
+Decoding is handled by dq(). Encoding is handled by cq().
+
+changes as of 27 Nov 2016:
+- if split is used, the strings at which the messages are split are still part of the messages
+- no default attributes for requestSeparator and responseSeparator
+- input of raw data as perl-encoded string (for setting attributes)
+- be more verbose and explicit at loglevel 5
+- documentation corrected and amended
+
+=cut
 
 
 use strict;
@@ -65,7 +86,7 @@ ECMD_Initialize($)
   $hash->{GetFn}   = "ECMD_Get";
   $hash->{SetFn}   = "ECMD_Set";
   $hash->{AttrFn}  = "ECMD_Attr";
-  $hash->{AttrList}= "classdefs split logTraffic:0,1,2,3,4,5 timeout partial requestSeparator responseSeparator";
+  $hash->{AttrList}= "classdefs split logTraffic:0,1,2,3,4,5 timeout partial requestSeparator responseSeparator autoReopen stop:0,1";
 }
 
 #####################################
@@ -83,9 +104,11 @@ ECMD_Define($$)
     Log 2, $msg;
     return $msg;
   }
-  
-  $attr{$name}{"requestSeparator"}= "\000";
-  
+
+  $hash->{fhem}{".requestSeparator"}= undef;
+  $hash->{fhem}{".responseSeparator"}= undef;
+  $hash->{fhem}{".split"}= undef;
+
   DevIo_CloseDev($hash);
 
   $hash->{Protocol}= $protocol;
@@ -128,7 +151,7 @@ ECMD_DoInit($)
   my $msg = undef;
 
   ECMD_Clear($hash);
- 
+
   $hash->{STATE} = "Initialized" if(!$hash->{STATE});
 
   return undef;
@@ -136,46 +159,50 @@ ECMD_DoInit($)
 
 #####################################
 sub
-dq($) 
+oq($)
 {
-=for comment
-        '\a' => "\\a",
-      '\e' => "\\e",
-      '\f' => "\\f",
-      '\n' => "\\n",
-      '\r' => "\\r",
-      '\t' => "\\t",
-      );
-  
-  $s =~ s/\\/\\\\/g;
-  foreach my $regex (keys %escSequences) {
-    $s =~ s/$regex/$escSequences{$regex}/g;
-  }
-  $s =~ s/([\000-\037])/sprintf("\\%03o", ord($1))/eg;
-
-  
-  
-=cut
-  
-  
   my ($s)= @_;
-  $s= "<nothing>" unless(defined($s));
-  return "\"" . escapeLogLine($s) . "\"";
+  return join("", map { sprintf("\\%03o", ord($_)) } split("", $s));
 }
 
+sub
+dq($)
+{
+  my ($s)= @_;
+  return defined($s) ? ( $s eq "" ? "empty string" : escapeLogLine($s) . " (" . oq($s) . ")" ) : "<nothing>";
+}
+
+sub
+cq($)
+{
+  my ($s)= @_;
+
+  $s =~ s/\\(\d)(\d)(\d)/chr($1*64+$2*8+$3)/eg;
+  $s =~ s/\\a/\a/g;
+  $s =~ s/\\e/\e/g;
+  $s =~ s/\\f/\f/g;
+  $s =~ s/\\n/\n/g;
+  $s =~ s/\\r/\r/g;
+  $s =~ s/\\t/\t/g;
+  $s =~ s/\\\\/\\/g;
+
+  return $s;
+}
+
+#####################################
 sub
 ECMD_Log($$$)
 {
   my ($hash, $loglevel, $logmsg)= @_;
   my $name= $hash->{NAME};
-  $loglevel= AttrVal($name, "logTraffic", undef) unless(defined($loglevel)); 
-  return unless(defined($loglevel)); 
-  Log3 $hash, $loglevel , "$name: $logmsg";
+  $loglevel= AttrVal($name, "logTraffic", undef) unless(defined($loglevel));
+  return unless(defined($loglevel));
+  Log3 $hash, $loglevel, "$name: $logmsg";
 }
 
 #####################################
 sub
-ECMD_Ready($) 
+ECMD_Ready($)
 {
   my ($hash) = @_;
 
@@ -191,21 +218,31 @@ ECMD_Ready($)
   return ($InBytes && $InBytes>0);
 }
 
+#####################################
+sub
+ECMD_isStopped($)
+{
+  my $dev = shift;  # name or hash
+  $dev = $dev->{NAME} if(defined($dev) && ref($dev) eq "HASH");
+  my $isDisabled = AttrVal($dev, "stop", 0);
+}
 
 #####################################
 sub
-ECMD_SimpleRead($) 
+ECMD_SimpleRead($)
 {
   my $hash = shift;
+  return undef if ECMD_isStopped($hash);
   my $answer= DevIo_SimpleRead($hash);
   ECMD_Log $hash, undef, "read " . dq($answer);
   return $answer;
 }
 
 sub
-ECMD_SimpleWrite($$) 
+ECMD_SimpleWrite($$)
 {
   my ($hash, $msg) = @_;
+  return undef if ECMD_isStopped($hash);
   ECMD_Log $hash, undef, "write " . dq($msg);
   DevIo_SimpleWrite($hash, $msg, 0);
 }
@@ -214,42 +251,44 @@ sub
 ECMD_SimpleExpect($$$)
 {
   my ($hash, $msg, $expect) = @_;
-  
+
   my $name= $hash->{NAME};
+  return undef if ECMD_isStopped($name);
+
   my $timeout= AttrVal($name, "timeout", 3.0);
   my $partialTimeout= AttrVal($name, "partial", 0.0);
- 
+
   ECMD_Log $hash, undef, "write " . dq($msg) . ", expect $expect";
   my $answer= DevIo_Expect($hash, $msg, $timeout );
-  
-  #Debug "$name: Expect got \"" . escapeLogLine($answer) . "\".";  
-  
+
+  #Debug "$name: Expect got \"" . escapeLogLine($answer) . "\".";
+
   # complete partial answers
   if($partialTimeout> 0) {
     my $t0= gettimeofday();
     while(!defined($answer) || ($answer !~ /^$expect$/)) {
       #Debug "$name: waiting for a match...";
       my $a= DevIo_SimpleReadWithTimeout($hash, $partialTimeout); # we deliberately use partialTimeout here!
-      #Debug "$name: SimpleReadWithTimeout got \"" . escapeLogLine($a) . "\".";  
+      #Debug "$name: SimpleReadWithTimeout got \"" . escapeLogLine($a) . "\".";
       if(defined($a)) {
 	$answer= ( defined($answer) ? $answer . $a : $a );
       }
-      #Debug "$name: SimpleExpect has now answer \"" . escapeLogLine($answer) . "\".";  
+      #Debug "$name: SimpleExpect has now answer \"" . escapeLogLine($answer) . "\".";
       last if(gettimeofday()-$t0> $partialTimeout);
     }
   }
-  
+
   if(defined($answer)) {
     ECMD_Log $hash, undef, "read " . dq($answer);
     if($answer !~ m/^$expect$/) {
-    ECMD_Log $hash, 1, "unexpected answer " . dq($answer) . " received (wrote " . 
+    ECMD_Log $hash, 1, "unexpected answer " . dq($answer) . " received (wrote " .
          dq($msg) . ", expected $expect)";
     }
   } else {
-    ECMD_Log $hash, 1, "no answer received (wrote " . 
+    ECMD_Log $hash, 1, "no answer received (wrote " .
          dq($msg) . ", expected $expect)";
   }
-  
+
   return $answer;
 }
 
@@ -266,6 +305,7 @@ sub
 ECMD_Clear($)
 {
   my $hash = shift;
+  return undef if ECMD_isStopped($hash);
 
   # Clear the pipe
   DevIo_TimeoutRead($hash, 0.1);
@@ -291,9 +331,14 @@ ECMD_Get($@)
         return "get raw needs an argument" if(@a< 3);
         my $ecmd= join " ", @args;
         $ecmd= AnalyzePerlCommand(undef, $ecmd);
-        $answer= ECMD_SimpleExpect($hash, $ecmd, ".*");
+        # poor man's error catching...
+        if($ecmd =~ "^Bareword \"") {
+          $answer= $ecmd;
+        } else {
+          $answer= ECMD_SimpleExpect($hash, $ecmd, ".*");
+        }
   }  else {
-        return "get $cmd: unknown command ";
+        return "Unknown argument $cmd, choose one of raw";
   }
 
   $hash->{READINGS}{$cmd}{VAL} = $answer;
@@ -369,7 +414,7 @@ ECMD_EvalClassDef($$$)
                 #        Log3 $hash, 5, "$name: no newline";
                 #        $hash->{fhem}{classDefs}{$classname}{nonl}= 1;
                 #}
-                
+
                 #
                 # params
                 #
@@ -398,7 +443,7 @@ ECMD_EvalClassDef($$$)
                                 $arg = $1;
                                 Log3 $hash, 5, "$name: reading $readingname will match $arg";
                                  $hash->{fhem}{classDefs}{$classname}{readings}{$readingname}{match}= $arg;
-                        # 
+                        #
                         # postproc
                         #
                         } elsif($spec eq "postproc") {
@@ -414,7 +459,7 @@ ECMD_EvalClassDef($$$)
                         # anything else
                         #
                         } else {
-                                Log3 $hash, 1, 
+                                Log3 $hash, 1,
                                          "$name: illegal spec $spec for reading $readingname for class $classname in file $filename.";
                         }
                 #
@@ -472,7 +517,7 @@ ECMD_EvalClassDef($$$)
                                         $hash->{fhem}{classDefs}{$classname}{gets}{$cmdname}{expect}= $arg;
                                 }
                         } else {
-                                Log3 $hash, 1, 
+                                Log3 $hash, 1,
                                          "$name: illegal spec $spec for $cmd $cmdname for class $classname in file $filename.";
                         }
                 } else {
@@ -498,8 +543,10 @@ ECMD_Attr($@)
 
   my @a = @_;
   my $hash= $defs{$a[1]};
+  my $name= $hash->{NAME};
 
-  if($a[0] eq "set" && $a[2] eq "classdefs") {
+  if($a[0] eq "set") {
+    if($a[2] eq "classdefs") {
         my @classdefs= split(/:/,$a[3]);
         delete $hash->{fhem}{classDefs};
 
@@ -507,6 +554,30 @@ ECMD_Attr($@)
                 my ($classname,$filename)= split(/=/,$classdef,2);
                 ECMD_EvalClassDef($hash, $classname, $filename);
         }
+    } elsif($a[2] eq "requestSeparator") {
+        my $c= cq($a[3]);
+        $hash->{fhem}{".requestSeparator"}= $c;
+        Log3 $hash, 5, "$name: requestSeparator set to " . dq($c);
+    } elsif($a[2] eq "responseSeparator") {
+        my $c= cq($a[3]);
+        $hash->{fhem}{".responseSeparator"}= $c;
+        Log3 $hash, 5, "$name: responseSeparator set to " . dq($c);
+    } elsif($a[2] eq "split") {
+        my $c= cq($a[3]);
+        $hash->{fhem}{".split"}= $c;
+        Log3 $hash, 5, "$name: split set to " . dq($c);
+    }
+  } elsif($a[0] eq "del") {
+      if($a[2] eq "requestSeparator") {
+        $hash->{fhem}{".requestSeparator"}= undef;
+        Log3 $hash, 5, "$name: requestSeparator deleted";
+    } elsif($a[2] eq "responseSeparator") {
+        $hash->{fhem}{".responseSeparator"}= undef;
+        Log3 $hash, 5, "$name: responseSeparator deleted";
+    } elsif($a[2] eq "split") {
+        $hash->{fhem}{".split"}= undef;
+        Log3 $hash, 5, "$name: split deleted";
+    }
   }
 
   return undef;
@@ -518,6 +589,7 @@ sub
 ECMD_Reopen($)
 {
   my ($hash) = @_;
+  return undef if ECMD_isStopped($hash);
   DevIo_CloseDev($hash);
   DevIo_OpenDev($hash, 1, undef);
 
@@ -550,16 +622,16 @@ ECMD_Set($@)
 
 #####################################
 # called from the global loop, when the select for hash->{FD} reports data
-sub ECMD_Read($) 
+sub ECMD_Read($)
 {
   my ($hash) = @_;
-  
+
   return undef unless($hash->{STATE} eq "opened"); # avoid reading from closed device
-  
+
   my $buf = ECMD_SimpleRead($hash);
   return unless(defined($buf));
   return if($buf eq "");
-  
+
   ECMD_Log $hash, 5,  "Spontaneously received " . dq($buf);
   Dispatch($hash, $buf, undef);  # dispatch result to ECMDDevices
 }
@@ -570,26 +642,39 @@ ECMD_Write($$$)
 {
   my ($hash,$msg,$expect) = @_;
   my $name= $hash->{NAME};
+
+  my $lastWrite= defined($hash->{fhem}{".lastWrite"}) ? $hash->{fhem}{".lastWrite"} : 0;
+  my $now= gettimeofday();
+
+  my $autoReopen= AttrVal($name, "autoReopen", undef);
+  if(defined($autoReopen)) {
+    my ($timeout,$delay)= split(',',$autoReopen);
+    ECMD_Reopen($hash) if($now>$lastWrite+$timeout);
+    sleep($delay);
+  }
+
+  $hash->{fhem}{".lastWrite"}= $now;
+
   my $answer;
   my $ret= "";
-  my $requestSeparator= AttrVal($name, "requestSeparator", undef);
-  my $responseSeparator= AttrVal($name, "responseSeparator", "");
+  my $requestSeparator= $hash->{fhem}{".requestSeparator"};
+  my $responseSeparator= $hash->{fhem}{".responseSeparator"};
   my @ecmds;
   if(defined($requestSeparator)) {
     @ecmds= split $requestSeparator, $msg;
   } else {
     push @ecmds, $msg;
   }
-  ECMD_Log $hash, 5, "command split into " . ($#ecmds+1) . " parts." if($#ecmds>0);
+  ECMD_Log $hash, 5, "command split into " . ($#ecmds+1) . " parts, requestSeparator is " .
+    dq($requestSeparator) if($#ecmds>0);
   foreach my $ecmd (@ecmds) {
         ECMD_Log $hash, 5, "sending command " . dq($ecmd);
         my $msg .= $ecmd;
-        #$msg.= "\n" unless($nonl);
         if(defined($expect)) {
           $answer= ECMD_SimpleExpect($hash, $msg, $expect);
           $answer= "" unless(defined($answer));
           ECMD_Log $hash, 5, "received answer " . dq($answer);
-          $answer.= $responseSeparator if($#ecmds>0);
+          $answer.= $responseSeparator if(defined($responseSeparator) && ($#ecmds>0));
           $ret.= $answer;
         } else {
           ECMD_SimpleWrite($hash, $msg);
@@ -603,18 +688,21 @@ ECMD_Write($$$)
 1;
 
 =pod
+=item device
+=item summary configurable request/response-like communication (physical device)
+=item summary_DE konfigurierbare Frage/Antwort-Kommunikation (physisches Ger&auml;t)
 =begin html
 
 <a name="ECMD"></a>
 <h3>ECMD</h3>
 <ul>
   Any physical device with request/response-like communication capabilities
-  over a TCP connection can be defined as ECMD device. A practical example
+  over a serial line or TCP connection can be defined as ECMD device. A practical example
   of such a device is the AVR microcontroller board AVR-NET-IO from
   <a href="http://www.pollin.de">Pollin</a> with
   <a href="http://www.ethersex.de/index.php/ECMD">ECMD</a>-enabled
   <a href="http://www.ethersex.de">Ethersex</a> firmware. The original
-  NetServer firmware from Pollin works as well.<p>
+  NetServer firmware from Pollin works as well. There is a plenitude of use cases.<p>
 
   A physical ECMD device can host any number of logical ECMD devices. Logical
   devices are defined as <a href="#ECMDDevice">ECMDDevice</a>s in fhem.
@@ -635,11 +723,31 @@ ECMD_Write($$$)
   <br><br>
 
   Note: this module requires the Device::SerialPort or Win32::SerialPort module
-  if the module is connected via serial Port or USB.
+  if the module is connected via serial Port or USB.<p>
+
+  <a name="ECMDcharcoding"></a>
+  <b>Character coding</b><br><br>
+
+  ECMD is suited to process any character including non-printable and control characters.
+  User input for raw data, e.g. for setting attributes, and the display of raw data, e.g. in the log,
+  is perl-encoded according to the following table (ooo stands for a three-digit octal number):<BR>
+  <table>
+  <tr><th>character</th><th>octal</th><th>code</th></tr>
+  <tr><td>Bell</td><td>007</td><td>\a</td></tr>
+  <tr><td>Backspace</td><td>008</td><td>\008</td></tr>
+  <tr><td>Escape</td><td>033</td><td>\e</td></tr>
+  <tr><td>Formfeed</td><td>014</td><td>\f</td></tr>
+  <tr><td>Newline</td><td>012</td><td>\n</td></tr>
+  <tr><td>Return</td><td>015</td><td>\r</td></tr>
+  <tr><td>Tab</td><td>011</td><td>\t</td></tr>
+  <tr><td>backslash</td><td>134</td><td>\134 or \\</td></tr>
+  <tr><td>any</td><td>ooo</td><td>\ooo</td></tr>
+  </table><br>
+  In user input, use \134 for backslash to avoid conflicts with the way FHEM handles continuation lines.
   <br><br>
 
   <a name="ECMDdefine"></a>
-  <b>Define</b>
+  <b>Define</b><br><br>
   <ul>
     <code>define &lt;name&gt; ECMD telnet &lt;IPAddress:Port&gt;</code><br><br>
     or<br><br>
@@ -653,13 +761,13 @@ ECMD_Write($$$)
     <ul>
       <code>define AVRNETIO ECMD telnet 192.168.0.91:2701</code><br>
       <code>define AVRNETIO ECMD serial /dev/ttyS0</code><br>
-      <code>define AVRNETIO ECMD serial /sev/ttyUSB0@38400</code><br>
+      <code>define AVRNETIO ECMD serial /dev/ttyUSB0@38400</code><br>
     </ul>
     <br>
   </ul>
 
   <a name="ECMDset"></a>
-  <b>Set</b>
+  <b>Set</b><br><br>
   <ul>
     <code>set &lt;name&gt; classdef &lt;classname&gt; &lt;filename&gt;</code>
     <br><br>
@@ -670,7 +778,7 @@ ECMD_Write($$$)
     <br><br>
     Example:
     <ul>
-      <code>define AVRNETIO classdef /etc/fhem/ADC.classdef</code><br>
+      <code>set AVRNETIO classdef /etc/fhem/ADC.classdef</code><br>
     </ul>
     <br>
     <code>set &lt;name&gt; reopen</code>
@@ -682,16 +790,16 @@ ECMD_Write($$$)
 
 
   <a name="ECMDget"></a>
-  <b>Get</b>
+  <b>Get</b><br><br>
   <ul>
     <code>get &lt;name&gt; raw &lt;command&gt;</code>
     <br><br>
     Sends the command <code>&lt;command&gt;</code> to the physical ECMD device
-    <code>&lt;name&gt;</code> and reads the response. In the likely case that 
+    <code>&lt;name&gt;</code> and reads the response. In the likely case that
     the command needs to be terminated by a newline character, you have to
     resort to a <a href="#perl">&lt;perl special&gt;</a>.
     <br><br>
-    Example: 
+    Example:
     <ul>
       <code>get AVRNETIO raw { "ip\n" }</code><br>
     </ul>
@@ -699,65 +807,104 @@ ECMD_Write($$$)
   <br><br>
 
   <a name="ECMDattr"></a>
-  <b>Attributes</b>
-  <br><br>
+  <b>Attributes</b><br><br>
   <ul>
     <li>classdefs<br>A colon-separated list of &lt;classname&gt;=&lt;filename&gt;.
     The list is automatically updated if a class definition is added. You can
-    directly set the attribute.</li>
-    <li>split<br>
+    directly set the attribute. Example: <code>attr myECMD classdefs ADC=/etc/fhem/ADC.classdef:GPIO=/etc/fhem/AllInOne.classdef</code></li>
+    <li>split &lt;separator&gt<br>
     Some devices send several readings in one transmission. The split attribute defines the
     separator to split such transmissions into separate messages. The regular expression for
-    matching a reading is then applied to each message in turn. After splitting, the separator 
-    is <b>not</b> part of the single messages.
-    Example: <code>attr myECMD \n</code> splits <code>foo 12\nbar off</code> into 
-    <code>foo 12</code> and <code>bar off</code>.</li>
-    <li>logTraffic &lt;loglevel&gt;<br>Enables logging of sent and received datagrams with the given loglevel. Control characters in the logged datagrams are escaped, i.e. a double backslash is shown for a single backslash, \n is shown for a line feed character, etc.</li>
-    <li>timeout &lt;seconds&gt;<br>Time in seconds to wait for a reply from the physical ECMD device before FHEM assumes that something has gone wrong. The default is 3 seconds if this attribute is not set.</li> 
-    <li>partial &lt;seconds&gt;<br>Some physical ECMD devices split readings and replies into several transmissions. If the partial attribute is set, this behavior is accounted for as follows: (a) If a reply is expected for a get or set command, FHEM collects transmissions from the physical ECMD device until either the reply matches the expected reply or the time in seconds given with the partial attribute has expired. (b) If a spontaneous transmission does not match the regular expression for any reading, the transmission is recorded and prepended to the next transmission. If the line is quiet for longer than the time in seconds given with the partial attribute, the recorded transmission is discarded. Use regular expressions that produce exact matches.</li> 
-    <li>requestSeparator<br>
-    A single request from FHEM to the device might need to be split in several datagrams. A command string is split at all
-    occurrences of the requestSeparator. The requestSeparator itself is removed from the command string and thus 
-    not part of the request. 
-    This attribute is set by default. It defaults to the value \000 (octal representation of control char with code zero).
-    To disable this feature, delete the attribute from the device's attribute list.
+    matching a reading is then applied to each message in turn. After splitting, the separator
+    <b>is</b> still part of the single messages. Separator can be a single- or multi-character string,
+    e.g. \n or \r\n.
+    Example: <code>attr myECMD split \n</code> splits <code>foo 12\nbar off\n</code> into
+    <code>foo 12\n</code> and <code>bar off\n</code>.</li>
+    <li>logTraffic &lt;loglevel&gt;<br>Enables logging of sent and received datagrams with the given loglevel. Control characters in the logged datagrams are <a href="#ECMDcharcoding">escaped</a>, i.e. a double backslash is shown for a single backslash, \n is shown for a line feed character, etc.</li>
+    <li>timeout &lt;seconds&gt;<br>Time in seconds to wait for a response from the physical ECMD device before FHEM assumes that something has gone wrong. The default is 3 seconds if this attribute is not set.</li>
+    <li>partial &lt;seconds&gt;<br>Some physical ECMD devices split responses into several transmissions. If the partial attribute is set, this behavior is accounted for as follows: (a) If a response is expected for a get or set command, FHEM collects transmissions from the physical ECMD device until either the response matches the expected response (<code>reading ... match ...</code> in the <a href="#ECMDClassdef">class definition</a>) or the time in seconds given with the partial attribute has expired. (b) If a spontaneous transmission does not match the regular expression for any reading, the transmission is recorded and prepended to the next transmission. If the line is quiet for longer than the time in seconds given with the partial attribute, the recorded transmission is discarded. Use regular expressions that produce exact matches of the complete response (after combining partials and splitting).</li>
+    <li>requestSeparator &lt;separator&gt<br>
+    A single command from FHEM to the device might need to be broken down into several requests.
+    A command string is split at all
+    occurrences of the request separator. The request separator itself is removed from the command string and thus is
+    not part of the request. The default is to have no request separator. Use a request separator that does not occur in the actual request.
     </li>
-    <li>responseSeparator<br>
-    In order to identify the single responses from the device to FHEM for each part of a split command, a responseSeparator
-    can be appended to the response to each part. The responseSeparator is only appended to commands split by means of a
-    requestSeparator. The default is to have no responseSeparator, i.e. responses are simply concatenated.
+    <li>responseSeparator &lt;separator&gt<br>
+    In order to identify the single responses from the device for each part of the command broken down by request separators, a response separator can be appended to the response to each single request.
+    The response separator is only appended to commands split by means of a
+    request separator. The default is to have no response separator, i.e. responses are simply concatenated. Use a response separator that does not occur in the actual response.
+    </li>
+    <li>autoReopen &lt;timeout&gt;,&lt;delay&gt;<br>
+    If this attribute is set, the device is automatically reopened if no bytes were written for &lt;timeout&gt seconds or more. After reopening
+    FHEM waits &lt;delay&gt; seconds before writing to the device. Use the delay with care because it stalls FHEM completely.
+    </li>
+    <li>stop<br>
+    Disables read/write access to the device if set to 1. No data is written to the physical ECMD device. A read request always returns an undefined result.
+    This attribute can be used to temporarily disable a device that is not available.
     </li>
     <li><a href="#verbose">verbose</a></li>
   </ul>
   <br><br>
-  
+
+  <b>Separators</b>
+  <br><br>
+  <i>When to use the split and partial attributes?</i><p>
+
+  Set the <code>partial</code> attribute in combination with <code>reading ... match ...</code> in the <a href="#ECMDClassdef">class definition</a>, if you receive datagrams with responses which are broken into several transmissions, like <code>resp</code> followed by <code>onse\r\n</code>.<p>
+
+  Set the <code>split</code> attribute if you
+  receive several responses in one transmission, like <code>reply1\r\nreply2\r\n</code>.<p>
+
+  <i>When to use the requestSeparator and responseSeparator attributes?</i><p>
+
+  Set the <code>requestSeparator</code> attribute, if you want to send several requests in one command, with one transmission per request. The strings sent to the device for <code>set</code> and <code>get</code> commands
+  as defined in the <a href="#ECMDClassdef">class definition</a> are broken down into several request/response
+  interactions with the physical device. The request separator is not sent to the physical device.<p>
+
+  Set the <code>responseSeparator</code> attribute to separate the responses received for a command
+  broken down into several requests by means of a request separator. This is useful for easier postprocessing.<p>
+
+  Example: you want to send the requests <code>request1</code> and <code>request2</code> in one command. The
+  physical device would respond with <code>response1</code> and <code>response2</code> respectively for each
+  of the requests. You set the request separator to \000 and the response separator to \001 and you define
+  the command as <code>request1\000request2\000</code>. The command is broken down into <code>request1</code>
+  and <code>request2</code>. <code>request1</code> is sent to the physical device and <code>response1</code>
+  is received, followed by sending <code>request2</code> and receiving <code>response2</code>. The final
+  result is <code>response1\001response2\001</code>.<p>
+
+  You can think of this feature as of a macro. Splitting and partial matching is still done per single
+  request/response within the macro.<p>
+
   <a name="ECMDDatagram"></a>
   <b>Datagram monitoring and matching</b>
   <br><br>
-  
+
   Data to and from the physical device is processed as is. In particular, if you need to send a line feed you have to explicitely send a \n control character. On the other hand, control characters like line feeds are not stripped from the data received. This needs to be considered when defining a <a href="#ECMDClassdef">class definition</a>.<p>
-  
-  For debugging purposes, especially when designing a <a href="#ECMDClassdef">class definition</a>, it is advisable to turn traffic logging on. Use <code>attr myECMD logTraffic 3</code> to log all data to and from the physical device at level 3. A typical response might look like <code>21.2\n</code>, i.e. a floating point number followed by a newline.<p>
-  
+
+  For debugging purposes, especially when designing a <a href="#ECMDClassdef">class definition</a>, it is advisable to turn traffic logging on. Use <code>attr myECMD logTraffic 3</code> to log all data to and from the physical device at level 3.<p>
+
+  Datagrams and attribute values are logged with non-printable and control characters encoded as <a href="#ECMDcharcoding">here</a> followed by the octal representation in parantheses.
+  Example: <code>#!foo\r\n (\043\041\146\157\157\015\012)</code>.<p>
+
   Data received from the physical device is processed as it comes in chunks. If for some reason a datagram from the device is split in transit, pattern matching and processing will most likely fail. You can use the <code>partial</code> attribute to make FHEM collect and recombine the chunks.
   <br><br>
-  
+
   <a name="ECMDConnection"></a>
   <b>Connection error handling</b>
   <br><br>
-  
+
   This modules handles unexpected disconnects of devices as follows (on Windows only for TCP connections):<p>
-  
+
   Disconnects are detected if and only if data from the device in reply to data sent to the device cannot be received with at most two attempts. FHEM waits at most 3 seconds (or the time specified in the <code>timeout</code> attribute, see <a href="#ECMDattr">Attributes</a>). After the first failed attempt, the connection to the device is closed and reopened again. The state of the device
   is <code>failed</code>. Then the data is sent again to the device. If still no reply is received, the state of the device is <code>disconnected</code>, otherwise <code>opened</code>. You will have to fix the problem and then use <code>set myECMD reopen</code> to reconnect to the device.<p>
-  
+
   Please design your class definitions in such a way that the double sending of data does not bite you in any case.
   <br><br>
 
   <a name="ECMDClassdef"></a>
   <b>Class definition</b>
   <br><br>
-  
+
     The class definition for a logical ECMD device class is contained in a text file.
     The text file is made up of single lines. Empty lines and text beginning with #
     (hash) are ignored. Therefore make sure not to use hashes in commands.<br>
@@ -775,15 +922,15 @@ ECMD_Write($$$)
             by the value, if any. This command sets the state reading to the value of the
             named reading if and only if the reading is updated.<br><br>
             </li>
-           
+
             <li><code>set &lt;commandname&gt; cmd { <a href="#perl">&lt;perl special&gt;</a> }</code><br>
             <code>get &lt;commandname&gt; cmd { <a href="#perl">&lt;perl special&gt;</a> }</code>
             <br><br>
             Declares a new set or get command <code>&lt;commandname&gt;</code>. If the user invokes the set or get command <code>&lt;commandname&gt;</code>, the string that results from the execution of the &lt;perl special&gt; is sent to the physical device.<p>
             A request separator (see <a href="#ECMDattr">Attributes</a>)
-            can be used to split the command into chunks. This is required for sending multiple <a href="http://www.ethersex.de/index.php/ECMD">Ethersex commands</a> for one command in the class definition. 
+            can be used to split the command into chunks. This is required for sending multiple <a href="http://www.ethersex.de/index.php/ECMD">Ethersex commands</a> for one command in the class definition.
             The result string for the command is the
-            concatenation of all responses received from the physical device, optionally with response separators 
+            concatenation of all responses received from the physical device, optionally with response separators
             (see <a href="#ECMDattr">Attributes</a>) in between.
             <br><br>
             </li>
@@ -823,7 +970,7 @@ ECMD_Write($$$)
             <code>&lt;regex&gt;</code> must match the entire reply, as in <code>m/^&lt;regex&gt;$/</code>.
             <br><br>
             </li>
-            
+
             <li>
             <code>reading &lt;reading&gt; postproc { <a href="#perl">&lt;perl special&gt;</a> }</code>
             <br><br>
@@ -831,9 +978,9 @@ ECMD_Write($$$)
             <br><br>
             </li>
 
-            
 
-            
+
+
     </ul>
 
     The perl specials in the definitions above can

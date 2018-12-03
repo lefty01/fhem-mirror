@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 52_I2C_BME280.pm 17863 2018-11-27 23:28:39Z klausw $
 =head1
 	52_I2C_BME280.pm
 
@@ -117,7 +117,7 @@ sub I2C_BME280_Attr (@) {					# Wird beim Attribut anlegen/aendern aufgerufen
 			if ($main::init_done and (!defined ($hash->{IODev}) or $hash->{IODev}->{NAME} ne $val)) {
 				main::AssignIoPort($hash,$val);
 				my @def = split (' ',$hash->{DEF});
-				I2C_LCD_Init($hash,\@def) if (defined ($hash->{IODev}));
+				I2C_BME280_Init($hash,\@def) if (defined ($hash->{IODev}));
 			}
         };
 		$msg = I2C_BME280_Catch($@) if $@;
@@ -172,7 +172,7 @@ sub I2C_BME280_Set($@) {					# Messwerte manuell anfordern
 		} else {											#..but get calibration variables first
 			Log3 $hash, 5, "$name: in set but no calibrationData, requesting again"; 
 			I2C_BME280_i2cread($hash, 0x88, 26);
-			I2C_BME280_i2cread($hash, 0xE1, 16);
+			I2C_BME280_i2cread($hash, 0xE1, 8);
 		}
 	}
 	return undef
@@ -194,7 +194,7 @@ sub I2C_BME280_Get($@) {					# Messwerte manuell anfordern
 		} else {											#..but get calibration variables first
 			Log3 $hash, 5, "$name: in set but no calibrationData, requesting again"; 
 			I2C_BME280_i2cread($hash, 0x88, 26);
-			I2C_BME280_i2cread($hash, 0xE1, 16);
+			I2C_BME280_i2cread($hash, 0xE1, 8);
 		}
 	} else {
 		return 'Unknown argument ' . $cmd . ', choose one of readValues:noArg';
@@ -230,7 +230,7 @@ sub I2C_BME280_I2CRec ($$) {				# wird vom IODev aus aufgerufen wenn I2C Daten v
 		if ( $clientmsg->{direction} eq "i2cread" && defined($clientmsg->{received}) ) {
 			Log3 $hash, 5, "$name Rx, Reg: $clientmsg->{reg}, Data: $clientmsg->{received}";
 			I2C_BME280_GetCal1  	($hash, $clientmsg->{received}) if $clientmsg->{reg} == 0x88 && $clientmsg->{nbyte} == 26;
-			I2C_BME280_GetCal2  	($hash, $clientmsg->{received}) if $clientmsg->{reg} == 0xE1 && $clientmsg->{nbyte} == 8;
+			I2C_BME280_GetCal2  	($hash, $clientmsg->{received}) if $clientmsg->{reg} == 0xE1 && $clientmsg->{nbyte} >= 8;
 			I2C_BME280_GetId   		($hash, $clientmsg->{received}) if $clientmsg->{reg} == 0xD0;
 			I2C_BME280_GetReadings  ($hash, $clientmsg->{received}) if $clientmsg->{reg} == 0xF7 && $clientmsg->{nbyte} == 8;
 		}
@@ -498,6 +498,9 @@ sub I2C_BME280_DbLog_splitFn($) {  			# Einheiten
 1;
 
 =pod
+=item device
+=item summary reads pressure, humidity and temperature from an via I2C connected BME280
+=item summary_DE lese Druck, Feuchte und Temperatur eines &uuml;ber I2C angeschlossenen BME280
 =begin html
 
 <a name="I2C_BME280"></a>
@@ -512,7 +515,9 @@ sub I2C_BME280_DbLog_splitFn($) {  			# Einheiten
   <b>Define</b>
   <ul>
     <code>define BME280 I2C_BME280 [&lt;I2C Address&gt;]</code><br><br>
-    without defined <code>&lt;I2C Address&gt;</code> 0x76 will be used as address<br>
+    <code>&lt;I2C Address&gt;</code> may be an 2 digit hexadecimal value (0xnn) or an decimal value<br>
+	Without defined <code>&lt;I2C Address&gt;</code> 0x76 (hexadecimal) = 118 (decimal) will be used.<br>
+	An I2C address are 7 MSB, the LSB is the R/W bit.<br>
     <br>
     Examples:
     <pre>
@@ -578,7 +583,9 @@ sub I2C_BME280_DbLog_splitFn($) {  			# Einheiten
 	<b>Define</b>
 	<ul>
 		<code>define BME280 &lt;BME280_name&gt; [&lt;I2C Addresse&gt;]</code><br><br>
-		Fehlt <code>&lt;I2C Address&gt;</code> wird 0x76 verwendet<br>
+		<code>&lt;I2C Address&gt;</code> kann ein zweistelliger Hex-Wert (0xnn) oder ein Dezimalwert sein<br>
+		Fehlt <code>&lt;I2C Address&gt;</code> wird 0x76 (hexadezimal) = 118 (dezimal) verwendet.<br>
+		Als I2C Adresse verstehen sich die 7 MSB, das LSB ist das R/W Bit.<br>
 		<br>
 		Beispiel:
 		<pre>

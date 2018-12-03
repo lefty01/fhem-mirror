@@ -1,72 +1,28 @@
-# $Id$
-##############################################################################
-#
-#     70_ENIGMA2.pm
-#     An FHEM Perl module for controlling ENIGMA2 based TV receivers
-#     via network connection.
-#
-#     Copyright by Julian Pawlowski
-#     e-mail: julian.pawlowski at gmail.com
-#
-#     This file is part of fhem.
-#
-#     Fhem is free software: you can redistribute it and/or modify
-#     it under the terms of the GNU General Public License as published by
-#     the Free Software Foundation, either version 2 of the License, or
-#     (at your option) any later version.
-#
-#     Fhem is distributed in the hope that it will be useful,
-#     but WITHOUT ANY WARRANTY; without even the implied warranty of
-#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#     GNU General Public License for more details.
-#
-#     You should have received a copy of the GNU General Public License
-#     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
-#
-##############################################################################
-
+###############################################################################
+# $Id: 70_ENIGMA2.pm 17859 2018-11-27 20:10:17Z loredo $
 package main;
-
-use 5.012;
 use strict;
 use warnings;
 use Data::Dumper;
-use IO::Socket;
+use Time::Local;
+use Encode qw(encode_utf8 decode_utf8);
+
 use HttpUtils;
-use Encode;
 
-no if $] >= 5.017011, warnings => 'experimental::smartmatch';
-
-no warnings "all";
-
-sub ENIGMA2_Set($@);
-sub ENIGMA2_Get($@);
-sub ENIGMA2_GetStatus($;$);
-sub ENIGMA2_Define($$);
-sub ENIGMA2_Undefine($$);
-
-#########################
-# Forward declaration for remotecontrol module
-sub ENIGMA2_RClayout_TV();
-sub ENIGMA2_RCmakenotify($$);
-
-###################################
+# initialize ##################################################################
 sub ENIGMA2_Initialize($) {
     my ($hash) = @_;
 
     Log3 $hash, 5, "ENIGMA2_Initialize: Entering";
 
-    eval 'use XML::Simple; 1';
-    return "Please install XML::Simple to use this module."
-      if ($@);
-
-    $hash->{GetFn}   = "ENIGMA2_Get";
-    $hash->{SetFn}   = "ENIGMA2_Set";
-    $hash->{DefFn}   = "ENIGMA2_Define";
-    $hash->{UndefFn} = "ENIGMA2_Undefine";
+    $hash->{DefFn}       = "ENIGMA2_Define";
+    $hash->{UndefFn}     = "ENIGMA2_Undefine";
+    $hash->{SetFn}       = "ENIGMA2_Set";
+    $hash->{GetFn}       = "ENIGMA2_Get";
+    $hash->{parseParams} = 1;
 
     $hash->{AttrList} =
-"https:0,1 http-method:GET,POST http-noshutdown:1,0 disable:0,1 bouquet-tv bouquet-radio timeout remotecontrol:standard,advanced,keyboard lightMode:0,1 macaddr:textField wakeupCmd:textField "
+"disable:1,0 disabledForIntervals do_not_notify:1,0 https:0,1 http-method:GET,POST http-noshutdown:1,0 disable:0,1 bouquet-tv bouquet-radio timeout remotecontrol:standard,advanced,keyboard lightMode:0,1 ignoreState:0,1 macaddr:textField model wakeupCmd:textField WOL_useUdpBroadcast WOL_port WOL_mode:EW,UDP,BOTH "
       . $readingFnAttributes;
 
     $data{RC_layout}{ENIGMA2_DreamMultimedia_DM500_DM800_SVG} =
@@ -80,713 +36,85 @@ sub ENIGMA2_Initialize($) {
     $data{RC_layout}{ENIGMA2_DreamMultimedia_RC10_SVG} =
       "ENIGMA2_RClayout_RC10_SVG";
     $data{RC_layout}{ENIGMA2_DreamMultimedia_RC10} = "ENIGMA2_RClayout_RC10";
-
-#  $data{RC_layout}{ENIGMA2_VUplus_Solo2_SVG}  = "ENIGMA2_RClayout_VUplusSolo2_SVG";
-#  $data{RC_layout}{ENIGMA2_VUplus_Solo2}  = "ENIGMA2_RClayout_VUplusSolo2";
     $data{RC_layout}{ENIGMA2_VUplus_Duo2_SVG} =
       "ENIGMA2_RClayout_VUplusDuo2_SVG";
     $data{RC_layout}{ENIGMA2_VUplus_Duo2} = "ENIGMA2_RClayout_VUplusDuo2";
+    $data{RC_makenotify}{ENIGMA2}         = "ENIGMA2_RCmakenotify";
 
-#  $data{RC_layout}{ENIGMA2_VUplus_Ultimo_SVG}  = "ENIGMA2_RClayout_VUplusUltimo_SVG";
-#  $data{RC_layout}{ENIGMA2_VUplus_Ultimo}  = "ENIGMA2_RClayout_VUplusUltimo";
-    $data{RC_makenotify}{ENIGMA2} = "ENIGMA2_RCmakenotify";
-
-    return;
+    # 98_powerMap.pm support
+    $hash->{powerMap} = {
+        model   => 'modelid',    # fallback to attribute
+        modelid => {
+            'SOLO_SE' => {
+                rname_E => 'energy',
+                rname_P => 'consumption',
+                map     => {
+                    stateAV => {
+                        absent => 0.5,
+                        off    => 12,
+                        '*'    => 13,
+                    },
+                },
+            },
+        },
+    };
 }
 
-#####################################
-sub ENIGMA2_GetStatus($;$) {
-    my ( $hash, $update ) = @_;
-    my $name     = $hash->{NAME};
-    my $interval = $hash->{INTERVAL};
-
-    Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_GetStatus()";
-
-    RemoveInternalTimer($hash);
-    InternalTimer( gettimeofday() + $interval, "ENIGMA2_GetStatus", $hash, 0 );
-
-    return
-      if ( AttrVal( $name, "disable", 0 ) == 1 );
-
-    if ( !$update ) {
-        ENIGMA2_SendCommand( $hash, "powerstate" );
-    }
-    else {
-        ENIGMA2_SendCommand( $hash, "getcurrent" );
-    }
-
-    return;
-}
-
-###################################
-sub ENIGMA2_Get($@) {
-    my ( $hash, @a ) = @_;
-    my $name = $hash->{NAME};
-    my $what;
-
-    Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_Get()";
-
-    return "argument is missing" if ( int(@a) < 2 );
-
-    $what = $a[1];
-
-    if ( $what =~
-/^(power|input|volume|mute|channel|currentMedia|currentTitle|nextTitle|providername|servicevideosize)$/
-      )
-    {
-        if ( ReadingsVal( $name, $what, "" ) ne "" ) {
-            return ReadingsVal( $name, $what, "" );
-        }
-        else {
-            return "no such reading: $what";
-        }
-    }
-
-    # streamUrl
-    elsif ( $what eq "streamUrl" ) {
-        if ( defined( $a[2] ) && $a[2] eq "mobile" ) {
-            return
-                "http://"
-              . $hash->{helper}{ADDRESS} . ":"
-              . $hash->{helper}{PORT}
-              . "/web/stream.m3u?ref="
-              . urlEncode( ReadingsVal( $name, "servicereference", "-" ) )
-              . "&device=phone";
-        }
-        else {
-            return
-                "http://"
-              . $hash->{helper}{ADDRESS} . ":"
-              . $hash->{helper}{PORT}
-              . "/web/stream.m3u?ref="
-              . urlEncode( ReadingsVal( $name, "servicereference", "-" ) )
-              . "&device=etc";
-        }
-    }
-    else {
-        return
-"Unknown argument $what, choose one of power:noArg input:noArg volume:noArg mute:noArg channel:noArg currentMedia:noArg currentTitle:noArg nextTitle:noArg providername:noArg servicevideosize:noArg streamUrl:,mobile ";
-    }
-}
-
-###################################
-sub ENIGMA2_Set($@) {
-    my ( $hash, @a ) = @_;
-    my $name     = $hash->{NAME};
-    my $state    = ReadingsVal( $name, "state", "absent" );
-    my $presence = ReadingsVal( $name, "presence", "absent" );
-    my $input    = ReadingsVal( $name, "input", "" );
-    my $channel  = ReadingsVal( $name, "channel", "" );
-    my $channels = "";
-
-    Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_Set()";
-
-    return "No Argument given" if ( !defined( $a[1] ) );
-
-    # depending on current FHEMWEB instance's allowedCommands,
-    # restrict set commands if there is "set-user" in it
-    my $adminMode         = 1;
-    my $FWallowedCommands = 0;
-    $FWallowedCommands = AttrVal( $FW_wname, "allowedCommands", 0 )
-      if ( defined($FW_wname) );
-    if ( $FWallowedCommands && $FWallowedCommands =~ m/\bset-user\b/ ) {
-        $adminMode = 0;
-        return "Forbidden command: set " . $a[1]
-          if ( lc( $a[1] ) eq "statusrequest"
-            || lc( $a[1] ) eq "reboot"
-            || lc( $a[1] ) eq "restartgui"
-            || lc( $a[1] ) eq "shutdown" );
-    }
-
-    # load channel list
-    if (
-           defined($input)
-        && defined($channel)
-        && $input ne ""
-        && $channel ne ""
-        && (   !defined( $hash->{helper}{bouquet}{$input} )
-            || !defined( $hash->{helper}{bouquet}{$input}{$channel} ) )
-      )
-    {
-        $channels .= $channel . ",";
-    }
-
-    if (   $input ne ""
-        && defined( $hash->{helper}{channels}{$input} )
-        && ref( $hash->{helper}{channels}{$input} ) eq "ARRAY" )
-    {
-        $channels .= join( ',', @{ $hash->{helper}{channels}{$input} } );
-    }
-
-    my $usage =
-        "Unknown argument "
-      . $a[1]
-      . ", choose one of toggle:noArg on:noArg off:noArg volume:slider,0,1,100 volumeUp:noArg volumeDown:noArg msg remoteControl channelUp:noArg channelDown:noArg play:noArg pause:noArg stop:noArg record:noArg showText channel:"
-      . $channels;
-    $usage .= " mute:-,on,off"
-      if ( ReadingsVal( $name, "mute", "-" ) eq "-" );
-    $usage .= " mute:on,off"
-      if ( ReadingsVal( $name, "mute", "-" ) ne "-" );
-    $usage .= " input:-,tv,radio"
-      if ( $input eq "-" );
-    $usage .= " input:tv,radio"
-      if ( $input ne "-" );
-
-    if ($adminMode) {
-        $usage .= " reboot:noArg";
-        $usage .= " restartGui:noArg";
-        $usage .= " shutdown:noArg";
-        $usage .= " statusRequest:noArg";
-    }
-
-    my $cmd = '';
-    my $result;
-
-    # statusRequest
-    if ( lc( $a[1] ) eq "statusrequest" ) {
-        Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-        if ( $state ne "absent" ) {
-            Log3 $name, 4,
-              "ENIGMA2 $name: Clearing cache for bouquet and channels";
-            $hash->{helper}{bouquet}  = undef;
-            $hash->{helper}{channels} = undef;
-        }
-
-        ENIGMA2_GetStatus($hash);
-    }
-
-    # toggle
-    elsif ( lc( $a[1] ) eq "toggle" ) {
-        if ( $state ne "on" ) {
-            return ENIGMA2_Set( $hash, $name, "on" );
-        }
-        else {
-            return ENIGMA2_Set( $hash, $name, "off" );
-        }
-    }
-
-    # shutdown
-    elsif ( lc( $a[1] ) eq "shutdown" ) {
-        return "Recordings running"
-          if ( ReadingsVal( $name, "recordings", "0" ) ne "0" );
-
-        Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-        if ( $state ne "absent" ) {
-            $cmd = "newstate=1";
-            $result =
-              ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "shutdown" );
-        }
-        else {
-            return "Device needs to be ON to be set to standby mode.";
-        }
-    }
-
-    # reboot
-    elsif ( lc( $a[1] ) eq "reboot" ) {
-        return "Recordings running"
-          if ( ReadingsVal( $name, "recordings", "0" ) ne "0" );
-
-        Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-        if ( $state ne "absent" ) {
-            $cmd = "newstate=2";
-            $result =
-              ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "reboot" );
-        }
-        else {
-            return "Device needs to be reachable to be rebooted.";
-        }
-    }
-
-    # restartGui
-    elsif ( lc( $a[1] ) eq "restartgui" ) {
-        return "Recordings running"
-          if ( ReadingsVal( $name, "recordings", "0" ) ne "0" );
-
-        Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-        if ( $state eq "on" ) {
-            $cmd = "newstate=3";
-            $result =
-              ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "restartGui" );
-        }
-        else {
-            return "Device needs to be ON to restart the GUI.";
-        }
-    }
-
-    # on
-    elsif ( lc( $a[1] ) eq "on" ) {
-        if ( $state eq "absent" ) {
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1] . " (wakeup)";
-            my $wakeupCmd = AttrVal( $name, "wakeupCmd", "" );
-            my $macAddr =
-              AttrVal( $name, "macaddr", ReadingsVal( $name, "lanmac", "" ) );
-
-            if ( $wakeupCmd ne "" ) {
-                $wakeupCmd =~ s/\$DEVICE/$name/g;
-                $wakeupCmd =~ s/\$MACADDR/$macAddr/g;
-
-                if ( $wakeupCmd =~ s/^[ \t]*\{|\}[ \t]*$//g ) {
-                    Log3 $name, 4,
-                      "ENIGMA2 executing wake-up command (Perl): $wakeupCmd";
-                    $result = eval $wakeupCmd;
-                }
-                else {
-                    Log3 $name, 4,
-                      "ENIGMA2 executing wake-up command (fhem): $wakeupCmd";
-                    $result = fhem $wakeupCmd;
-                }
-            }
-            elsif ( $macAddr ne "" && $macAddr ne "-" ) {
-                $result = ENIGMA2_wake( $name, $macAddr );
-                return "wake-up command sent to MAC $macAddr";
-            }
-            else {
-                return
-"Device MAC address unknown. Please turn on the device manually once or set attribute macaddr.";
-            }
-        }
-        else {
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-            $cmd = "newstate=4";
-            $result = ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "on" );
-        }
-    }
-
-    # off
-    elsif ( lc( $a[1] ) eq "off" ) {
-        if ( $state ne "absent" ) {
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-            $cmd = "newstate=5";
-            $result = ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "off" );
-        }
-        else {
-            return "Device needs to be reachable to be set to standby mode.";
-        }
-    }
-
-    # volume
-    elsif ( lc( $a[1] ) eq "volume" ) {
-        return "No argument given" if ( !defined( $a[2] ) );
-
-        Log3 $name, 3, "ENIGMA2 set $name " . $a[1] . " " . $a[2];
-
-        if ( $state eq "on" ) {
-            my $_ = $a[2];
-            if ( m/^\d+$/ && $_ >= 0 && $_ <= 100 ) {
-                $cmd = "set=set" . $a[2];
-            }
-            else {
-                return
-"Argument does not seem to be a valid integer between 0 and 100";
-            }
-            $result = ENIGMA2_SendCommand( $hash, "vol", $cmd );
-        }
-        else {
-            return "Device needs to be ON to adjust volume.";
-        }
-    }
-
-    # volumeUp/volumeDown
-    elsif ( lc( $a[1] ) =~ /^(volumeup|volumedown)$/ ) {
-        if ( $state eq "on" ) {
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-            if ( lc( $a[1] ) eq "volumeup" ) {
-                $cmd = "set=up";
-            }
-            else {
-                $cmd = "set=down";
-            }
-            $result = ENIGMA2_SendCommand( $hash, "vol", $cmd );
-        }
-        else {
-            return "Device needs to be ON to adjust volume.";
-        }
-    }
-
-    # mute
-    elsif ( lc( $a[1] ) eq "mute" || lc( $a[1] ) eq "mutet" ) {
-        if ( $state eq "on" ) {
-            if ( defined( $a[2] ) ) {
-                Log3 $name, 3, "ENIGMA2 set $name " . $a[1] . " " . $a[2];
-            }
-            else {
-                Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-            }
-
-            if ( !defined( $a[2] ) || $a[2] eq "toggle" ) {
-                $cmd = "set=mute";
-            }
-            elsif ( lc( $a[2] ) eq "off" ) {
-                if ( ReadingsVal( $name, "mute", "" ) ne "off" ) {
-                    $cmd = "set=mute";
-                }
-            }
-            elsif ( lc( $a[2] ) eq "on" ) {
-                if ( ReadingsVal( $name, "mute", "" ) ne "on" ) {
-                    $cmd = "set=mute";
-                }
-            }
-            else {
-                return "Unknown argument " . $a[2];
-            }
-            $result = ENIGMA2_SendCommand( $hash, "vol", $cmd )
-              if ( $cmd ne "" );
-        }
-        else {
-            return "Device needs to be ON to mute/unmute audio.";
-        }
-    }
-
-    # msg
-    elsif ( lc( $a[1] ) eq "msg" ) {
-        if ( $state ne "absent" ) {
-            return
-"No 1st argument given, choose one of yesno info message attention "
-              if ( !defined( $a[2] ) );
-
-            return "No 2nd argument given, choose one of timeout "
-              if ( !defined( $a[3] ) );
-
-            return "No 3nd argument given, choose one of messagetext "
-              if ( !defined( $a[4] ) );
-
-            $_ = $a[3];
-
-            return
-                "Argument "
-              . $_
-              . " is not a valid integer between 0 and 49680"
-              if ( !m/^\d+$/ || $_ < 0 || $_ > 49680 );
-
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1] . " " . $a[2];
-
-            my $i    = 4;
-            my $text = $a[$i];
-            $i++;
-
-            if ( defined( $a[$i] ) ) {
-                my $arr_size = @a;
-                while ( $i < $arr_size ) {
-                    $text = $text . " " . $a[$i];
-                    $i++;
-                }
-            }
-            if ( lc( $a[2] ) eq "yesno" ) {
-                $cmd = "type=0&timeout=" . $a[3] . "&text=" . urlEncode($text);
-            }
-            elsif ( lc( $a[2] ) eq "info" ) {
-                $cmd = "type=1&timeout=" . $a[3] . "&text=" . urlEncode($text);
-            }
-            elsif ( lc( $a[2] ) eq "message" ) {
-                $cmd = "type=2&timeout=" . $a[3] . "&text=" . urlEncode($text);
-            }
-            elsif ( lc( $a[2] ) eq "attention" ) {
-                $cmd = "type=3&timeout=" . $a[3] . "&text=" . urlEncode($text);
-            }
-            else {
-                return
-                    "Unknown argument "
-                  . $a[2]
-                  . ", choose one of yesno info message attention ";
-            }
-            $result = ENIGMA2_SendCommand( $hash, "message", $cmd );
-        }
-        else {
-            return "Device needs to be reachable to send a message to screen.";
-        }
-    }
-
-    # remoteControl
-    elsif ( lc( $a[1] ) eq "remotecontrol" ) {
-        if ( $state ne "absent" ) {
-
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1] . " " . $a[2]
-              if !defined( $a[3] );
-            Log3 $name, 3,
-              "ENIGMA2 set $name " . $a[1] . " " . $a[2] . " " . $a[3]
-              if defined( $a[3] );
-
-            if ( !defined( $a[2] ) ) {
-                my $commandKeys = "";
-                for (
-                    sort keys %{
-                        ENIGMA2_GetRemotecontrolCommand(
-                            "GetRemotecontrolCommands")
-                    }
-                  )
-                {
-                    $commandKeys = $commandKeys . " " . $_;
-                }
-                return "No argument given, choose one of" . $commandKeys;
-            }
-
-            my $request = ENIGMA2_GetRemotecontrolCommand( uc( $a[2] ) );
-            $request = $a[2]
-              if ( $request eq "" && $a[2] =~ /^\d+$/ );
-
-            if ( uc( $a[2] ) eq "POWER" ) {
-                return ENIGMA2_Set( $hash, $name, "toggle" );
-            }
-            elsif ( uc( $a[2] ) eq "MUTE" ) {
-                return ENIGMA2_Set( $hash, $name, "mute" );
-            }
-            elsif ( $request ne "" ) {
-                $cmd = "command=" . $request;
-                $cmd .= "&rcu=" . AttrVal( $name, "remotecontrol", "" )
-                  if ( AttrVal( $name, "remotecontrol", "" ) ne "" );
-                $cmd .= "&type=long"
-                  if ( defined( $a[3] ) && lc( $a[3] ) eq "long" );
-            }
-            else {
-                my $commandKeys = "";
-                for (
-                    sort keys %{
-                        ENIGMA2_GetRemotecontrolCommand(
-                            "GetRemotecontrolCommands")
-                    }
-                  )
-                {
-                    $commandKeys = $commandKeys . " " . $_;
-                }
-                return
-                    "Unknown argument "
-                  . $a[2]
-                  . ", choose one of"
-                  . $commandKeys;
-            }
-
-            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
-        }
-        else {
-            return "Device needs to be reachable to be controlled remotely.";
-        }
-    }
-
-    # channel
-    elsif ( lc( $a[1] ) eq "channel" ) {
-
-        return
-"No argument given, choose one of channel channelNumber servicereference "
-          if ( !defined( $a[2] ) );
-
-        if (   defined( $a[2] )
-            && $presence eq "present"
-            && $state ne "on" )
-        {
-            Log3 $name, 4, "ENIGMA2 $name: indirect switching request to ON";
-            ENIGMA2_Set( $hash, $name, "on" );
-        }
-
-        Log3 $name, 3, "ENIGMA2 set $name " . $a[1] . " " . $a[2];
-
-        if ( $state eq "on" ) {
-            my $_ = $a[2];
-            if ( defined( $hash->{helper}{bouquet}{$input}{$_}{sRef} ) ) {
-                $result = ENIGMA2_SendCommand( $hash, "zap",
-                    "sRef="
-                      . urlEncode( $hash->{helper}{bouquet}{$input}{$_}{sRef} )
-                );
-            }
-            elsif (m/^(\d+):(.*):$/) {
-                $result =
-                  ENIGMA2_SendCommand( $hash, "zap", "sRef=" . urlEncode($_) );
-            }
-            elsif ( m/^\d+$/ && $_ > 0 && $_ < 10000 ) {
-                for ( split( //, $a[2] ) ) {
-                    $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand($_);
-                    $result =
-                      ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
-                }
-                $result = ENIGMA2_SendCommand( $hash, "remotecontrol",
-                    "command=" . ENIGMA2_GetRemotecontrolCommand("OK") );
-            }
-            elsif ( m/^\d+$/ && ( $_ <= 0 || $_ >= 10000 ) ) {
-                return "Numeric channel addressing '" . $_
-                  . "' needs to be a number between 1 and 9999.";
-            }
-            else {
-                return
-                    "'"
-                  . $_
-                  . "' does not seem to be a valid channel. Known channels: "
-                  . $channels;
-            }
-        }
-        else {
-            return
-              "Device needs to be present to switch to a specific channel.";
-        }
-    }
-
-    # channelUp/channelDown
-    elsif ( lc( $a[1] ) =~ /^(channelup|channeldown)$/ ) {
-        Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-        if ( $state eq "on" ) {
-            if ( lc( $a[1] ) eq "channelup" ) {
-                $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("RIGHT");
-            }
-            else {
-                $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("LEFT");
-            }
-            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
-        }
-        else {
-            return "Device needs to be ON to switch channel.";
-        }
-    }
-
-    # input
-    elsif ( lc( $a[1] ) eq "input" ) {
-
-        return "No argument given, choose one of tv radio "
-          if ( !defined( $a[2] ) );
-
-        if (   defined( $a[2] )
-            && $presence eq "present"
-            && $state ne "on" )
-        {
-            Log3 $name, 4, "ENIGMA2 $name: indirect switching request to ON";
-            ENIGMA2_Set( $hash, $name, "on" );
-        }
-
-        Log3 $name, 3, "ENIGMA2 set $name " . $a[1] . " " . $a[2];
-
-        if ( $state eq "on" ) {
-            if ( lc( $a[2] ) eq "tv" ) {
-                $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("TV");
-            }
-            elsif ( lc( $a[2] ) eq "radio" ) {
-                $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("RADIO");
-            }
-            else {
-                return
-                    "Argument "
-                  . $a[2]
-                  . " is not valid, please choose one from tv radio ";
-            }
-            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
-        }
-        else {
-            return "Device needs to be present to switch input.";
-        }
-    }
-
-    # play / pause
-    elsif ( lc( $a[1] ) =~ /^(play|pause)$/ ) {
-        if ( $state eq "on" ) {
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-            $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("PLAYPAUSE");
-            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
-        }
-        else {
-            return "Device needs to be ON to play or pause video.";
-        }
-    }
-
-    # stop
-    elsif ( lc( $a[1] ) eq "stop" ) {
-        if ( $state eq "on" ) {
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-            $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("STOP");
-            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
-        }
-        else {
-            return "Device needs to be ON to stop video.";
-        }
-    }
-
-    # record
-    elsif ( lc( $a[1] ) eq "record" ) {
-        if ( $state eq "on" ) {
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-            $result = ENIGMA2_SendCommand( $hash, "recordnow" );
-        }
-        else {
-            return "Device needs to be ON to start instant recording.";
-        }
-    }
-
-    # showText
-    elsif ( lc( $a[1] ) eq "showtext" ) {
-        if ( $state ne "absent" ) {
-            return "No argument given, choose one of messagetext "
-              if ( !defined( $a[2] ) );
-
-            Log3 $name, 3, "ENIGMA2 set $name " . $a[1];
-
-            my $i    = 2;
-            my $text = $a[$i];
-            $i++;
-            if ( defined( $a[$i] ) ) {
-                my $arr_size = @a;
-                while ( $i < $arr_size ) {
-                    $text = $text . " " . $a[$i];
-                    $i++;
-                }
-            }
-            $cmd = "type=1&timeout=8&text=" . urlEncode($text);
-            $result = ENIGMA2_SendCommand( $hash, "message", $cmd );
-        }
-        else {
-            return "Device needs to be reachable to send a message to screen.";
-        }
-    }
-
-    # return usage hint
-    else {
-        return $usage;
-    }
-
-    return;
-}
-
-###################################
+# regular Fn ##################################################################
 sub ENIGMA2_Define($$) {
-    my ( $hash, $def ) = @_;
-    my @a = split( "[ \t][ \t]*", $def );
-    my $name = $hash->{NAME};
+    my ( $hash, $a, $h ) = @_;
+    my $name = shift @$a;
+    my $type = shift @$a;
 
     Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_Define()";
 
-    if ( int(@a) < 3 ) {
+    eval { require XML::Simple; };
+    return "Please install Perl XML::Simple to use module ENIGMA2"
+      if ($@);
+
+    if ( int(@$a) < 1 ) {
         my $msg =
-"Wrong syntax: define <name> ENIGMA2 <ip-or-hostname> [<port>] [<poll-interval>] [<http-user] [<http-password>]";
+            "Wrong syntax: "
+          . "define <name> ENIGMA2 <ip-or-hostname> [[[[<port>] [<poll-interval>]] [<http-user]] [<http-password>]]";
         Log3 $name, 4, $msg;
         return $msg;
     }
 
-    $hash->{TYPE} = "ENIGMA2";
-
-    my $address = $a[2];
-    $hash->{helper}{ADDRESS} = $address;
+    $hash->{URL} = shift @$a;
 
     # use port 80 if not defined
-    my $port = $a[3] || 80;
-    $hash->{helper}{PORT} = $port;
+    my $port = shift @$a || 80;
+    return "Port parameter needs to be of type integer"
+      unless ( $port =~ /^\d+$/ );
 
     # use interval of 45sec if not defined
-    my $interval = $a[4] || 45;
+    my $interval = shift @$a || 45;
+    return "Interval parameter needs to be of type integer"
+      unless ( $interval =~ /^\d+$/ );
     $hash->{INTERVAL} = $interval;
 
-    # set http user if defined
-    my $http_user = $a[5];
-    $hash->{helper}{USER} = $http_user if $http_user;
-
-    # set http password if defined
-    my $http_passwd = $a[6];
-    $hash->{helper}{PASSWORD} = $http_passwd if $http_passwd;
+    my $http_user   = shift @$a;
+    my $http_passwd = shift @$a;
+    $hash->{URL} = "$http_user:$http_passwd@" . $hash->{URL}
+      if ( $hash->{URL} !~ /^https?:\/\//
+        && $hash->{URL} !~ /^\w+(:\w+)?\@/
+        && $http_user
+        && $http_passwd );
+    $hash->{URL} = "$http_user@" . $hash->{URL}
+      if ( $hash->{URL} !~ /^https?:\/\//
+        && $hash->{URL} !~ /^\w+(:\w+)?\@/
+        && $http_user
+        && !$http_passwd );
+    $hash->{URL} = "http://" . $hash->{URL}
+      unless ( $hash->{URL} =~ /^https?:\/\// || $port eq "443" );
+    $hash->{URL} = "https://" . $hash->{URL}
+      if ( $hash->{URL} !~ /^https?:\/\// && $port eq "443" );
+    $hash->{URL} .= ":$port"
+      unless ( $hash->{URL} =~ /:\d+$/ || $port eq "80" || $port eq "443" );
+    $hash->{URL} .= "/" unless ( $hash->{URL} =~ /\/$/ );
 
     # set default settings on first define
-    if ($init_done) {
+    if ( $init_done && !defined( $hash->{OLDDEF} ) ) {
 
         # use http-method POST for FritzBox environment as GET does not seem to
         # work properly. Might restrict use to newer
@@ -812,21 +140,676 @@ sub ENIGMA2_Define($$) {
     RemoveInternalTimer($hash);
     InternalTimer( gettimeofday() + 2, "ENIGMA2_GetStatus", $hash, 1 );
 
-    return;
+    return undef;
 }
 
-############################################################################################################
-#
-#   Begin of helper functions
-#
-############################################################################################################
+sub ENIGMA2_Undefine($$) {
+    my ( $hash, $arg ) = @_;
+    my $name = $hash->{NAME};
 
-###################################
+    Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_Undefine()";
+
+    # Stop the internal GetStatus-Loop and exit
+    RemoveInternalTimer($hash);
+
+    return undef;
+}
+
+sub ENIGMA2_Set($@);
+
+sub ENIGMA2_Set($@) {
+    my ( $hash, $a, $h ) = @_;
+
+    # a is not an array --> make an array out of $a and $h
+    $a = [ $a, $h ]
+      if ( ref($a) ne 'ARRAY' );
+
+    my $name        = shift @$a;
+    my $set         = shift @$a;
+    my $state       = ReadingsVal( $name, "state", "absent" );
+    my $presence    = ReadingsVal( $name, "presence", "absent" );
+    my $input       = ReadingsVal( $name, "input", "" );
+    my $channel     = ReadingsVal( $name, "channel", "" );
+    my $channels    = "";
+    my $ignoreState = AttrVal( $name, "ignoreState", 0 );
+
+    Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_Set()";
+
+    return "No Argument given" unless ( defined($set) );
+
+    # depending on current FHEMWEB instance's allowedCommands,
+    # restrict set commands if there is "set-user" in it
+    my $adminMode         = 1;
+    my $FWallowedCommands = 0;
+    $FWallowedCommands = AttrVal( $FW_wname, "allowedCommands", 0 )
+      if ( defined($FW_wname) );
+    if ( $FWallowedCommands && $FWallowedCommands =~ m/\bset-user\b/ ) {
+        $adminMode = 0;
+        return "Forbidden command: set " . $set
+          if ( lc($set) eq "statusrequest"
+            || lc($set) eq "reboot"
+            || lc($set) eq "restartgui"
+            || lc($set) eq "shutdown" );
+    }
+
+    # load channel list
+    if (
+           defined($input)
+        && defined($channel)
+        && $input ne ""
+        && $channel ne ""
+        && (   !defined( $hash->{helper}{bouquet}{$input} )
+            || !defined( $hash->{helper}{bouquet}{$input}{$channel} ) )
+      )
+    {
+        $channels .= $channel . ",";
+    }
+
+    if (   $input ne ""
+        && defined( $hash->{helper}{channels}{$input} )
+        && ref( $hash->{helper}{channels}{$input} ) eq "ARRAY" )
+    {
+        $channels .= join( ',', @{ $hash->{helper}{channels}{$input} } );
+    }
+
+    # create inputList reading for frontends
+    readingsSingleUpdate( $hash, "inputList", "tv,radio", 1 )
+      if ( ReadingsVal( $name, "inputList", "-" ) ne "tv,radio" );
+
+    # create channelList reading for frontends
+    readingsSingleUpdate( $hash, "channelList", $channels, 1 )
+      if ( ReadingsVal( $name, "channelList", "-" ) ne $channels );
+
+    my $usage =
+        "Unknown argument "
+      . $set
+      . ", choose one of toggle:noArg on:noArg off:noArg volume:slider,0,1,100 volumeUp:noArg volumeDown:noArg msg remoteControl channelUp:noArg channelDown:noArg play:noArg pause:noArg stop:noArg record:noArg showText downmix:on,off channel:"
+      . $channels;
+    $usage .= " mute:-,on,off"
+      if ( ReadingsVal( $name, "mute", "-" ) eq "-" );
+    $usage .= " mute:on,off"
+      if ( ReadingsVal( $name, "mute", "-" ) ne "-" );
+    $usage .= " input:-,tv,radio"
+      if ( $input eq "-" );
+    $usage .= " input:tv,radio"
+      if ( $input ne "-" );
+
+    if ($adminMode) {
+        $usage .= " reboot:noArg";
+        $usage .= " restartGui:noArg";
+        $usage .= " shutdown:noArg";
+        $usage .= " statusRequest:noArg";
+    }
+
+    my $cmd = '';
+    my $result;
+
+    # statusRequest
+    if ( lc($set) eq "statusrequest" ) {
+        Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+        if ( $state ne "absent" ) {
+            Log3 $name, 4,
+              "ENIGMA2 $name: Clearing cache for bouquet and channels";
+            $hash->{helper}{bouquet}  = undef;
+            $hash->{helper}{channels} = undef;
+        }
+
+        ENIGMA2_GetStatus($hash);
+    }
+
+    # toggle
+    elsif ( lc($set) eq "toggle" ) {
+        if ( $state ne "on" ) {
+            return ENIGMA2_Set( $hash, $name, "on" );
+        }
+        else {
+            return ENIGMA2_Set( $hash, $name, "off" );
+        }
+    }
+
+    # shutdown
+    elsif ( lc($set) eq "shutdown" ) {
+        return "Recordings running"
+          if ( ReadingsVal( $name, "recordings", "0" ) ne "0" );
+
+        Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+        if ( $state ne "absent" || $ignoreState ne "0" ) {
+            $cmd = "newstate=1";
+            $result =
+              ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "shutdown" );
+        }
+        else {
+            return "Device needs to be ON to be set to standby mode.";
+        }
+    }
+
+    # reboot
+    elsif ( lc($set) eq "reboot" ) {
+        return "Recordings running"
+          if ( ReadingsVal( $name, "recordings", "0" ) ne "0" );
+
+        Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+        if ( $state ne "absent" || $ignoreState ne "0" ) {
+            $cmd = "newstate=2";
+            $result =
+              ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "reboot" );
+        }
+        else {
+            return "Device needs to be reachable to be rebooted.";
+        }
+    }
+
+    # restartGui
+    elsif ( lc($set) eq "restartgui" ) {
+        return "Recordings running"
+          if ( ReadingsVal( $name, "recordings", "0" ) ne "0" );
+
+        Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            $cmd = "newstate=3";
+            $result =
+              ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "restartGui" );
+        }
+        else {
+            return "Device needs to be ON to restart the GUI.";
+        }
+    }
+
+    # on
+    elsif ( lc($set) eq "on" ) {
+        if ( $state eq "absent" ) {
+            Log3 $name, 3, "ENIGMA2 set $name " . $set . " (wakeup)";
+            my $wakeupCmd = AttrVal( $name, "wakeupCmd", "" );
+            my $macAddr =
+              AttrVal( $name, "macaddr", ReadingsVal( $name, "lanmac", "" ) );
+
+            if ( $wakeupCmd ne "" ) {
+                $wakeupCmd =~ s/\$DEVICE/$name/g;
+                $wakeupCmd =~ s/\$MACADDR/$macAddr/g;
+
+                if ( $wakeupCmd =~ s/^[ \t]*\{|\}[ \t]*$//g ) {
+                    Log3 $name, 4,
+                      "ENIGMA2 executing wake-up command (Perl): $wakeupCmd";
+                    $result = eval $wakeupCmd;
+                }
+                else {
+                    Log3 $name, 4,
+                      "ENIGMA2 executing wake-up command (fhem): $wakeupCmd";
+                    $result = fhem $wakeupCmd;
+                }
+            }
+            elsif ( $macAddr ne "" && $macAddr ne "-" ) {
+                $result = ENIGMA2_wake( $name, $macAddr );
+                return "wake-up command sent to MAC $macAddr";
+            }
+            else {
+                return "Device MAC address unknown. "
+                  . "Please turn on the device manually once or set attribute macaddr.";
+            }
+        }
+        else {
+            Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+            $cmd = "newstate=4";
+            $result = ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "on" );
+        }
+    }
+
+    # off
+    elsif ( lc($set) eq "off" ) {
+        if ( $state ne "absent" || $ignoreState ne "0" ) {
+            Log3 $name, 3, "ENIGMA2 set $name " . $set;
+            $cmd = "newstate=5";
+            $result = ENIGMA2_SendCommand( $hash, "powerstate", $cmd, "off" );
+        }
+        else {
+            return "Device needs to be reachable to be set to standby mode.";
+        }
+    }
+
+    # downmix
+    elsif ( lc($set) eq "downmix" ) {
+        return "No argument given" if ( !defined( $a->[0] ) );
+
+        Log3 $name, 3, "ENIGMA2 set $name " . $set . " " . $a->[0];
+
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            if (   lc( $a->[0] ) eq "true"
+                || lc( $a->[0] ) eq "1"
+                || lc( $a->[0] ) eq "on" )
+            {
+                $cmd = "enable=true";
+            }
+            elsif (lc( $a->[0] ) eq "false"
+                || lc( $a->[0] ) eq "0"
+                || lc( $a->[0] ) eq "off" )
+            {
+                $cmd = "enable=false";
+            }
+            else {
+                return "Argument needs to be one of true,1,on,false,0,off";
+            }
+            $result = ENIGMA2_SendCommand( $hash, "downmix", $cmd );
+        }
+        else {
+            return "Device needs to be ON to change downmix.";
+        }
+    }
+
+    # volume
+    elsif ( lc($set) eq "volume" ) {
+        return "No argument given" if ( !defined( $a->[0] ) );
+
+        Log3 $name, 3, "ENIGMA2 set $name " . $set . " " . $a->[0];
+
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            if ( $a->[0] =~ m/^\d+$/ && $a->[0] >= 0 && $a->[0] <= 100 ) {
+                $cmd = "set=set" . $a->[0];
+            }
+            else {
+                return "Argument does not seem to be a "
+                  . "valid integer between 0 and 100";
+            }
+            $result = ENIGMA2_SendCommand( $hash, "vol", $cmd );
+        }
+        else {
+            return "Device needs to be ON to adjust volume.";
+        }
+    }
+
+    # volumeUp/volumeDown
+    elsif ( lc($set) =~ /^(volumeup|volumedown)$/ ) {
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+            if ( lc($set) eq "volumeup" ) {
+                $cmd = "set=up";
+            }
+            else {
+                $cmd = "set=down";
+            }
+            $result = ENIGMA2_SendCommand( $hash, "vol", $cmd );
+        }
+        else {
+            return "Device needs to be ON to adjust volume.";
+        }
+    }
+
+    # mute
+    elsif ( lc($set) eq "mute" || lc($set) eq "mutet" ) {
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            if ( defined( $a->[0] ) ) {
+                Log3 $name, 3, "ENIGMA2 set $name " . $set . " " . $a->[0];
+            }
+            else {
+                Log3 $name, 3, "ENIGMA2 set $name " . $set;
+            }
+
+            if ( !defined( $a->[0] ) || $a->[0] eq "toggle" ) {
+                $cmd = "set=mute";
+            }
+            elsif ( lc( $a->[0] ) eq "off" ) {
+                if ( ReadingsVal( $name, "mute", "" ) ne "off" ) {
+                    $cmd = "set=mute";
+                }
+            }
+            elsif ( lc( $a->[0] ) eq "on" ) {
+                if ( ReadingsVal( $name, "mute", "" ) ne "on" ) {
+                    $cmd = "set=mute";
+                }
+            }
+            else {
+                return "Unknown argument " . $a->[0];
+            }
+            $result = ENIGMA2_SendCommand( $hash, "vol", $cmd )
+              if ( $cmd ne "" );
+        }
+        else {
+            return "Device needs to be ON to mute/unmute audio.";
+        }
+    }
+
+    # msg
+    elsif ( lc($set) eq "msg" ) {
+        if ( $state ne "absent" || $ignoreState ne "0" ) {
+            my $type;
+            my $type2;
+            my $timeout;
+            my $timeout2;
+
+            $type2 = shift @$a
+              if ( $a->[0] =~ m/^(yesno|info|message|attention)$/i );
+            $timeout2 = shift @$a
+              if ( $a->[0] =~ m/^(\d+(.\d+)?)$/i );
+
+            if ( ref($h) eq "HASH" && keys %$h ) {
+                $type    = defined( $h->{type} )    ? $h->{type}    : $type2;
+                $timeout = defined( $h->{timeout} ) ? $h->{timeout} : $timeout2;
+            }
+            else {
+                $type    = $type2;
+                $timeout = $timeout2;
+            }
+
+            return "No type argument given, "
+              . "choose one of yesno info message attention"
+              unless ( defined($type) );
+
+            return "No timeout argument given"
+              unless ( defined($timeout) );
+
+            return "Timeout $timeout"
+              . " is not a valid integer between 0 and 49680"
+              unless ( $timeout =~ m/^\d+$/
+                && $timeout >= 0
+                && $timeout <= 49680 );
+
+            return "No message text given"
+              unless ( scalar @$a > 0 );
+
+            my $text = urlEncode( join( " ", @$a ) );
+
+            Log3 $name, 3, "ENIGMA2 set $name $set $type $timeout $text";
+
+            if ( lc($type) eq "yesno" ) {
+                $cmd = "type=0&timeout=" . $timeout . "&text=" . $text;
+            }
+            elsif ( lc($type) eq "info" ) {
+                $cmd = "type=1&timeout=" . $timeout . "&text=" . $text;
+            }
+            elsif ( lc($type) eq "message" ) {
+                $cmd = "type=2&timeout=" . $timeout . "&text=" . $text;
+            }
+            elsif ( lc($type) eq "attention" ) {
+                $cmd = "type=3&timeout=" . $timeout . "&text=" . $text;
+            }
+            else {
+                return "Unknown type " . $type
+                  . ", choose one of yesno info message attention ";
+            }
+            $result = ENIGMA2_SendCommand( $hash, "message", $cmd );
+        }
+        else {
+            return "Device needs to be reachable to send a message to screen.";
+        }
+    }
+
+    # remoteControl
+    elsif ( lc($set) eq "remotecontrol" ) {
+        if ( $state ne "absent" || $ignoreState ne "0" ) {
+
+            Log3 $name, 3, "ENIGMA2 set $name " . $set . " " . $a->[0]
+              if !defined( $a->[1] );
+            Log3 $name, 3,
+              "ENIGMA2 set $name " . $set . " " . $a->[0] . " " . $a->[1]
+              if defined( $a->[1] );
+
+            my $commandKeys = join(
+                " ",
+                keys %{
+                    ENIGMA2_GetRemotecontrolCommand("GetRemotecontrolCommands")
+                }
+            );
+            if ( !defined( $a->[0] ) ) {
+                return "No argument given, choose one of " . $commandKeys;
+            }
+
+            my $request = ENIGMA2_GetRemotecontrolCommand( uc( $a->[0] ) );
+            $request = $a->[0]
+              if ( $request eq "" && $a->[0] =~ /^\d+$/ );
+
+            if ( uc( $a->[0] ) eq "POWER" ) {
+                return ENIGMA2_Set( $hash, $name, "toggle" );
+            }
+            elsif ( uc( $a->[0] ) eq "MUTE" ) {
+                return ENIGMA2_Set( $hash, $name, "mute" );
+            }
+            elsif ( $request ne "" ) {
+                $cmd = "command=" . $request;
+                $cmd .= "&rcu=" . AttrVal( $name, "remotecontrol", "" )
+                  if ( AttrVal( $name, "remotecontrol", "" ) ne "" );
+                $cmd .= "&type=long"
+                  if ( defined( $a->[1] ) && lc( $a->[1] ) eq "long" );
+            }
+            else {
+                return
+                    "Unknown argument "
+                  . $a->[0]
+                  . ", choose one of "
+                  . $commandKeys;
+            }
+
+            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
+        }
+        else {
+            return "Device needs to be reachable to be controlled remotely.";
+        }
+    }
+
+    # channel
+    elsif ( lc($set) eq "channel" ) {
+
+        return "No argument given, "
+          . "choose one of channel channelNumber servicereference "
+          if ( !defined( $a->[0] ) );
+
+        if (   defined( $a->[0] )
+            && $presence eq "present"
+            && $state ne "on" )
+        {
+            Log3 $name, 4, "ENIGMA2 $name: indirect switching request to ON";
+            ENIGMA2_Set( $hash, $name, "on" );
+        }
+
+        Log3 $name, 3, "ENIGMA2 set $name " . $set . " " . $a->[0];
+
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            my $cname = $a->[0];
+            if ( defined( $hash->{helper}{bouquet}{$input}{$cname}{sRef} ) ) {
+                $result = ENIGMA2_SendCommand(
+                    $hash, "zap",
+                    "sRef="
+                      . urlEncode(
+                        $hash->{helper}{bouquet}{$input}{$cname}{sRef}
+                      )
+                );
+            }
+            elsif ( $cname =~ m/^(\d+):(.*):$/ ) {
+                $result =
+                  ENIGMA2_SendCommand( $hash, "zap",
+                    "sRef=" . urlEncode($cname) );
+            }
+            elsif ( $cname =~ m/^\d+$/ && $cname > 0 && $cname < 10000 ) {
+                for ( split( //, $a->[0] ) ) {
+                    $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand($cname);
+                    $result =
+                      ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
+                }
+                $result = ENIGMA2_SendCommand( $hash, "remotecontrol",
+                    "command=" . ENIGMA2_GetRemotecontrolCommand("OK") );
+            }
+            elsif ( m/^\d+$/ && ( $cname <= 0 || $cname >= 10000 ) ) {
+                return "Numeric channel addressing '" . $cname
+                  . "' needs to be a number between 1 and 9999.";
+            }
+            else {
+                return
+                    "'"
+                  . $cname
+                  . "' does not seem to be a valid channel. Known channels: "
+                  . $channels;
+            }
+        }
+        else {
+            return
+              "Device needs to be present to switch to a specific channel.";
+        }
+    }
+
+    # channelUp/channelDown
+    elsif ( lc($set) =~ /^(channelup|channeldown)$/ ) {
+        Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            if ( lc($set) eq "channelup" ) {
+                $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("RIGHT");
+            }
+            else {
+                $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("LEFT");
+            }
+            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
+        }
+        else {
+            return "Device needs to be ON to switch channel.";
+        }
+    }
+
+    # input
+    elsif ( lc($set) eq "input" ) {
+
+        return "No argument given, choose one of tv radio "
+          if ( !defined( $a->[0] ) );
+
+        if (   defined( $a->[0] )
+            && $presence eq "present"
+            && $state ne "on" )
+        {
+            Log3 $name, 4, "ENIGMA2 $name: indirect switching request to ON";
+            ENIGMA2_Set( $hash, $name, "on" );
+        }
+
+        Log3 $name, 3, "ENIGMA2 set $name " . $set . " " . $a->[0];
+
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            if ( lc( $a->[0] ) eq "tv" ) {
+                $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("TV");
+            }
+            elsif ( lc( $a->[0] ) eq "radio" ) {
+                $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("RADIO");
+            }
+            else {
+                return
+                    "Argument "
+                  . $a->[0]
+                  . " is not valid, please choose one from tv radio ";
+            }
+            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
+        }
+        else {
+            return "Device needs to be present to switch input.";
+        }
+    }
+
+    # play / pause
+    elsif ( lc($set) =~ /^(play|pause)$/ ) {
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+            $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("PLAYPAUSE");
+            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
+        }
+        else {
+            return "Device needs to be ON to play or pause video.";
+        }
+    }
+
+    # stop
+    elsif ( lc($set) eq "stop" ) {
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            Log3 $name, 3, "ENIGMA2 set $name " . $set;
+
+            $cmd = "command=" . ENIGMA2_GetRemotecontrolCommand("STOP");
+            $result = ENIGMA2_SendCommand( $hash, "remotecontrol", $cmd );
+        }
+        else {
+            return "Device needs to be ON to stop video.";
+        }
+    }
+
+    # record
+    elsif ( lc($set) eq "record" ) {
+        if ( $state eq "on" || $ignoreState ne "0" ) {
+            Log3 $name, 3, "ENIGMA2 set $name " . $set;
+            $result = ENIGMA2_SendCommand( $hash, "recordnow" );
+        }
+        else {
+            return "Device needs to be ON to start instant recording.";
+        }
+    }
+
+    # showText
+    elsif ( lc($set) eq "showtext" ) {
+        if ( $state ne "absent" || $ignoreState ne "0" ) {
+            return "No argument given, choose one of messagetext "
+              unless (@$a);
+
+            $cmd = "type=1&timeout=8&text=" . urlEncode( join( " ", @$a ) );
+            Log3 $name, 3, "ENIGMA2 set $name $set";
+            $result = ENIGMA2_SendCommand( $hash, "message", $cmd );
+        }
+        else {
+            return "Device needs to be reachable to send a message to screen.";
+        }
+    }
+
+    # return usage hint
+    else {
+        return $usage;
+    }
+
+    return undef;
+}
+
+sub ENIGMA2_Get($@) {
+    my ( $hash, $a, $h ) = @_;
+    my $name = shift @$a;
+    my $what;
+
+    Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_Get()";
+
+    return "argument is missing" if ( int(@$a) < 1 );
+
+    $what = shift @$a;
+
+    if ( $what =~
+/^(power|input|volume|mute|channel|currentMedia|currentTitle|nextTitle|providername|servicevideosize)$/
+      )
+    {
+        if ( ReadingsVal( $name, $what, "" ) ne "" ) {
+            return ReadingsVal( $name, $what, "" );
+        }
+        else {
+            return "no such reading: $what";
+        }
+    }
+
+    # streamUrl
+    elsif ( $what eq "streamUrl" ) {
+        my $device = "etc";
+        $device = "phone" if ( defined $a->[0] );
+        return
+            $hash->{URL}
+          . "/web/stream.m3u?ref="
+          . urlEncode( ReadingsVal( $name, "servicereference", "-" ) )
+          . "&device=$device";
+    }
+
+    else {
+        return "Unknown argument $what, "
+          . "choose one of power:noArg input:noArg volume:noArg mute:noArg channel:noArg currentMedia:noArg currentTitle:noArg nextTitle:noArg providername:noArg servicevideosize:noArg streamUrl:,mobile ";
+    }
+
+    return undef;
+}
+
+# module Fn ####################################################################
 sub ENIGMA2_SendCommand($$;$$) {
     my ( $hash, $service, $cmd, $type ) = @_;
     my $name            = $hash->{NAME};
-    my $address         = $hash->{helper}{ADDRESS};
-    my $port            = $hash->{helper}{PORT};
     my $http_method     = AttrVal( $name, "http-method", "GET" );
     my $http_noshutdown = AttrVal( $name, "http-noshutdown", "1" );
     my $timeout;
@@ -834,39 +817,12 @@ sub ENIGMA2_SendCommand($$;$$) {
 
     Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_SendCommand()";
 
-    my $http_proto;
-    if ( $port eq "443" ) {
-        $http_proto = "https";
-        Log3 $name, 5, "ENIGMA2 $name: port 443 implies using HTTPS";
-    }
-    elsif ( AttrVal( $name, "https", "0" ) eq "1" ) {
-        Log3 $name, 5, "ENIGMA2 $name: explicit use of HTTPS";
-        $http_proto = "https";
-        if ( $port eq "80" ) {
-            $port = "443";
-            Log3 $name, 5,
-              "ENIGMA2 $name: implicit change of from port 80 to 443";
-        }
-    }
-    else {
-        Log3 $name, 5, "ENIGMA2 $name: using unencrypted connection via HTTP";
-        $http_proto = "http";
-    }
+    my $https = AttrVal( $name, "https", undef );
+    $hash->{URL} =~ s/^http:/https:/
+      if ($https);
+    $hash->{URL} =~ s/^https:/http:/
+      if ( defined($https) && $https == 0 );
 
-    my $http_user   = "";
-    my $http_passwd = "";
-    if (   defined( $hash->{helper}{USER} )
-        && defined( $hash->{helper}{PASSWORD} ) )
-    {
-        Log3 $name, 5, "ENIGMA2 $name: using BasicAuth";
-        $http_user   = $hash->{helper}{USER};
-        $http_passwd = $hash->{helper}{PASSWORD};
-    }
-    if ( defined( $hash->{helper}{USER} ) ) {
-        Log3 $name, 5, "ENIGMA2 $name: using BasicAuth (username only)";
-        $http_user = $hash->{helper}{USER};
-    }
-    my $URL;
     my $response;
     my $return;
 
@@ -879,38 +835,14 @@ sub ENIGMA2_SendCommand($$;$$) {
         Log3 $name, 4, "ENIGMA2 $name: REQ $service/" . urlDecode($cmd);
     }
 
-    if ( $http_user ne "" && $http_passwd ne "" ) {
-        $URL =
-            $http_proto . "://"
-          . $http_user . ":"
-          . $http_passwd . "@"
-          . $address . ":"
-          . $port . "/web/"
-          . $service;
-        $URL .= $cmd if ( $http_method eq "GET" || $http_method eq "" );
-    }
-    elsif ( $http_user ne "" ) {
-        $URL =
-            $http_proto . "://"
-          . $http_user . "@"
-          . $address . ":"
-          . $port . "/web/"
-          . $service;
-        $URL .= $cmd if ( $http_method eq "GET" || $http_method eq "" );
-    }
-    else {
-        $URL =
-          $http_proto . "://" . $address . ":" . $port . "/web/" . $service;
-        $URL .= $cmd if ( $http_method eq "GET" || $http_method eq "" );
-    }
-
-    if ( AttrVal( $name, "timeout", "3" ) =~ /^\d+$/ ) {
-        $timeout = AttrVal( $name, "timeout", "3" );
-    }
-    else {
+    $timeout = AttrVal( $name, "timeout", "3" );
+    unless ( $timeout =~ /^\d+$/ ) {
         Log3 $name, 3, "ENIGMA2 $name: wrong format in attribute 'timeout'";
         $timeout = 3;
     }
+
+    my $URL = $hash->{URL} . "web/" . $service;
+    $URL .= $cmd if ( $http_method eq "GET" || $http_method eq "" );
 
     # send request via HTTP-GET method
     if ( $http_method eq "GET" || $http_method eq "" || $cmd eq "" ) {
@@ -922,15 +854,26 @@ sub ENIGMA2_SendCommand($$;$$) {
 
         HttpUtils_NonblockingGet(
             {
-                url        => $URL,
-                timeout    => $timeout,
-                noshutdown => $http_noshutdown,
-                data       => undef,
-                hash       => $hash,
-                service    => $service,
-                cmd        => $cmd,
-                type       => $type,
-                callback   => \&ENIGMA2_ReceiveCommand,
+                url         => $URL,
+                timeout     => $timeout,
+                noshutdown  => $http_noshutdown,
+                data        => undef,
+                hash        => $hash,
+                service     => $service,
+                cmd         => $cmd,
+                type        => $type,
+                callback    => \&ENIGMA2_ReceiveCommand,
+                httpversion => "1.1",
+                loglevel    => AttrVal( $name, "httpLoglevel", 4 ),
+                header      => {
+                    Agent            => 'FHEM-ENIGMA2/1.0.0',
+                    'User-Agent'     => 'FHEM-ENIGMA2/1.0.0',
+                    Accept           => 'text/xml;charset=UTF-8',
+                    'Accept-Charset' => 'UTF-8',
+                },
+                sslargs => {
+                    SSL_verify_mode => 0,
+                },
             }
         );
 
@@ -948,15 +891,26 @@ sub ENIGMA2_SendCommand($$;$$) {
 
         HttpUtils_NonblockingGet(
             {
-                url        => $URL,
-                timeout    => $timeout,
-                noshutdown => $http_noshutdown,
-                data       => $cmd,
-                hash       => $hash,
-                service    => $service,
-                cmd        => $cmd,
-                type       => $type,
-                callback   => \&ENIGMA2_ReceiveCommand,
+                url         => $URL,
+                timeout     => $timeout,
+                noshutdown  => $http_noshutdown,
+                data        => $cmd,
+                hash        => $hash,
+                service     => $service,
+                cmd         => $cmd,
+                type        => $type,
+                callback    => \&ENIGMA2_ReceiveCommand,
+                httpversion => "1.1",
+                loglevel    => AttrVal( $name, "httpLoglevel", 4 ),
+                header      => {
+                    Agent            => 'FHEM-ENIGMA2/1.0.0',
+                    'User-Agent'     => 'FHEM-ENIGMA2/1.0.0',
+                    Accept           => 'text/xml;charset=UTF-8',
+                    'Accept-Charset' => 'UTF-8',
+                },
+                sslargs => {
+                    SSL_verify_mode => 0,
+                },
             }
         );
     }
@@ -972,7 +926,6 @@ sub ENIGMA2_SendCommand($$;$$) {
     return;
 }
 
-###################################
 sub ENIGMA2_ReceiveCommand($$$) {
     my ( $param, $err, $data ) = @_;
     my $hash     = $param->{hash};
@@ -1004,16 +957,15 @@ sub ENIGMA2_ReceiveCommand($$$) {
             }
 
             $presence = "absent";
-            readingsBulkUpdate( $hash, "presence", $presence )
-              if ( ReadingsVal( $name, "presence", "" ) ne $presence );
+            readingsBulkUpdateIfChanged( $hash, "presence", $presence );
         }
+
     }
 
     # data received
     elsif ($data) {
         $presence = "present";
-        readingsBulkUpdate( $hash, "presence", $presence )
-          if ( ReadingsVal( $name, "presence", "" ) ne $presence );
+        readingsBulkUpdateIfChanged( $hash, "presence", $presence );
 
         if ( !defined($cmd) || $cmd eq "" ) {
             Log3 $name, 4, "ENIGMA2 $name: RCV $service";
@@ -1048,7 +1000,8 @@ sub ENIGMA2_ReceiveCommand($$$) {
 
                     if ( !defined($cmd) || $cmd eq "" ) {
                         Log3 $name, 5,
-"ENIGMA2 $name: RES ERROR $service - unable to parse malformed XML: $@\n"
+                            "ENIGMA2 $name: "
+                          . "RES ERROR $service - unable to parse malformed XML: $@\n"
                           . $data;
                     }
                     else {
@@ -1153,9 +1106,25 @@ sub ENIGMA2_ReceiveCommand($$$) {
                 {
                     $state = "off";
 
-                    # Keep updating timer information during standby
-                    ENIGMA2_SendCommand( $hash, "timerlist" )
-                      if ( !AttrVal( $name, "lightMode", 0 ) );
+                    # Keep updating some information during standby
+                    if ( !AttrVal( $name, "lightMode", 0 ) ) {
+
+                        ENIGMA2_SendCommand( $hash, "timerlist" );
+
+                        # Read Boxinfo every 15 minutes only
+                        if (
+                            !defined( $hash->{helper}{lastFullUpdate} )
+                            || ( defined( $hash->{helper}{lastFullUpdate} )
+                                && $hash->{helper}{lastFullUpdate} +
+                                900 le time() )
+                          )
+                        {
+                            ENIGMA2_SendCommand( $hash, "about" );
+
+                            # Update state
+                            $hash->{helper}{lastFullUpdate} = time();
+                        }
+                    }
                 }
                 else {
                     $state = "on";
@@ -1263,26 +1232,25 @@ sub ENIGMA2_ReceiveCommand($$$) {
                 {
                     my $i = 0;
 
-                    # TODO this loop is >5.012 only
-                    for ( keys @{ $return->{e2service} } ) {
+                    foreach my $key ( keys @{ $return->{e2service} } ) {
                         my $channel =
-                          $return->{e2service}[$_]{e2servicename};
+                          $return->{e2service}[$key]{e2servicename};
                         $channel =~ s/\s/_/g;
 
                         # ignore markers
-                        if ( $return->{e2service}[$_]{e2servicereference} =~
+                        if ( $return->{e2service}[$key]{e2servicereference} =~
                             /^1:64:/ )
                         {
                             Log3 $name, 4,
                               "ENIGMA2 $name: Ignoring marker "
-                              . $return->{e2service}[$_]{e2servicename};
+                              . $return->{e2service}[$key]{e2servicename};
                             next;
                         }
 
                         if ( $channel ne "" ) {
                             $hash->{helper}{bouquet}{$input}{$channel} =
                               { 'sRef' =>
-                                  $return->{e2service}[$_]{e2servicereference}
+                                  $return->{e2service}[$key]{e2servicereference}
                               };
 
                             $hash->{helper}{channels}{$input}[$i] =
@@ -1365,32 +1333,24 @@ sub ENIGMA2_ReceiveCommand($$$) {
             if ( ref($return) eq "HASH" ) {
 
                 # General readings
-                foreach (
-                    "enigmaversion", "imageversion", "webifversion",
-                    "fpversion",     "lanmac",       "model",
+                foreach my $reading (
+                    "enigmaversion", "imageversion",
+                    "webifversion",  "fpversion",
+                    "lanmac",        "model",
                   )
                 {
-                    $reading   = $_;
-                    $e2reading = "e2" . $_;
+                    $e2reading = "e2" . $reading;
 
                     if ( defined( $return->{e2about}{$e2reading} ) ) {
                         if (   $return->{e2about}{$e2reading} eq "False"
                             || $return->{e2about}{$e2reading} eq "True" )
                         {
-                            if ( ReadingsVal( $name, $reading, "" ) ne
-                                lc( $return->{e2about}{$e2reading} ) )
-                            {
-                                readingsBulkUpdate( $hash, $reading,
-                                    lc( $return->{e2about}{$e2reading} ) );
-                            }
+                            readingsBulkUpdateIfChanged( $hash, $reading,
+                                lc( $return->{e2about}{$e2reading} ) );
                         }
                         else {
-                            if ( ReadingsVal( $name, $reading, "" ) ne
-                                $return->{e2about}{$e2reading} )
-                            {
-                                readingsBulkUpdate( $hash, $reading,
-                                    $return->{e2about}{$e2reading} );
-                            }
+                            readingsBulkUpdateIfChanged( $hash, $reading,
+                                $return->{e2about}{$e2reading} );
                         }
 
                         # model
@@ -1399,13 +1359,13 @@ sub ENIGMA2_ReceiveCommand($$$) {
                         {
                             my $model = ReadingsVal( $name, "model", "" );
                             $model =~ s/\s/_/g;
-                            $hash->{model} = $model;
+                            $hash->{modelid} = uc($model);
+                            $attr{$name}{model} = uc($model);
                         }
                     }
 
                     else {
-                        readingsBulkUpdate( $hash, $reading, "-" )
-                          if ( ReadingsVal( $name, $reading, "" ) ne "-" );
+                        readingsBulkUpdateIfChanged( $hash, $reading, "-" );
                     }
                 }
 
@@ -1422,28 +1382,44 @@ sub ENIGMA2_ReceiveCommand($$$) {
                         while ( $i < $arr_size ) {
                             my $counter     = $i + 1;
                             my $readingname = "hdd" . $counter . "_model";
-                            readingsBulkUpdate( $hash, $readingname,
-                                $return->{e2about}{e2hddinfo}[$i]{model} )
-                              if ( ReadingsVal( $name, $readingname, "" ) ne
+                            readingsBulkUpdateIfChanged( $hash, $readingname,
                                 $return->{e2about}{e2hddinfo}[$i]{model} );
 
                             $readingname = "hdd" . $counter . "_capacity";
                             my @value =
                               split( / /,
                                 $return->{e2about}{e2hddinfo}[$i]{capacity} );
-                            readingsBulkUpdate( $hash, $readingname, $value[0] )
-                              if ( @value
-                                && ReadingsVal( $name, $readingname, "" ) ne
-                                $value[0] );
+                            if (@value) {
+                                if ( $value[0] =~ /^\d+(?:\.\d+)?$/ ) {
+                                    $value[0] = round( $value[0] * 1024, 1 )
+                                      if ( $value[1] && $value[1] =~ /TB/i );
+                                    $value[0] = round( $value[0] / 1024, 1 )
+                                      if ( $value[1] && $value[1] =~ /MB/i );
+                                    $value[0] =
+                                      round( $value[0] / 1024 / 1024, 1 )
+                                      if ( $value[1] && $value[1] =~ /KB/i );
+                                }
+                                readingsBulkUpdateIfChanged( $hash,
+                                    $readingname, $value[0] );
+                            }
 
                             $readingname = "hdd" . $counter . "_free";
                             @value =
                               split( / /,
                                 $return->{e2about}{e2hddinfo}[$i]{free} );
-                            readingsBulkUpdate( $hash, $readingname, $value[0] )
-                              if ( @value
-                                && ReadingsVal( $name, $readingname, "" ) ne
-                                $value[0] );
+                            if (@value) {
+                                if ( $value[0] =~ /^\d+(?:\.\d+)?$/ ) {
+                                    $value[0] = round( $value[0] * 1024, 1 )
+                                      if ( $value[1] && $value[1] =~ /TB/i );
+                                    $value[0] = round( $value[0] / 1024, 1 )
+                                      if ( $value[1] && $value[1] =~ /MB/i );
+                                    $value[0] =
+                                      round( $value[0] / 1024 / 1024, 1 )
+                                      if ( $value[1] && $value[1] =~ /KB/i );
+                                }
+                                readingsBulkUpdateIfChanged( $hash,
+                                    $readingname, $value[0] );
+                            }
 
                             $i++;
                         }
@@ -1454,26 +1430,40 @@ sub ENIGMA2_ReceiveCommand($$$) {
                         Log3 $name, 5, "ENIGMA2 $name: single HDD detected";
 
                         my $readingname = "hdd1_model";
-                        readingsBulkUpdate( $hash, $readingname,
-                            $return->{e2about}{e2hddinfo}{model} )
-                          if ( ReadingsVal( $name, $readingname, "" ) ne
+                        readingsBulkUpdateIfChanged( $hash, $readingname,
                             $return->{e2about}{e2hddinfo}{model} );
 
                         $readingname = "hdd1_capacity";
                         my @value =
                           split( / /, $return->{e2about}{e2hddinfo}{capacity} );
-                        readingsBulkUpdate( $hash, $readingname, $value[0] )
-                          if ( @value
-                            && ReadingsVal( $name, $readingname, "" ) ne
-                            $value[0] );
+                        if (@value) {
+                            if ( $value[0] =~ /^\d+(?:\.\d+)?$/ ) {
+                                $value[0] = round( $value[0] * 1024, 1 )
+                                  if ( $value[1] && $value[1] =~ /TB/i );
+                                $value[0] = round( $value[0] / 1024, 1 )
+                                  if ( $value[1] && $value[1] =~ /MB/i );
+                                $value[0] = round( $value[0] / 1024 / 1024, 1 )
+                                  if ( $value[1] && $value[1] =~ /KB/i );
+                            }
+                            readingsBulkUpdateIfChanged( $hash,
+                                $readingname, $value[0] );
+                        }
 
                         $readingname = "hdd1_free";
                         @value =
                           split( / /, $return->{e2about}{e2hddinfo}{free} );
-                        readingsBulkUpdate( $hash, $readingname, $value[0] )
-                          if ( @value
-                            && ReadingsVal( $name, $readingname, "" ) ne
-                            $value[0] );
+                        if (@value) {
+                            if ( $value[0] =~ /^\d+(?:\.\d+)?$/ ) {
+                                $value[0] = round( $value[0] * 1024, 1 )
+                                  if ( $value[1] && $value[1] =~ /TB/i );
+                                $value[0] = round( $value[0] / 1024, 1 )
+                                  if ( $value[1] && $value[1] =~ /MB/i );
+                                $value[0] = round( $value[0] / 1024 / 1024, 1 )
+                                  if ( $value[1] && $value[1] =~ /KB/i );
+                            }
+                            readingsBulkUpdateIfChanged( $hash,
+                                $readingname, $value[0] );
+                        }
                     }
                     else {
                         Log3 $name, 5,
@@ -1497,10 +1487,11 @@ sub ENIGMA2_ReceiveCommand($$$) {
                         {
                             my $tuner_name = lc( $tuner->{name} );
                             $tuner_name =~ s/\s/_/g;
+                            $tuner_name = "tuner_$tuner_name"
+                              if ( $tuner_name !~ /^[Tt]uner_/ );
+                            $tuner_name =~ s/[^A-Za-z\/\d_\.-]//g;
 
-                            readingsBulkUpdate( $hash, $tuner_name,
-                                $tuner->{type} )
-                              if ( ReadingsVal( $name, $tuner_name, "" ) ne
+                            readingsBulkUpdateIfChanged( $hash, $tuner_name,
                                 $tuner->{type} );
                         }
                     }
@@ -1515,11 +1506,13 @@ sub ENIGMA2_ReceiveCommand($$$) {
 
                         my $tuner_name =
                           lc( $return->{e2about}{e2tunerinfo}{e2nim}{name} );
-                        $tuner_name =~ s/\s/_/g;
 
-                        readingsBulkUpdate( $hash, $tuner_name,
-                            $return->{e2about}{e2tunerinfo}{e2nim}{type} )
-                          if ( ReadingsVal( $name, $tuner_name, "" ) ne
+                        $tuner_name =~ s/\s/_/g;
+                        $tuner_name = "tuner_$tuner_name"
+                          if ( $tuner_name !~ /^[Tt]uner_/ );
+                        $tuner_name =~ s/[^A-Za-z\/\d_\.-]//g;
+
+                        readingsBulkUpdateIfChanged( $hash, $tuner_name,
                             $return->{e2about}{e2tunerinfo}{e2nim}{type} );
                     }
                     else {
@@ -1530,7 +1523,8 @@ sub ENIGMA2_ReceiveCommand($$$) {
             }
             else {
                 Log3 $name, 2,
-"ENIGMA2 $name: ERROR: boxinfo could not be read - /about sent malformed response";
+                  "ENIGMA2 $name: "
+                  . "ERROR: boxinfo could not be read - /about sent malformed response";
             }
         }
 
@@ -1541,7 +1535,7 @@ sub ENIGMA2_ReceiveCommand($$$) {
             if ( ref($return) eq "HASH" ) {
 
                 # Service readings
-                foreach (
+                foreach my $reading (
                     "servicereference", "servicename",
                     "providername",     "servicevideosize",
                     "videowidth",       "videoheight",
@@ -1552,8 +1546,7 @@ sub ENIGMA2_ReceiveCommand($$$) {
                     "sid"
                   )
                 {
-                    $reading   = $_;
-                    $e2reading = "e2" . $_;
+                    $e2reading = "e2" . $reading;
 
                     if (   defined( $return->{e2service}{$e2reading} )
                         && lc( $return->{e2service}{$e2reading} ) ne "n/a"
@@ -1564,7 +1557,8 @@ sub ENIGMA2_ReceiveCommand($$$) {
                             || $return->{e2service}{$e2reading} eq "True" )
                         {
                             Log3 $name, 5,
-"ENIGMA2 $name: transforming value of $reading to lower case";
+                              "ENIGMA2 $name: "
+                              . "transforming value of $reading to lower case";
 
                             $return->{e2service}{$e2reading} =
                               lc( $return->{e2service}{$e2reading} );
@@ -1599,7 +1593,8 @@ sub ENIGMA2_ReceiveCommand($$$) {
                                 && $servicetype[2] ne "10" )
                             {
                                 Log3 $name, 5,
-"ENIGMA2 $name: detected servicereference type: tv";
+                                  "ENIGMA2 $name: "
+                                  . "detected servicereference type: tv";
                                 readingsBulkUpdate( $hash, "input", "tv" )
                                   if (
                                     ReadingsVal( $name, "input", "" ) ne "tv" );
@@ -1612,20 +1607,22 @@ sub ENIGMA2_ReceiveCommand($$$) {
                               )
                             {
                                 Log3 $name, 5,
-"ENIGMA2 $name: detected servicereference type: radio";
-                                readingsBulkUpdate( $hash, "input", "radio" )
-                                  if ( ReadingsVal( $name, "input", "" ) ne
+                                  "ENIGMA2 $name: "
+                                  . "detected servicereference type: radio";
+                                readingsBulkUpdateIfChanged( $hash, "input",
                                     "radio" );
                             }
                             else {
                                 Log3 $name, 2,
-"ENIGMA2 $name: ERROR: servicereference type could not be detected (neither 'tv' nor 'radio')";
+                                  "ENIGMA2 $name: "
+                                  . "ERROR: servicereference type could not be detected (neither 'tv' nor 'radio')";
                             }
                         }
                     }
                     else {
                         Log3 $name, 5,
-"ENIGMA2 $name: received no value for reading $reading";
+                          "ENIGMA2 $name: "
+                          . "received no value for reading $reading";
 
                         if ( ReadingsVal( $name, $reading, "" ) ne "-" ) {
                             readingsBulkUpdate( $hash, $reading, "-" );
@@ -1661,15 +1658,14 @@ sub ENIGMA2_ReceiveCommand($$$) {
                         $eventNow = $return->{e2eventlist}{e2event};
                     }
 
-                    foreach (
+                    foreach my $reading (
                         "eventstart",       "eventduration",
                         "eventremaining",   "eventcurrenttime",
-                        "eventdescription", "eventtitle",
-                        "eventname",
+                        "eventdescription", "eventdescriptionextended",
+                        "eventtitle",       "eventname",
                       )
                     {
-                        $reading   = $_;
-                        $e2reading = "e2" . $_;
+                        $e2reading = "e2" . $reading;
 
                         # current event
                         if (   defined( $eventNow->{$e2reading} )
@@ -1678,7 +1674,8 @@ sub ENIGMA2_ReceiveCommand($$$) {
                             && $eventNow->{$e2reading} ne "" )
                         {
                             Log3 $name, 5,
-"ENIGMA2 $name: detected valid reading $e2reading for current event";
+                              "ENIGMA2 $name: "
+                              . "detected valid reading $e2reading for current event";
 
                             if ( ReadingsVal( $name, $reading, "" ) ne
                                 $eventNow->{$e2reading} )
@@ -1694,7 +1691,8 @@ sub ENIGMA2_ReceiveCommand($$$) {
                         }
                         else {
                             Log3 $name, 5,
-"ENIGMA2 $name: no valid reading $e2reading found for current event";
+                              "ENIGMA2 $name: "
+                              . "no valid reading $e2reading found for current event";
 
                             if ( ReadingsVal( $name, $reading, "" ) ne "-" ) {
                                 readingsBulkUpdate( $hash, $reading, "-" );
@@ -1706,49 +1704,51 @@ sub ENIGMA2_ReceiveCommand($$$) {
                         }
 
                         # next event
-                        $reading = $_ . "_next";
+                        my $readingN = $reading . "_next";
                         if (   defined( $eventNext->{$e2reading} )
                             && lc( $eventNext->{$e2reading} ) ne "n/a"
                             && $eventNext->{$e2reading} ne "0"
                             && $eventNext->{$e2reading} ne "" )
                         {
                             Log3 $name, 5,
-"ENIGMA2 $name: detected valid reading $e2reading for next event";
+                              "ENIGMA2 $name: "
+                              . "detected valid reading $e2reading for next event";
 
-                            if ( ReadingsVal( $name, $reading, "" ) ne
+                            if ( ReadingsVal( $name, $readingN, "" ) ne
                                 $eventNext->{$e2reading} )
                             {
-                                readingsBulkUpdate( $hash, $reading,
+                                readingsBulkUpdate( $hash, $readingN,
                                     $eventNext->{$e2reading} );
 
                                 # nextTitle
                                 readingsBulkUpdate( $hash, "nextTitle",
                                     $eventNext->{$e2reading} )
-                                  if $reading eq "eventtitle_next";
+                                  if $readingN eq "eventtitle_next";
                             }
                         }
                         else {
                             Log3 $name, 5,
-"ENIGMA2 $name: no valid reading $e2reading found for next event";
+                              "ENIGMA2 $name: "
+                              . "no valid reading $e2reading found for next event";
 
-                            if ( ReadingsVal( $name, $reading, "" ) ne "-" ) {
-                                readingsBulkUpdate( $hash, $reading, "-" );
+                            if ( ReadingsVal( $name, $readingN, "" ) ne "-" ) {
+                                readingsBulkUpdate( $hash, $readingN, "-" );
 
                                 # nextTitle
                                 readingsBulkUpdate( $hash, "nextTitle", "-" )
-                                  if $reading eq "eventtitle_next";
+                                  if $readingN eq "eventtitle_next";
                             }
                         }
                     }
 
                     # convert date+time into human readable formats
-                    foreach (
+                    foreach my $readingO (
                         "eventstart",    "eventcurrenttime",
                         "eventduration", "eventremaining"
                       )
                     {
-                        $reading   = $_ . "_hr";
-                        $e2reading = "e2" . $_;
+                        $reading   = $readingO . "_hr";
+                        $e2reading = "e2" . $readingO;
 
                         # current event
                         if (   defined( $eventNow->{$e2reading} )
@@ -1756,8 +1756,8 @@ sub ENIGMA2_ReceiveCommand($$$) {
                             && $eventNow->{$e2reading} ne "" )
                         {
                             my $timestring;
-                            if (   $_ eq "eventduration"
-                                || $_ eq "eventremaining" )
+                            if (   $readingO eq "eventduration"
+                                || $readingO eq "eventremaining" )
                             {
                                 my @t = localtime( $eventNow->{$e2reading} );
                                 $timestring = sprintf( "%02d:%02d:%02d",
@@ -1765,30 +1765,27 @@ sub ENIGMA2_ReceiveCommand($$$) {
                                     $t[1], $t[0] );
                             }
                             else {
-                                $timestring =
-                                  substr(
+                                $timestring = substr(
                                     FmtDateTime( $eventNow->{$e2reading} ),
                                     11 );
                             }
 
-                            readingsBulkUpdate( $hash, $reading, $timestring )
-                              if ( ReadingsVal( $name, $reading, "" ) ne
+                            readingsBulkUpdateIfChanged( $hash, $reading,
                                 $timestring );
                         }
                         else {
-                            readingsBulkUpdate( $hash, $reading, "-" )
-                              if ( ReadingsVal( $name, $reading, "" ) ne "-" );
+                            readingsBulkUpdateIfChanged( $hash, $reading, "-" );
                         }
 
                         # next event
-                        $reading = $_ . "_next_hr";
+                        $reading = $readingO . "_next_hr";
                         if (   defined( $eventNext->{$e2reading} )
                             && $eventNext->{$e2reading} ne "0"
                             && $eventNext->{$e2reading} ne "" )
                         {
                             my $timestring;
-                            if (   $_ eq "eventduration"
-                                || $_ eq "eventremaining" )
+                            if (   $readingO eq "eventduration"
+                                || $readingO eq "eventremaining" )
                             {
                                 my @t = localtime( $eventNext->{$e2reading} );
                                 $timestring = sprintf( "%02d:%02d:%02d",
@@ -1796,26 +1793,24 @@ sub ENIGMA2_ReceiveCommand($$$) {
                                     $t[1], $t[0] );
                             }
                             else {
-                                $timestring =
-                                  substr(
+                                $timestring = substr(
                                     FmtDateTime( $eventNext->{$e2reading} ),
                                     11 );
                             }
 
-                            readingsBulkUpdate( $hash, $reading, $timestring )
-                              if ( ReadingsVal( $name, $reading, "" ) ne
+                            readingsBulkUpdateIfChanged( $hash, $reading,
                                 $timestring );
                         }
                         else {
-                            readingsBulkUpdate( $hash, $reading, "-" )
-                              if ( ReadingsVal( $name, $reading, "" ) ne "-" );
+                            readingsBulkUpdateIfChanged( $hash, $reading, "-" );
                         }
                     }
                 }
             }
             else {
                 Log3 $name, 2,
-"ENIGMA2 $name: ERROR: current service info could not be read - /getcurrent sent malformed response";
+                  "ENIGMA2 $name: "
+                  . "ERROR: current service info could not be read - /getcurrent sent malformed response";
             }
 
         }
@@ -1841,13 +1836,15 @@ sub ENIGMA2_ReceiveCommand($$$) {
                       "ENIGMA2 $name: detected single event in timerlist";
 
                     # queued recording
-                    if (   defined( $return->{e2timer}{e2state} )
+                    if (
+                           defined( $return->{e2timer}{e2state} )
                         && $return->{e2timer}{e2state} eq "0"
-                        && defined( $return->{e2timer}{e2disabled} )
-                        && $return->{e2timer}{e2disabled} eq "0"
+                        && ( !defined( $return->{e2timer}{e2disabled} )
+                            || $return->{e2timer}{e2disabled} eq "0" )
                         && defined( $return->{e2timer}{e2eit} )
                         && defined( $return->{e2timer}{e2servicename} )
-                        && defined( $return->{e2timer}{e2name} ) )
+                        && defined( $return->{e2timer}{e2name} )
+                      )
                     {
 
                         my $timeleft =
@@ -1916,13 +1913,15 @@ sub ENIGMA2_ReceiveCommand($$$) {
                     while ( $i < $arr_size ) {
 
                         # queued recording
-                        if (   defined( $return->{e2timer}[$i]{e2state} )
+                        if (
+                               defined( $return->{e2timer}[$i]{e2state} )
                             && $return->{e2timer}[$i]{e2state} eq "0"
-                            && defined( $return->{e2timer}[$i]{e2disabled} )
-                            && $return->{e2timer}[$i]{e2disabled} eq "0"
+                            && ( !defined( $return->{e2timer}[$i]{e2disabled} )
+                                || $return->{e2timer}[$i]{e2disabled} eq "0" )
                             && defined( $return->{e2timer}[$i]{e2eit} )
                             && defined( $return->{e2timer}[$i]{e2servicename} )
-                            && defined( $return->{e2timer}[$i]{e2name} ) )
+                            && defined( $return->{e2timer}[$i]{e2name} )
+                          )
                         {
 
                             my $timeleft =
@@ -1994,87 +1993,69 @@ sub ENIGMA2_ReceiveCommand($$$) {
             my $recordingsElementsCount = scalar( keys %recordings );
             my $readingname;
 
-            readingsBulkUpdate( $hash, "recordings", $recordingsElementsCount )
-              if ( ReadingsVal( $name, "recordings", "" ) ne
+            readingsBulkUpdateIfChanged( $hash, "recordings",
                 $recordingsElementsCount );
 
+            my $ri = 0;
             if ( $recordingsElementsCount > 0 ) {
-                my $i = 0;
 
-                while ( $i < $recordingsElementsCount ) {
-                    $i++;
+                while ( $ri < $recordingsElementsCount ) {
+                    $ri++;
 
-                    $readingname = "recordings" . $i . "_servicename";
-                    readingsBulkUpdate( $hash, $readingname,
-                        $recordings{$i}{servicename} )
-                      if ( ReadingsVal( $name, $readingname, "" ) ne
-                        $recordings{$i}{servicename} );
+                    $readingname = "recordings" . $ri . "_servicename";
+                    readingsBulkUpdateIfChanged( $hash, $readingname, $2 )
+                      if ( $recordings{$ri}{servicename} =~
+m/^(\s*[\[\(\{].*[\]\)\}]\s*)?([\s\w\(\)_-]+)(\s*[\[\(\{].*[\]\)\}]\s*)?$/
+                      );
 
-                    $readingname = "recordings" . $i . "_name";
-                    readingsBulkUpdate( $hash, $readingname,
-                        $recordings{$i}{name} )
-                      if ( ReadingsVal( $name, $readingname, "" ) ne
-                        $recordings{$i}{name} );
+                    $readingname = "recordings" . $ri . "_name";
+                    readingsBulkUpdateIfChanged( $hash, $readingname, $2 )
+                      if ( $recordings{$ri}{name} =~
+m/^(\s*[\[\(\{].*[\]\)\}]\s*)?([\s\w\(\)_-]+)(\s*[\[\(\{].*[\]\)\}]\s*)?$/
+                      );
                 }
             }
 
             # clear inactive recordingsX_* readings
             foreach my $recReading (
-                grep { /recordings\d_.*/ }
+                grep { /^recordings\d+_.*/ }
                 keys %{ $defs{$name}{READINGS} }
               )
             {
+                next
+                  if ( $recReading =~ m/^recordings(\d+).*/ && $1 <= $ri );
+
                 Log3 $name, 5,
                   "ENIGMA2 $name: old reading $recReading was deleted";
+
+                # trigger event before deleting this reading to notify GUI
+                readingsBulkUpdateIfChanged( $hash, $recReading, "" );
                 delete( $defs{$name}{READINGS}{$recReading} );
             }
 
-            readingsBulkUpdate( $hash, "recordings_next", $recordingsNext_time )
-              if ( ReadingsVal( $name, "recordings_next", "" ) ne
+            readingsBulkUpdateIfChanged( $hash, "recordings_next",
                 $recordingsNext_time );
-
-            readingsBulkUpdate( $hash, "recordings_next_hr",
-                $recordingsNext_time_hr )
-              if ( ReadingsVal( $name, "recordings_next_hr", "" ) ne
+            readingsBulkUpdateIfChanged( $hash, "recordings_next_hr",
                 $recordingsNext_time_hr );
-
-            readingsBulkUpdate( $hash, "recordings_next_counter",
-                $recordingsNext_counter )
-              if ( ReadingsVal( $name, "recordings_next_counter", "" ) ne
+            readingsBulkUpdateIfChanged( $hash, "recordings_next_counter",
                 $recordingsNext_counter );
-
-            readingsBulkUpdate( $hash, "recordings_next_counter_hr",
-                $recordingsNext_counter_hr )
-              if ( ReadingsVal( $name, "recordings_next_counter_hr", "" ) ne
-                $recordingsNext_counter_hr );
-
-            readingsBulkUpdate( $hash, "recordings_next_servicename",
-                $recordingsNextServicename )
-              if ( ReadingsVal( $name, "recordings_next_servicename", "" ) ne
-                $recordingsNextServicename );
-
-            readingsBulkUpdate( $hash, "recordings_next_name",
-                $recordingsNextName )
-              if ( ReadingsVal( $name, "recordings_next_name", "" ) ne
+            readingsBulkUpdateIfChanged( $hash,
+                "recordings_next_counter_hr", $recordingsNext_counter_hr );
+            readingsBulkUpdateIfChanged( $hash,
+                "recordings_next_servicename", $recordingsNextServicename );
+            readingsBulkUpdateIfChanged( $hash, "recordings_next_name",
                 $recordingsNextName );
-
-            readingsBulkUpdate( $hash, "recordings_error", $recordingsError )
-              if ( ReadingsVal( $name, "recordings_error", "" ) ne
+            readingsBulkUpdateIfChanged( $hash, "recordings_error",
                 $recordingsError );
-
-            readingsBulkUpdate( $hash, "recordings_finished",
-                $recordingsFinished )
-              if ( ReadingsVal( $name, "recordings_finished", "" ) ne
+            readingsBulkUpdateIfChanged( $hash, "recordings_finished",
                 $recordingsFinished );
         }
 
         # volume
         elsif ( $service eq "vol" ) {
             if ( ref($return) eq "HASH" && defined( $return->{e2current} ) ) {
-                readingsBulkUpdate( $hash, "volume", $return->{e2current} )
-                  if (
-                    ReadingsVal( $name, "volume", "" ) ne $return->{e2current}
-                  );
+                readingsBulkUpdateIfChanged( $hash, "volume",
+                    $return->{e2current} );
             }
             else {
                 Log3 $name, 5,
@@ -2085,8 +2066,7 @@ sub ENIGMA2_ReceiveCommand($$$) {
                 my $muteState = "on";
                 $muteState = "off"
                   if ( lc( $return->{e2ismuted} ) eq "false" );
-                readingsBulkUpdate( $hash, "mute", $muteState )
-                  if ( ReadingsVal( $name, "mute", "" ) ne $muteState );
+                readingsBulkUpdateIfChanged( $hash, "mute", $muteState );
             }
             else {
                 Log3 $name, 5,
@@ -2101,9 +2081,8 @@ sub ENIGMA2_ReceiveCommand($$$) {
             if ( ref($return) eq "HASH"
                 && defined( $return->{e2snrdb} ) )
             {
-                foreach ( "snrdb", "snr", "ber", "acg", ) {
-                    $reading   = $_;
-                    $e2reading = "e2" . $_;
+                foreach my $reading ( "snrdb", "snr", "ber", "acg", ) {
+                    $e2reading = "e2" . $reading;
 
                     if ( defined( $return->{$e2reading} )
                         && lc( $return->{$e2reading} ) ne "n/a" )
@@ -2138,13 +2117,15 @@ sub ENIGMA2_ReceiveCommand($$$) {
     my $readingPower = "off";
     $readingPower = "on"
       if ( $state eq "on" );
-    readingsBulkUpdate( $hash, "power", $readingPower )
-      if ( ReadingsVal( $name, "power", "" ) ne $readingPower );
+    readingsBulkUpdateIfChanged( $hash, "power", $readingPower );
 
     # Set reading for state
     #
-    readingsBulkUpdate( $hash, "state", $state )
-      if ( ReadingsVal( $name, "state", "" ) ne $state );
+    readingsBulkUpdateIfChanged( $hash, "state", $state );
+
+    # Set reading for stateAV
+    my $stateAV = ENIGMA2_GetStateAV($hash);
+    readingsBulkUpdateIfChanged( $hash, "stateAV", $stateAV );
 
     # Set ENIGMA2 online-only readings to "-" in case box is in
     # offline or in standby mode
@@ -2152,47 +2133,44 @@ sub ENIGMA2_ReceiveCommand($$$) {
         || $state eq "absent"
         || $state eq "undefined" )
     {
-        foreach (
-            'servicename',            'providername',
-            'servicereference',       'videowidth',
-            'videoheight',            'servicevideosize',
-            'apid',                   'vpid',
-            'pcrpid',                 'pmtpid',
-            'txtpid',                 'tsid',
-            'onid',                   'sid',
-            'iswidescreen',           'mute',
-            'volume',                 'channel',
-            'currentTitle',           'nextTitle',
-            'currentMedia',           'eventcurrenttime',
-            'eventcurrenttime_hr',    'eventdescription',
-            'eventduration',          'eventduration_hr',
-            'eventremaining',         'eventremaining_hr',
-            'eventstart',             'eventstart_hr',
-            'eventtitle',             'eventname',
-            'eventcurrenttime_next',  'eventcurrenttime_next_hr',
-            'eventdescription_next',  'eventduration_next',
-            'eventduration_next_hr',  'eventremaining_next',
-            'eventremaining_next_hr', 'eventstart_next',
-            'eventstart_next_hr',     'eventtitle_next',
-            'eventname_next',
+        foreach my $reading (
+            'servicename',           'providername',
+            'servicereference',      'videowidth',
+            'videoheight',           'servicevideosize',
+            'apid',                  'vpid',
+            'pcrpid',                'pmtpid',
+            'txtpid',                'tsid',
+            'onid',                  'sid',
+            'iswidescreen',          'mute',
+            'channel',               'currentTitle',
+            'nextTitle',             'currentMedia',
+            'eventcurrenttime',      'eventcurrenttime_hr',
+            'eventdescription',      'eventdescriptionextended',
+            'eventduration',         'eventduration_hr',
+            'eventremaining',        'eventremaining_hr',
+            'eventstart',            'eventstart_hr',
+            'eventtitle',            'eventname',
+            'eventcurrenttime_next', 'eventcurrenttime_next_hr',
+            'eventdescription_next', 'eventdescriptionextended_next',
+            'eventduration_next',    'eventduration_next_hr',
+            'eventremaining_next',   'eventremaining_next_hr',
+            'eventstart_next',       'eventstart_next_hr',
+            'eventtitle_next',       'eventname_next',
           )
         {
-            readingsBulkUpdate( $hash, $_, "-" )
-              if ( ReadingsVal( $name, $_, "" ) ne "-" );
+            readingsBulkUpdateIfChanged( $hash, $reading, "-" );
         }
 
         # special handling for signal values
-        foreach ( 'acg', 'ber', 'snr', 'snrdb', ) {
-            readingsBulkUpdate( $hash, $_, "0" )
-              if ( ReadingsVal( $name, $_, "" ) ne "0" );
+        foreach my $reading ( 'acg', 'ber', 'snr', 'snrdb', ) {
+            readingsBulkUpdateIfChanged( $hash, $reading, "0" );
         }
     }
 
     # Set ENIGMA2 online+standby readings to "-" in case box is in
     # offline mode
     if ( $state eq "absent" || $state eq "undefined" ) {
-        readingsBulkUpdate( $hash, "input", "-" )
-          if ( ReadingsVal( $name, "input", "" ) ne "-" );
+        readingsBulkUpdateIfChanged( $hash, "input", "-" );
     }
 
     readingsEndUpdate( $hash, 1 );
@@ -2201,328 +2179,50 @@ sub ENIGMA2_ReceiveCommand($$$) {
     return;
 }
 
-###################################
-sub ENIGMA2_Undefine($$) {
-    my ( $hash, $arg ) = @_;
+sub ENIGMA2_GetStatus($;$) {
+    my ( $hash, $update ) = @_;
+    my $name     = $hash->{NAME};
+    my $interval = $hash->{INTERVAL};
+
+    Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_GetStatus()";
+
+    RemoveInternalTimer($hash);
+    InternalTimer( gettimeofday() + $interval, "ENIGMA2_GetStatus", $hash, 0 );
+
+    return
+      if ( AttrVal( $name, "disable", 0 ) == 1 );
+
+    if ( !$update ) {
+        ENIGMA2_SendCommand( $hash, "powerstate" );
+    }
+    else {
+        ENIGMA2_SendCommand( $hash, "getcurrent" );
+    }
+
+    return;
+}
+
+sub ENIGMA2_GetStateAV($) {
+    my ($hash) = @_;
     my $name = $hash->{NAME};
 
-    Log3 $name, 5, "ENIGMA2 $name: called function ENIGMA2_Undefine()";
-
-    # Stop the internal GetStatus-Loop and exit
-    RemoveInternalTimer($hash);
-
-    return;
+    if ( ReadingsVal( $name, "presence", "absent" ) eq "absent" ) {
+        return "absent";
+    }
+    elsif ( ReadingsVal( $name, "power", "off" ) eq "off" ) {
+        return "off";
+    }
+    elsif ( ReadingsVal( $name, "mute", "off" ) eq "on" ) {
+        return "muted";
+    }
+    elsif ( ReadingsVal( $name, "playStatus", "stopped" ) ne "stopped" ) {
+        return ReadingsVal( $name, "playStatus", "stopped" );
+    }
+    else {
+        return ReadingsVal( $name, "power", "off" );
+    }
 }
 
-###################################
-sub ENIGMA2_wake ($$) {
-    my ( $name, $mac_addr ) = @_;
-    my $address;
-    my $port;
-
-    if ( !defined $address ) { $address = '255.255.255.255' }
-    if ( !defined $port || $port !~ /^\d+$/ ) { $port = 9 }
-
-    my $sock = new IO::Socket::INET( Proto => 'udp' )
-      or die "socket : $!";
-    die "Can't create WOL socket" if ( !$sock );
-
-    my $ip_addr = inet_aton($address);
-    my $sock_addr = sockaddr_in( $port, $ip_addr );
-    $mac_addr =~ s/://g;
-    my $packet =
-      pack( 'C6H*', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, $mac_addr x 16 );
-
-    setsockopt( $sock, SOL_SOCKET, SO_BROADCAST, 1 )
-      or die "setsockopt : $!";
-
-    Log3 $name, 4,
-      "ENIGMA2 $name: Waking up by sending Wake-On-Lan magic package to "
-      . $mac_addr;
-    send( $sock, $packet, 0, $sock_addr ) or die "send : $!";
-    close($sock);
-
-    return;
-}
-
-#####################################
-# Callback from 95_remotecontrol for command makenotify.
-sub ENIGMA2_RCmakenotify($$) {
-    my ( $nam, $ndev ) = @_;
-    my $nname = "notify_$nam";
-
-    fhem( "define $nname notify $nam set $ndev remoteControl " . '$EVENT', 1 );
-    Log3 undef, 2, "[remotecontrol:ENIGMA2] Notify created: $nname";
-    return "Notify created by ENIGMA2: $nname";
-}
-
-#####################################
-# RC layouts
-
-# Dreambox DM500 + DM800 with SVG
-sub ENIGMA2_RClayout_DM800_SVG() {
-    my @row;
-
-    $row[0] = ":rc_BLANK.svg,:rc_BLANK.svg,POWER:rc_POWER.svg";
-    $row[1] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[2] = "1:rc_1.svg,2:rc_2.svg,3:rc_3.svg";
-    $row[3] = "4:rc_4.svg,5:rc_5.svg,6:rc_6.svg";
-    $row[4] = "7:rc_7.svg,8:rc_8.svg,9:rc_9.svg";
-    $row[5] = "LEFTBRACE:rc_PREVIOUS.svg,0:rc_0.svg,RIGHTBRACE:rc_NEXT.svg";
-    $row[6] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[7] = "VOLUMEUP:rc_VOLPLUS.svg,MUTE:rc_MUTE.svg,CHANNELUP:rc_UP.svg";
-    $row[8] =
-      "VOLUMEDOWN:rc_VOLMINUS.svg,EXIT:rc_EXIT.svg,CHANNELDOWN:rc_DOWN.svg";
-    $row[9] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[10] = "INFO:rc_INFO.svg,UP:rc_UP.svg,MENU:rc_MENU.svg";
-    $row[11] = "LEFT:rc_LEFT.svg,OK:rc_OK.svg,RIGHT:rc_RIGHT.svg";
-    $row[12] = "AUDIO:rc_AUDIO.svg,DOWN:rc_DOWN.svg,VIDEO:rc_VIDEO.svg";
-    $row[13] = ":rc_BLANK.svg,EXIT:rc_EXIT.svg,:rc_BLANK.svg";
-
-    $row[14] =
-"RED:rc_REWred.svg,GREEN:rc_PLAYgreen.svg,YELLOW:rc_PAUSEyellow.svg,BLUE:rc_FFblue.svg";
-    $row[15] =
-"TV:rc_TVstop.svg,RADIO:rc_RADIOred.svg,TEXT:rc_TEXT.svg,HELP:rc_HELP.svg";
-
-    $row[16] = "attr rc_iconpath icons/remotecontrol";
-    $row[17] = "attr rc_iconprefix black_btn_";
-    return @row;
-}
-
-# Dreambox DM500 + DM800 with PNG
-sub ENIGMA2_RClayout_DM800() {
-    my @row;
-
-    $row[0] = ":blank,:blank,POWER:POWEROFF";
-    $row[1] = ":blank,:blank,:blank";
-
-    $row[2] = "1,2,3";
-    $row[3] = "4,5,6";
-    $row[4] = "7,8,9";
-    $row[5] = "LEFTBRACE:LEFT2,0:0,RIGHTBRACE:RIGHT2";
-    $row[6] = ":blank,:blank,:blank";
-
-    $row[7] = "VOLUMEUP:VOLUP,MUTE,CHANNELUP:CHUP2";
-    $row[8] = "VOLUMEDOWN:VOLDOWN,EXIT,CHANNELDOWN:CHDOWN2";
-    $row[9] = ":blank,:blank,:blank";
-
-    $row[10] = "INFO,UP,MENU";
-    $row[11] = "LEFT,OK,RIGHT";
-    $row[12] = "AUDIO,DOWN,VIDEO";
-    $row[13] = ":blank,:blank,:blank";
-
-    $row[14] = "RED:REWINDred,GREEN:PLAYgreen,YELLOW:PAUSEyellow,BLUE:FFblue";
-    $row[15] = "TV:TVstop,RADIO:RADIOred,TEXT,HELP";
-
-    $row[16] = "attr rc_iconpath icons/remotecontrol";
-    $row[17] = "attr rc_iconprefix black_btn_";
-    return @row;
-}
-
-# Dreambox DM800se + DM8000 with SVG
-sub ENIGMA2_RClayout_DM8000_SVG() {
-    my @row;
-
-    $row[0] = ":rc_BLANK.svg,:rc_BLANK.svg,POWER:rc_POWER.svg";
-    $row[1] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[2] = "1:rc_1.svg,2:rc_2.svg,3:rc_3.svg";
-    $row[3] = "4:rc_4.svg,5:rc_5.svg,6:rc_6.svg";
-    $row[4] = "7:rc_7.svg,8:rc_8.svg,9:rc_9.svg";
-    $row[5] = "LEFTBRACE:rc_PREVIOUS.svg,0:rc_0.svg,RIGHTBRACE:rc_NEXT.svg";
-    $row[6] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[7] = "VOLUMEUP:rc_VOLPLUS.svg,MUTE:rc_MUTE.svg,CHANNELUP:rc_UP.svg";
-    $row[8] =
-      "VOLUMEDOWN:rc_VOLMINUS.svg,EXIT:rc_EXIT.svg,CHANNELDOWN:rc_DOWN.svg";
-    $row[9] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[10] = "INFO:rc_INFO.svg,UP:rc_UP.svg,MENU:rc_MENU.svg";
-    $row[11] = "LEFT:rc_LEFT.svg,OK:rc_OK.svg,RIGHT:rc_RIGHT.svg";
-    $row[12] = "AUDIO:rc_AUDIO.svg,DOWN:rc_DOWN.svg,VIDEO:rc_VIDEO.svg";
-    $row[13] = ":rc_BLANK.svg,EXIT:rc_EXIT.svg,:rc_BLANK.svg";
-
-    $row[14] =
-      "RED:rc_RED.svg,GREEN:rc_GREEN.svg,YELLOW:rc_YELLOW.svg,BLUE:rc_BLUE.svg";
-    $row[15] =
-"REWIND:rc_REW.svg,PLAY:rc_PLAY.svg,STOP:rc_STOP.svg,FASTFORWARD:rc_FF.svg";
-    $row[16] =
-      "TV:rc_TV.svg,RADIO:rc_RADIO.svg,TEXT:rc_TEXT.svg,RECORD:rc_REC.svg";
-
-    $row[17] = "attr rc_iconpath icons/remotecontrol";
-    $row[18] = "attr rc_iconprefix black_btn_";
-    return @row;
-}
-
-# Dreambox DM800se + DM8000 with PNG
-sub ENIGMA2_RClayout_DM8000() {
-    my @row;
-
-    $row[0] = ":blank,:blank,POWER:POWEROFF";
-    $row[1] = ":blank,:blank,:blank";
-
-    $row[2] = "1,2,3";
-    $row[3] = "4,5,6";
-    $row[4] = "7,8,9";
-    $row[5] = "LEFTBRACE:LEFT2,0:0,RIGHTBRACE:RIGHT2";
-    $row[6] = ":blank,:blank,:blank";
-
-    $row[7] = "VOLUMEUP:VOLUP,MUTE,CHANNELUP:CHUP2";
-    $row[8] = "VOLUMEDOWN:VOLDOWN,EXIT,CHANNELDOWN:CHDOWN2";
-    $row[9] = ":blank,:blank,:blank";
-
-    $row[10] = "INFO,UP,MENU";
-    $row[11] = "LEFT,OK,RIGHT";
-    $row[12] = "AUDIO,DOWN,VIDEO";
-    $row[13] = ":blank,:blank,:blank";
-
-    $row[14] = "RED,GREEN,YELLOW,BLUE";
-    $row[15] = "REWIND,PLAY,STOP,FASTFORWARD:FF";
-    $row[16] = "TV,RADIO,TEXT,RECORD:REC";
-
-    $row[17] = "attr rc_iconpath icons/remotecontrol";
-    $row[18] = "attr rc_iconprefix black_btn_";
-    return @row;
-}
-
-# Dreambox RC10 with SVG
-sub ENIGMA2_RClayout_RC10_SVG() {
-    my @row;
-
-    $row[0] = ":rc_BLANK.svg,:rc_BLANK.svg,POWER:rc_POWER.svg";
-    $row[1] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[2] = "1:rc_1.svg,2:rc_2.svg,3:rc_3.svg";
-    $row[3] = "4:rc_4.svg,5:rc_5.svg,6:rc_6.svg";
-    $row[4] = "7:rc_7.svg,8:rc_8.svg,9:rc_9.svg";
-    $row[5] = "LEFTBRACE:rc_PREVIOUS.svg,0:rc_0.svg,RIGHTBRACE:rc_NEXT.svg";
-    $row[6] =
-      "RED:rc_RED.svg,GREEN:rc_GREEN.svg,YELLOW:rc_YELLOW.svg,BLUE:rc_BLUE.svg";
-    $row[7] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[8]  = "INFO:rc_INFO.svg,UP:rc_UP.svg,MENU:rc_MENU.svg";
-    $row[9]  = "LEFT:rc_LEFT.svg,OK:rc_OK.svg,RIGHT:rc_RIGHT.svg";
-    $row[10] = "AUDIO:rc_AUDIO.svg,DOWN:rc_DOWN.svg,VIDEO:rc_VIDEO.svg";
-    $row[11] = ":rc_BLANK.svg,EXIT:rc_EXIT.svg,:rc_BLANK.svg";
-
-    $row[12] = "VOLUMEUP:rc_VOLPLUS.svg,:rc_BLANK.svg,CHANNELUP:rc_UP.svg";
-    $row[13] =
-      "VOLUMEDOWN:rc_VOLMINUS.svg,MUTE:rc_MUTE.svg,CHANNELDOWN:rc_DOWN.svg";
-    $row[14] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[15] =
-"REWIND:rc_REW.svg,PLAY:rc_PLAY.svg,STOP:rc_STOP.svg,FASTFORWARD:rc_FF.svg";
-    $row[16] =
-      "TV:rc_TV.svg,RADIO:rc_RADIO.svg,TEXT:rc_TEXT.svg,RECORD:rc_REC.svg";
-
-    $row[17] = "attr rc_iconpath icons";
-    $row[18] = "attr rc_iconprefix rc_";
-    return @row;
-}
-
-# Dreambox RC10 with PNG
-sub ENIGMA2_RClayout_RC10() {
-    my @row;
-
-    $row[0] = ":blank,:blank,POWER:POWEROFF";
-    $row[1] = ":blank,:blank,:blank";
-
-    $row[2] = "1,2,3";
-    $row[3] = "4,5,6";
-    $row[4] = "7,8,9";
-    $row[5] = "LEFTBRACE:LEFT2,0:0,RIGHTBRACE:RIGHT2";
-    $row[6] = "RED,GREEN,YELLOW,BLUE";
-    $row[7] = ":blank,:blank,:blank";
-
-    $row[8]  = "INFO,UP,MENU";
-    $row[9]  = "LEFT,OK,RIGHT";
-    $row[10] = "AUDIO,DOWN,VIDEO";
-    $row[11] = ":blank,EXIT,:blank";
-
-    $row[12] = "VOLUMEUP:VOLUP,:blank,CHANNELUP:CHUP2";
-    $row[13] = "VOLUMEDOWN:VOLDOWN,MUTE,CHANNELDOWN:CHDOWN2";
-    $row[14] = ":blank,:blank,:blank";
-
-    $row[15] = "REWIND,PLAY,STOP,FASTFORWARD:FF";
-    $row[16] = "TV,RADIO,TEXT,RECORD:REC";
-
-    $row[17] = "attr rc_iconpath icons/remotecontrol";
-    $row[18] = "attr rc_iconprefix black_btn_";
-    return @row;
-}
-
-# VU+ Duo2 with SVG
-sub ENIGMA2_RClayout_VUplusDuo2_SVG() {
-    my @row;
-
-    $row[0] = ":rc_BLANK.svg,MUTE:rc_MUTE.svg,POWER:rc_POWER.svg";
-    $row[1] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[2] = "REWIND:rc_REW.svg,PLAY:rc_PLAY.svg,FASTFORWARD:rc_FF.svg";
-    $row[3] = "RECORD:rc_REC.svg,STOP:rc_STOP.svg,VIDEO:rc_VIDEO.svg";
-    $row[4] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[5] = "TV:rc_TV.svg,AUDIO:rc_AUDIO.svg,RADIO:rc_RADIO.svg";
-    $row[6] = "TEXT:rc_TEXT.svg,HELP:rc_HELP.svg,AV:rc_AV.svg";
-    $row[7] = "INFO:rc_EPG.svg,MENU:rc_MENU.svg,EXIT:rc_EXIT.svg";
-    $row[8] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[9]  = "VOLUMEUP:rc_VOLPLUS.svg,UP:rc_UP.svg,CHANNELUP:rc_PLUS.svg";
-    $row[10] = "LEFT:rc_LEFT.svg,OK:rc_OK.svg,RIGHT:rc_RIGHT.svg";
-    $row[11] =
-      "VOLUMEDOWN:rc_VOLMINUS.svg,DOWN:rc_DOWN.svg,CHANNELDOWN:rc_MINUS.svg";
-
-    $row[12] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
-
-    $row[13] =
-      "RED:rc_RED.svg,GREEN:rc_GREEN.svg,YELLOW:rc_YELLOW.svg,BLUE:rc_BLUE.svg";
-    $row[14] = "1:rc_1.svg,2:rc_2.svg,3:rc_3.svg";
-    $row[15] = "4:rc_4.svg,5:rc_5.svg,6:rc_6.svg";
-    $row[16] = "7:rc_7.svg,8:rc_8.svg,9:rc_9.svg";
-    $row[17] = "LEFTBRACE:rc_PREVIOUS.svg,0:rc_0.svg,RIGHTBRACE:rc_NEXT.svg";
-
-    $row[18] = "attr rc_iconpath icons";
-    $row[19] = "attr rc_iconprefix rc_";
-    return @row;
-}
-
-# VU+ Duo2 with PNG
-sub ENIGMA2_RClayout_VUplusDuo2() {
-    my @row;
-
-    $row[0] = ":blank,MUTE,POWER:POWEROFF";
-    $row[1] = ":blank,:blank,:blank";
-
-    $row[2] = "REWIND,PLAY,FASTFORWARD:FF";
-    $row[3] = "RECORD:REC,STOP,VIDEO";
-    $row[4] = ":blank,:blank,:blank";
-
-    $row[5] = "TV,AUDIO,RADIO:RADIO";
-    $row[6] = "TEXT,HELP,AV";
-    $row[7] = "INFO,MENU,EXIT";
-    $row[8] = ":blank,:blank,:blank";
-
-    $row[9]  = "VOLUMEUP:VOLUP,UP,CHANNELUP:CHUP2";
-    $row[10] = "LEFT,OK,RIGHT";
-    $row[11] = "VOLUMEDOWN:VOLDOWN,DOWN,CHANNELDOWN:CHDOWN2";
-
-    $row[12] = ":blank,:blank,:blank";
-
-    $row[13] = "RED,GREEN,YELLOW,BLUE";
-    $row[14] = "1,2,3";
-    $row[15] = "4,5,6";
-    $row[16] = "7,8,9";
-    $row[17] = "LEFTBRACE:LEFT2,0:0,RIGHTBRACE:RIGHT2";
-
-    $row[18] = "attr rc_iconpath icons/remotecontrol";
-    $row[19] = "attr rc_iconprefix black_btn_";
-    return @row;
-}
-
-###################################
 sub ENIGMA2_GetRemotecontrolCommand($) {
     my ($command) = @_;
     my $commands = {
@@ -2841,10 +2541,312 @@ sub ENIGMA2_GetRemotecontrolCommand($) {
     }
 }
 
+sub ENIGMA2_wake ($$) {
+    if ( !$modules{WOL}{LOADED}
+        && -f "$attr{global}{modpath}/FHEM/98_WOL.pm" )
+    {
+        my $ret = CommandReload( undef, "98_WOL" );
+        return $ret if ($ret);
+    }
+    elsif ( !-f "$attr{global}{modpath}/FHEM/98_WOL.pm" ) {
+        return "Missing module: $attr{global}{modpath}/FHEM/98_WOL.pm";
+    }
+
+    my ( $name, $mac ) = @_;
+    my $hash = $defs{$name};
+    my $host =
+      AttrVal( $name, "WOL_useUdpBroadcast",
+        AttrVal( $name, "useUdpBroadcast", "255.255.255.255" ) );
+    my $port = AttrVal( $name, "WOL_port", "9" );
+    my $mode = lc( AttrVal( $name, "WOL_mode", "UDP" ) );
+
+    Log3 $name, 4,
+      "ENIGMA2 $name: Waking up by sending Wake-On-Lan magic package to "
+      . $mac;
+
+    if ( $mode eq "both" || $mode eq "ew" ) {
+        WOL_by_ew( $hash, $mac );
+    }
+    if ( $mode eq "both" || $mode eq "udp" ) {
+        WOL_by_udp( $hash, $mac, $host, $port );
+    }
+}
+
+sub ENIGMA2_RCmakenotify($$) {
+    my ( $nam, $ndev ) = @_;
+    my $nname = "notify_$nam";
+
+    fhem( "define $nname notify $nam set $ndev remoteControl " . '$EVENT', 1 );
+    Log3 undef, 2, "[remotecontrol:ENIGMA2] Notify created: $nname";
+    return "Notify created by ENIGMA2: $nname";
+}
+
+sub ENIGMA2_RClayout_DM800_SVG() {
+    my @row;
+
+    $row[0] = ":rc_BLANK.svg,:rc_BLANK.svg,POWER:rc_POWER.svg";
+    $row[1] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[2] = "1:rc_1.svg,2:rc_2.svg,3:rc_3.svg";
+    $row[3] = "4:rc_4.svg,5:rc_5.svg,6:rc_6.svg";
+    $row[4] = "7:rc_7.svg,8:rc_8.svg,9:rc_9.svg";
+    $row[5] = "LEFTBRACE:rc_PREVIOUS.svg,0:rc_0.svg,RIGHTBRACE:rc_NEXT.svg";
+    $row[6] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[7] = "VOLUMEUP:rc_VOLPLUS.svg,MUTE:rc_MUTE.svg,CHANNELUP:rc_UP.svg";
+    $row[8] =
+      "VOLUMEDOWN:rc_VOLMINUS.svg,EXIT:rc_EXIT.svg,CHANNELDOWN:rc_DOWN.svg";
+    $row[9] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[10] = "INFO:rc_INFO.svg,UP:rc_UP.svg,MENU:rc_MENU.svg";
+    $row[11] = "LEFT:rc_LEFT.svg,OK:rc_OK.svg,RIGHT:rc_RIGHT.svg";
+    $row[12] = "AUDIO:rc_AUDIO.svg,DOWN:rc_DOWN.svg,VIDEO:rc_VIDEO.svg";
+    $row[13] = ":rc_BLANK.svg,EXIT:rc_EXIT.svg,:rc_BLANK.svg";
+
+    $row[14] =
+        "RED:rc_REWred.svg,GREEN:rc_PLAYgreen.svg,"
+      . "YELLOW:rc_PAUSEyellow.svg,BLUE:rc_FFblue.svg";
+    $row[15] =
+        "TV:rc_TVstop.svg,RADIO:rc_RADIOred.svg,"
+      . "TEXT:rc_TEXT.svg,HELP:rc_HELP.svg";
+
+    $row[16] = "attr rc_iconpath icons/remotecontrol";
+    $row[17] = "attr rc_iconprefix black_btn_";
+    return @row;
+}
+
+sub ENIGMA2_RClayout_DM800() {
+    my @row;
+
+    $row[0] = ":blank,:blank,POWER:POWEROFF";
+    $row[1] = ":blank,:blank,:blank";
+
+    $row[2] = "1,2,3";
+    $row[3] = "4,5,6";
+    $row[4] = "7,8,9";
+    $row[5] = "LEFTBRACE:LEFT2,0:0,RIGHTBRACE:RIGHT2";
+    $row[6] = ":blank,:blank,:blank";
+
+    $row[7] = "VOLUMEUP:VOLUP,MUTE,CHANNELUP:CHUP2";
+    $row[8] = "VOLUMEDOWN:VOLDOWN,EXIT,CHANNELDOWN:CHDOWN2";
+    $row[9] = ":blank,:blank,:blank";
+
+    $row[10] = "INFO,UP,MENU";
+    $row[11] = "LEFT,OK,RIGHT";
+    $row[12] = "AUDIO,DOWN,VIDEO";
+    $row[13] = ":blank,:blank,:blank";
+
+    $row[14] = "RED:REWINDred,GREEN:PLAYgreen,YELLOW:PAUSEyellow,BLUE:FFblue";
+    $row[15] = "TV:TVstop,RADIO:RADIOred,TEXT,HELP";
+
+    $row[16] = "attr rc_iconpath icons/remotecontrol";
+    $row[17] = "attr rc_iconprefix black_btn_";
+    return @row;
+}
+
+sub ENIGMA2_RClayout_DM8000_SVG() {
+    my @row;
+
+    $row[0] = ":rc_BLANK.svg,:rc_BLANK.svg,POWER:rc_POWER.svg";
+    $row[1] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[2] = "1:rc_1.svg,2:rc_2.svg,3:rc_3.svg";
+    $row[3] = "4:rc_4.svg,5:rc_5.svg,6:rc_6.svg";
+    $row[4] = "7:rc_7.svg,8:rc_8.svg,9:rc_9.svg";
+    $row[5] = "LEFTBRACE:rc_PREVIOUS.svg,0:rc_0.svg,RIGHTBRACE:rc_NEXT.svg";
+    $row[6] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[7] = "VOLUMEUP:rc_VOLPLUS.svg,MUTE:rc_MUTE.svg,CHANNELUP:rc_UP.svg";
+    $row[8] =
+      "VOLUMEDOWN:rc_VOLMINUS.svg,EXIT:rc_EXIT.svg,CHANNELDOWN:rc_DOWN.svg";
+    $row[9] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[10] = "INFO:rc_INFO.svg,UP:rc_UP.svg,MENU:rc_MENU.svg";
+    $row[11] = "LEFT:rc_LEFT.svg,OK:rc_OK.svg,RIGHT:rc_RIGHT.svg";
+    $row[12] = "AUDIO:rc_AUDIO.svg,DOWN:rc_DOWN.svg,VIDEO:rc_VIDEO.svg";
+    $row[13] = ":rc_BLANK.svg,EXIT:rc_EXIT.svg,:rc_BLANK.svg";
+
+    $row[14] =
+        "RED:rc_RED.svg,GREEN:rc_GREEN.svg,"
+      . "YELLOW:rc_YELLOW.svg,BLUE:rc_BLUE.svg";
+    $row[15] =
+        "REWIND:rc_REW.svg,PLAY:rc_PLAY.svg,"
+      . "STOP:rc_STOP.svg,FASTFORWARD:rc_FF.svg";
+    $row[16] =
+      "TV:rc_TV.svg,RADIO:rc_RADIO.svg,TEXT:rc_TEXT.svg,RECORD:rc_REC.svg";
+
+    $row[17] = "attr rc_iconpath icons/remotecontrol";
+    $row[18] = "attr rc_iconprefix black_btn_";
+    return @row;
+}
+
+sub ENIGMA2_RClayout_DM8000() {
+    my @row;
+
+    $row[0] = ":blank,:blank,POWER:POWEROFF";
+    $row[1] = ":blank,:blank,:blank";
+
+    $row[2] = "1,2,3";
+    $row[3] = "4,5,6";
+    $row[4] = "7,8,9";
+    $row[5] = "LEFTBRACE:LEFT2,0:0,RIGHTBRACE:RIGHT2";
+    $row[6] = ":blank,:blank,:blank";
+
+    $row[7] = "VOLUMEUP:VOLUP,MUTE,CHANNELUP:CHUP2";
+    $row[8] = "VOLUMEDOWN:VOLDOWN,EXIT,CHANNELDOWN:CHDOWN2";
+    $row[9] = ":blank,:blank,:blank";
+
+    $row[10] = "INFO,UP,MENU";
+    $row[11] = "LEFT,OK,RIGHT";
+    $row[12] = "AUDIO,DOWN,VIDEO";
+    $row[13] = ":blank,:blank,:blank";
+
+    $row[14] = "RED,GREEN,YELLOW,BLUE";
+    $row[15] = "REWIND,PLAY,STOP,FASTFORWARD:FF";
+    $row[16] = "TV,RADIO,TEXT,RECORD:REC";
+
+    $row[17] = "attr rc_iconpath icons/remotecontrol";
+    $row[18] = "attr rc_iconprefix black_btn_";
+    return @row;
+}
+
+sub ENIGMA2_RClayout_RC10_SVG() {
+    my @row;
+
+    $row[0] = ":rc_BLANK.svg,:rc_BLANK.svg,POWER:rc_POWER.svg";
+    $row[1] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[2] = "1:rc_1.svg,2:rc_2.svg,3:rc_3.svg";
+    $row[3] = "4:rc_4.svg,5:rc_5.svg,6:rc_6.svg";
+    $row[4] = "7:rc_7.svg,8:rc_8.svg,9:rc_9.svg";
+    $row[5] = "LEFTBRACE:rc_PREVIOUS.svg,0:rc_0.svg,RIGHTBRACE:rc_NEXT.svg";
+    $row[6] =
+      "RED:rc_RED.svg,GREEN:rc_GREEN.svg,YELLOW:rc_YELLOW.svg,BLUE:rc_BLUE.svg";
+    $row[7] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[8]  = "INFO:rc_INFO.svg,UP:rc_UP.svg,MENU:rc_MENU.svg";
+    $row[9]  = "LEFT:rc_LEFT.svg,OK:rc_OK.svg,RIGHT:rc_RIGHT.svg";
+    $row[10] = "AUDIO:rc_AUDIO.svg,DOWN:rc_DOWN.svg,VIDEO:rc_VIDEO.svg";
+    $row[11] = ":rc_BLANK.svg,EXIT:rc_EXIT.svg,:rc_BLANK.svg";
+
+    $row[12] = "VOLUMEUP:rc_VOLPLUS.svg,:rc_BLANK.svg,CHANNELUP:rc_UP.svg";
+    $row[13] =
+      "VOLUMEDOWN:rc_VOLMINUS.svg,MUTE:rc_MUTE.svg,CHANNELDOWN:rc_DOWN.svg";
+    $row[14] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[15] =
+        "REWIND:rc_REW.svg,PLAY:rc_PLAY.svg,"
+      . "STOP:rc_STOP.svg,FASTFORWARD:rc_FF.svg";
+    $row[16] =
+      "TV:rc_TV.svg,RADIO:rc_RADIO.svg,TEXT:rc_TEXT.svg,RECORD:rc_REC.svg";
+
+    $row[17] = "attr rc_iconpath icons";
+    $row[18] = "attr rc_iconprefix rc_";
+    return @row;
+}
+
+sub ENIGMA2_RClayout_RC10() {
+    my @row;
+
+    $row[0] = ":blank,:blank,POWER:POWEROFF";
+    $row[1] = ":blank,:blank,:blank";
+
+    $row[2] = "1,2,3";
+    $row[3] = "4,5,6";
+    $row[4] = "7,8,9";
+    $row[5] = "LEFTBRACE:LEFT2,0:0,RIGHTBRACE:RIGHT2";
+    $row[6] = "RED,GREEN,YELLOW,BLUE";
+    $row[7] = ":blank,:blank,:blank";
+
+    $row[8]  = "INFO,UP,MENU";
+    $row[9]  = "LEFT,OK,RIGHT";
+    $row[10] = "AUDIO,DOWN,VIDEO";
+    $row[11] = ":blank,EXIT,:blank";
+
+    $row[12] = "VOLUMEUP:VOLUP,:blank,CHANNELUP:CHUP2";
+    $row[13] = "VOLUMEDOWN:VOLDOWN,MUTE,CHANNELDOWN:CHDOWN2";
+    $row[14] = ":blank,:blank,:blank";
+
+    $row[15] = "REWIND,PLAY,STOP,FASTFORWARD:FF";
+    $row[16] = "TV,RADIO,TEXT,RECORD:REC";
+
+    $row[17] = "attr rc_iconpath icons/remotecontrol";
+    $row[18] = "attr rc_iconprefix black_btn_";
+    return @row;
+}
+
+sub ENIGMA2_RClayout_VUplusDuo2_SVG() {
+    my @row;
+
+    $row[0] = ":rc_BLANK.svg,MUTE:rc_MUTE.svg,POWER:rc_POWER.svg";
+    $row[1] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[2] = "REWIND:rc_REW.svg,PLAY:rc_PLAY.svg,FASTFORWARD:rc_FF.svg";
+    $row[3] = "RECORD:rc_REC.svg,STOP:rc_STOP.svg,VIDEO:rc_VIDEO.svg";
+    $row[4] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[5] = "TV:rc_TV.svg,AUDIO:rc_AUDIO.svg,RADIO:rc_RADIO.svg";
+    $row[6] = "TEXT:rc_TEXT.svg,HELP:rc_HELP.svg,AV:rc_AV.svg";
+    $row[7] = "INFO:rc_EPG.svg,MENU:rc_MENU.svg,EXIT:rc_EXIT.svg";
+    $row[8] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[9]  = "VOLUMEUP:rc_VOLPLUS.svg,UP:rc_UP.svg,CHANNELUP:rc_PLUS.svg";
+    $row[10] = "LEFT:rc_LEFT.svg,OK:rc_OK.svg,RIGHT:rc_RIGHT.svg";
+    $row[11] =
+      "VOLUMEDOWN:rc_VOLMINUS.svg,DOWN:rc_DOWN.svg,CHANNELDOWN:rc_MINUS.svg";
+
+    $row[12] = ":rc_BLANK.svg,:rc_BLANK.svg,:rc_BLANK.svg";
+
+    $row[13] =
+      "RED:rc_RED.svg,GREEN:rc_GREEN.svg,YELLOW:rc_YELLOW.svg,BLUE:rc_BLUE.svg";
+    $row[14] = "1:rc_1.svg,2:rc_2.svg,3:rc_3.svg";
+    $row[15] = "4:rc_4.svg,5:rc_5.svg,6:rc_6.svg";
+    $row[16] = "7:rc_7.svg,8:rc_8.svg,9:rc_9.svg";
+    $row[17] = "LEFTBRACE:rc_PREVIOUS.svg,0:rc_0.svg,RIGHTBRACE:rc_NEXT.svg";
+
+    $row[18] = "attr rc_iconpath icons";
+    $row[19] = "attr rc_iconprefix rc_";
+    return @row;
+}
+
+sub ENIGMA2_RClayout_VUplusDuo2() {
+    my @row;
+
+    $row[0] = ":blank,MUTE,POWER:POWEROFF";
+    $row[1] = ":blank,:blank,:blank";
+
+    $row[2] = "REWIND,PLAY,FASTFORWARD:FF";
+    $row[3] = "RECORD:REC,STOP,VIDEO";
+    $row[4] = ":blank,:blank,:blank";
+
+    $row[5] = "TV,AUDIO,RADIO:RADIO";
+    $row[6] = "TEXT,HELP,AV";
+    $row[7] = "INFO,MENU,EXIT";
+    $row[8] = ":blank,:blank,:blank";
+
+    $row[9]  = "VOLUMEUP:VOLUP,UP,CHANNELUP:CHUP2";
+    $row[10] = "LEFT,OK,RIGHT";
+    $row[11] = "VOLUMEDOWN:VOLDOWN,DOWN,CHANNELDOWN:CHDOWN2";
+
+    $row[12] = ":blank,:blank,:blank";
+
+    $row[13] = "RED,GREEN,YELLOW,BLUE";
+    $row[14] = "1,2,3";
+    $row[15] = "4,5,6";
+    $row[16] = "7,8,9";
+    $row[17] = "LEFTBRACE:LEFT2,0:0,RIGHTBRACE:RIGHT2";
+
+    $row[18] = "attr rc_iconpath icons/remotecontrol";
+    $row[19] = "attr rc_iconprefix black_btn_";
+    return @row;
+}
+
 1;
 
 =pod
 =item device
+=item summary control for ENIGMA2 based receivers via network connection
+=item summary_DE Steuerung von ENIGMA2 basierte Receiver &uuml;ber das Netzwerk
 =begin html
 
     <p>
@@ -2856,9 +2858,9 @@ sub ENIGMA2_GetRemotecontrolCommand($) {
     <ul>
       <a name="ENIGMA2define" id="ENIGMA2define"></a> <b>Define</b>
       <ul>
-        <code>define &lt;name&gt; ENIGMA2 &lt;ip-address-or-hostname&gt; [&lt;port&gt;] [&lt;poll-interval&gt;] [&lt;http-user&gt;] [&lt;http-password&gt;]</code><br>
+        <code>define &lt;name&gt; ENIGMA2 &lt;ip-address-or-hostname&gt; [[[[&lt;port&gt;] [&lt;poll-interval&gt;]] [&lt;http-user&gt;]] [&lt;http-password&gt;]]</code><br>
         <br>
-        This module controls ENIGMA2 based devices like Dreambox or VUplus via network connection.<br>
+        This module controls ENIGMA2 based devices like Dreambox or VUplus receiver via network connection.<br>
         <br>
         Defining an ENIGMA2 device will schedule an internal task (interval can be set with optional parameter &lt;poll-interval&gt; in seconds, if not set, the value is 45 seconds), which periodically reads the status of the device and triggers notify/filelog commands.<br>
         <br>
@@ -3021,6 +3023,9 @@ sub ENIGMA2_GetRemotecontrolCommand($) {
             <b>https</b> - Access box via secure HTTP (true/false)
           </li>
           <li>
+            <b>ignoreState</b> - Do not check for available device before sending commands to it (true/false)
+          </li>
+          <li>
             <b>lightMode</b> - reduces regular queries (resulting in less functionality), e.g. for low performance devices. (true/false)
           </li>
           <li>
@@ -3077,6 +3082,12 @@ sub ENIGMA2_GetRemotecontrolCommand($) {
           </li>
           <li>
             <b>eventdescription</b> - Shows the description of running event
+          </li>
+          <li>
+            <b>eventdescriptionextended</b> - Shows the extended description of running event
+          </li>
+          <li>
+            <b>eventdescriptionextended_next</b> - Shows the extended description of next event
           </li>
           <li>
             <b>eventdescription_next</b> - Shows the description of next event

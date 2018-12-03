@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_motion3.gplot 9508 2015-10-18 08:33:29Z klaus-schauer $
 # Display a motion log
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device

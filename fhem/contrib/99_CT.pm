@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 99_CT.pm 5336 2014-03-27 01:08:49Z betateilchen $
 package main;
 
 use strict;

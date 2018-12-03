@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_valveCtrl.gplot 9557 2015-10-20 04:23:06Z klaus-schauer $
 # Display a valve log
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device

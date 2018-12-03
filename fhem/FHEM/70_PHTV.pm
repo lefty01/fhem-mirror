@@ -1,69 +1,29 @@
-# $Id$
-##############################################################################
-#
-#     70_PHTV.pm
-#     An FHEM Perl module for controlling Philips Televisons
-#     via network connection.
-#
-#     Copyright by Julian Pawlowski
-#     e-mail: julian.pawlowski at gmail.com
-#
-#     This file is part of fhem.
-#
-#     Fhem is free software: you can redistribute it and/or modify
-#     it under the terms of the GNU General Public License as published by
-#     the Free Software Foundation, either version 2 of the License, or
-#     (at your option) any later version.
-#
-#     Fhem is distributed in the hope that it will be useful,
-#     but WITHOUT ANY WARRANTY; without even the implied warranty of
-#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#     GNU General Public License for more details.
-#
-#     You should have received a copy of the GNU General Public License
-#     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
-#
-##############################################################################
-
+###############################################################################
+# $Id: 70_PHTV.pm 17856 2018-11-27 20:08:51Z loredo $
 package main;
 
-use 5.012;
 use strict;
 use warnings;
 use Data::Dumper;
 use Time::HiRes qw(gettimeofday);
-use JSON;
 use HttpUtils;
 use Color;
-use SetExtensions;
 use Encode;
 
-no if $] >= 5.017011, warnings => 'experimental::smartmatch';
-
-sub PHTV_Set($@);
-sub PHTV_Get($@);
-sub PHTV_GetStatus($;$);
-sub PHTV_Define($$);
-sub PHTV_Undefine($$);
-
-#########################
-# Forward declaration for remotecontrol module
-#sub PHTV_RClayout_TV();
-#sub PHTV_RCmakenotify($$);
-
-###################################
+# initialize ##################################################################
 sub PHTV_Initialize($) {
     my ($hash) = @_;
 
     Log3 $hash, 5, "PHTV_Initialize: Entering";
 
-    $hash->{GetFn}   = "PHTV_Get";
-    $hash->{SetFn}   = "PHTV_Set";
-    $hash->{DefFn}   = "PHTV_Define";
-    $hash->{UndefFn} = "PHTV_Undefine";
+    $hash->{DefFn}    = "PHTV_Define";
+    $hash->{UndefFn}  = "PHTV_Undefine";
+    $hash->{SetFn}    = "PHTV_Set";
+    $hash->{GetFn}    = "PHTV_Get";
+    $hash->{NotifyFn} = "PHTV_Notify";
 
     $hash->{AttrList} =
-"disable:0,1 timeout sequentialQuery:0,1 drippyFactor:0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 inputs ambiHueLeft ambiHueRight ambiHueTop ambiHueBottom ambiHueLatency:150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000,1100,1200,1300,1400,1500,1600,1700,1800,1900,2000 jsversion:1,5,6 macaddr:textField wakeupCmd:textField channelsMax:slider,30,1,200 "
+"disable:0,1 disabledForIntervals do_not_notify:1,0 timeout sequentialQuery:0,1 drippyFactor:0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 inputs ambiHueLeft ambiHueRight ambiHueTop ambiHueBottom ambiHueLatency:150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000,1100,1200,1300,1400,1500,1600,1700,1800,1900,2000 jsversion:1,5,6 macaddr:textField model wakeupCmd:textField channelsMax:slider,30,1,200 httpLoglevel:1,2,3,4,5 sslVersion device_id auth_key "
       . $readingFnAttributes;
 
     $data{RC_layout}{PHTV_SVG} = "PHTV_RClayout_SVG";
@@ -71,202 +31,107 @@ sub PHTV_Initialize($) {
 
     $data{RC_makenotify}{PHTV} = "PHTV_RCmakenotify";
 
+    # 98_powerMap.pm support
+    $hash->{powerMap} = {
+        model => {
+            '55PFL8008S/12' => {
+                rname_E => 'energy',
+                rname_P => 'consumption',
+                map     => {
+                    stateAV => {
+                        absent => 0,
+                        off    => 0.1,
+                        '*'    => 90,
+                    },
+                },
+            },
+        },
+    };
+
     FHEM_colorpickerInit();
-
-    return;
 }
 
-#####################################
-sub PHTV_GetStatus($;$) {
-    my ( $hash, $update ) = @_;
-    my $name       = $hash->{NAME};
-    my $interval   = $hash->{INTERVAL};
-    my $sequential = ( defined( $attr{$name}{sequentialQuery} )
-          && $attr{$name}{sequentialQuery} == 1 ) ? 1 : 0;
-    my $querySent = 0;
-
-    Log3 $name, 5, "PHTV $name: called function PHTV_GetStatus()";
-
-    $interval = $interval * 1.6
-      if ( defined( $hash->{READINGS}{ambiHue}{VAL} )
-        && $hash->{READINGS}{ambiHue}{VAL} eq "on" );
-
-    RemoveInternalTimer($hash);
-    InternalTimer( gettimeofday() + $interval, "PHTV_GetStatus", $hash, 0 );
-
-    return
-      if ( defined( $attr{$name}{disable} ) && $attr{$name}{disable} == 1 );
-
-    # try to fetch only some information to check device availability
-    if ( !$update ) {
-        PHTV_SendCommand( $hash, "audio/volume" );
-
-       # in case we should query the device gently, mark we already sent a query
-        $querySent = 1 if $sequential;
-        $hash->{helper}{sequentialQueryCounter} = 1 if $sequential;
-    }
-
-    # fetch other info if device is on
-    if (
-        !$querySent
-        && (
-            (
-                defined( $hash->{READINGS}{state}{VAL} )
-                && $hash->{READINGS}{state}{VAL} eq "on"
-            )
-            || $update
-        )
-      )
-    {
-
-        # Read device info every 15 minutes only
-        if (
-            !$querySent
-            && (
-                !defined( $hash->{helper}{lastFullUpdate} )
-                || (  !$update
-                    && $hash->{helper}{lastFullUpdate} + 900 le time() )
-            )
-          )
-        {
-            PHTV_SendCommand( $hash, "system" );
-            PHTV_SendCommand( $hash, "ambilight/topology" );
-            $querySent = 1 if $sequential;
-            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
-
-            # Update state
-            $hash->{helper}{lastFullUpdate} = time();
-        }
-
-        # read ambilight details
-        if ( !$querySent ) {
-
-            # read ambilight mode
-            PHTV_SendCommand( $hash, "ambilight/mode" );
-            $querySent = 1 if $sequential;
-            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
-
-            # read ambilight RGB value
-            PHTV_SendCommand( $hash, "ambilight/cached" )
-              if ( defined( $hash->{READINGS}{ambiMode}{VAL} )
-                && $hash->{READINGS}{ambiMode}{VAL} ne "internal" );
-        }
-
-        # read all sources if not existing
-        if (
-            !$querySent
-            && (   !defined( $hash->{helper}{device}{sourceName} )
-                || !defined( $hash->{helper}{device}{sourceID} ) )
-          )
-        {
-            PHTV_SendCommand( $hash, "sources" );
-            $querySent = 1 if $sequential;
-            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
-        }
-
-        # otherwise read current source
-        elsif ( !$querySent ) {
-            PHTV_SendCommand( $hash, "sources/current" );
-            $querySent = 1 if $sequential;
-            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
-        }
-
-        # read all channels if not existing
-        if (
-            !$querySent
-            && (   !defined( $hash->{helper}{device}{channelName} )
-                || !defined( $hash->{helper}{device}{channelID} ) )
-          )
-        {
-            PHTV_SendCommand( $hash, "channels" );
-            $querySent = 1 if $sequential;
-            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
-        }
-
-        # otherwise read current channel
-        elsif ( !$querySent ) {
-            PHTV_SendCommand( $hash, "channels/current" );
-            $querySent = 1 if $sequential;
-            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
-        }
-
-    }
-
-    # Input alias handling
-    #
-    if ( defined( $attr{$name}{inputs} ) ) {
-        my @inputs = split( ':', $attr{$name}{inputs} );
-
-        if (@inputs) {
-            foreach (@inputs) {
-                if (m/[^,\s]+(,[^,\s]+)+/) {
-                    my @input_names = split( ',', $_ );
-                    $input_names[1] =~ s/\s/_/g;
-                    $hash->{helper}{device}{inputAliases}{ $input_names[0] } =
-                      $input_names[1];
-                    $hash->{helper}{device}{inputNames}{ $input_names[1] } =
-                      $input_names[0];
-                }
-            }
-        }
-    }
-
-    return;
-}
-
-###################################
-sub PHTV_Get($@) {
-    my ( $hash, @a ) = @_;
+# regular Fn ##################################################################
+sub PHTV_Define($$) {
+    my ( $hash, $def ) = @_;
+    my @a = split( "[ \t][ \t]*", $def );
     my $name = $hash->{NAME};
-    my $what;
 
-    Log3 $name, 5, "PHTV $name: called function PHTV_Get()";
+    Log3 $name, 5, "PHTV $name: called function PHTV_Define()";
 
-    return "argument is missing" if ( int(@a) < 2 );
+    eval {
+        require JSON;
+        import JSON qw( decode_json encode_json );
+    };
+    return "Please install Perl JSON to use module PHTV"
+      if ($@);
 
-    $what = $a[1];
-
-    if ( $what =~ /^(power|input|volume|mute|rgb)$/ ) {
-        if ( defined( $hash->{READINGS}{$what} ) ) {
-            return $hash->{READINGS}{$what}{VAL};
-        }
-        else {
-            return "no such reading: $what";
-        }
+    if ( int(@a) < 3 ) {
+        my $msg =
+          "Wrong syntax: define <name> PHTV <ip-or-hostname> [<poll-interval>]";
+        Log3 $name, 4, $msg;
+        return $msg;
     }
 
-    else {
-        return
-"Unknown argument $what, choose one of power:noArg input:noArg volume:noArg mute:noArg rgb:noArg ";
+    $hash->{NOTIFYDEV} = "global";
+
+    my $address = $a[2];
+    $hash->{helper}{ADDRESS} = $address;
+
+    # use interval of 45sec if not defined
+    my $interval = $a[3] || 45;
+    $hash->{INTERVAL} = $interval;
+
+    readingsSingleUpdate( $hash, "ambiHue", "off", 0 )
+      if ( ReadingsVal( $name, "ambiHue", "" ) ne "off" );
+
+    $hash->{model} = ReadingsVal( $name, "model", undef )
+      if ( ReadingsVal( $name, "model", undef ) );
+
+    $hash->{swversion} = ReadingsVal( $name, "softwareversion", undef )
+      if ( ReadingsVal( $name, "softwareversion", undef ) );
+
+    # set default settings on first define
+    if ( $init_done && !defined( $hash->{OLDDEF} ) ) {
+        fhem 'attr ' . $name . ' webCmd volume:input:rgb';
+        fhem 'attr ' . $name
+          . ' devStateIcon on:rc_GREEN:off off:rc_YELLOW:on absent:rc_STOP:on';
+        fhem 'attr ' . $name . ' icon it_television';
+
+        PHTV_GetStatus($hash);
     }
+
+    return;
 }
 
-###################################
+sub PHTV_Undefine($$) {
+    my ( $hash, $arg ) = @_;
+    my $name = $hash->{NAME};
+
+    Log3 $name, 5, "PHTV $name: called function PHTV_Undefine()";
+
+    # Stop the internal GetStatus-Loop and exit
+    RemoveInternalTimer($hash);
+
+    return;
+}
+
+sub PHTV_Set($@);
+
 sub PHTV_Set($@) {
     my ( $hash, @a ) = @_;
-    my $name  = $hash->{NAME};
-    my $state = $hash->{READINGS}{state}{VAL};
-    my $channel =
-      ( $hash->{READINGS}{channel}{VAL} )
-      ? $hash->{READINGS}{channel}{VAL}
-      : "";
+    my $name       = $hash->{NAME};
+    my $state      = ReadingsVal( $name, "state", "Initialized" );
+    my $channel    = ReadingsVal( $name, "channel", "" );
     my $channels   = "";
     my $inputs_txt = "";
 
-    if ( defined( $hash->{READINGS}{input}{VAL} )
-        && $hash->{READINGS}{input}{VAL} ne "-" )
-    {
-        $hash->{helper}{lastInput} = $hash->{READINGS}{input}{VAL};
-    }
-    elsif ( !defined( $hash->{helper}{lastInput} ) ) {
-        $hash->{helper}{lastInput} = "";
-    }
-
+    $hash->{helper}{lastInput} = ReadingsVal( $name, "input", "-" );
     my $input = $hash->{helper}{lastInput};
 
     Log3 $name, 5, "PHTV $name: called function PHTV_Set()";
 
-    return "No Argument given" if ( !defined( $a[1] ) );
+    return "No Argument given" unless ( defined( $a[1] ) );
 
     # depending on current FHEMWEB instance's allowedCommands,
     # restrict set commands if there is "set-user" in it
@@ -281,8 +146,8 @@ sub PHTV_Set($@) {
     }
 
     # Input alias handling
-    if ( defined( $attr{$name}{inputs} ) && $attr{$name}{inputs} ne "" ) {
-        my @inputs = split( ':', $attr{$name}{inputs} );
+    if ( AttrVal( $name, "inputs", "" ) ne "" ) {
+        my @inputs = split( ':', AttrVal( $name, "inputs", ":" ) );
         $inputs_txt = "-," if ( $state ne "on" );
 
         if (@inputs) {
@@ -331,6 +196,14 @@ sub PHTV_Set($@) {
     }
     chop($channels) if ( $channels ne "" );
 
+    # create inputList reading for frontends
+    readingsSingleUpdate( $hash, "inputList", $inputs_txt, 1 )
+      if ( ReadingsVal( $name, "inputList", "-" ) ne $inputs_txt );
+
+    # create channelList reading for frontends
+    readingsSingleUpdate( $hash, "channelList", $channels, 1 )
+      if ( ReadingsVal( $name, "channelList", "-" ) ne $channels );
+
     my $usage =
         "Unknown argument "
       . $a[1]
@@ -342,11 +215,9 @@ sub PHTV_Set($@) {
       if ( defined( $hash->{helper}{audio}{min} )
         && defined( $hash->{helper}{audio}{max} ) );
     $usage .= " mute:-,on,off"
-      if ( defined( $hash->{READINGS}{mute}{VAL} )
-        && $hash->{READINGS}{mute}{VAL} eq "-" );
+      if ( ReadingsVal( $name, "mute", "" ) eq "-" );
     $usage .= " mute:on,off"
-      if ( defined( $hash->{READINGS}{mute}{VAL} )
-        && $hash->{READINGS}{mute}{VAL} ne "-" );
+      if ( ReadingsVal( $name, "mute", "" ) ne "-" );
     $usage .= " input:" . $inputs_txt if ( $inputs_txt ne "" );
     $usage .= " channel:$channels" if ( $channels ne "" );
 
@@ -354,11 +225,47 @@ sub PHTV_Set($@) {
         $usage .= " statusRequest:noArg";
     }
 
+    $usage = ""    if ( $state eq "Initialized" );
+    $usage = "pin" if ( $state =~ /^pairing.*/ );
+
     my $cmd = '';
     my $result;
 
+    # pairing grant / PIN
+    if ( lc( $a[1] ) eq "pin" ) {
+        return "Missing PIN code" unless ( defined( $a[2] ) );
+        return "Not in pairing mode"
+          unless ( defined( $hash->{pairing} )
+            && defined( $hash->{pairing}{auth_key} )
+            && defined( $hash->{pairing}{timestamp} )
+            && defined( $hash->{pairing}{request} )
+            && defined( $hash->{pairing}{request}{device} ) );
+
+        readingsSingleUpdate( $hash, "state", "pairing-grant", 1 );
+
+        $hash->{pairing}{grant} = {
+            auth => {
+                auth_AppId     => 1,
+                pin            => trim( $a[2] ),
+                auth_timestamp => $hash->{pairing}{timestamp},
+                auth_signature => PHTV_createAuthSignature(
+                    $hash->{pairing}{timestamp},
+                    $a[2],
+"ZmVay1EQVFOaZhwQ4Kv81ypLAZNczV9sG4KkseXWn1NEk6cXmPKO/MCa9sryslvLCFMnNe4Z4CPXzToowvhHvA=="
+                ),
+            },
+            device => $hash->{pairing}{request}{device},
+        };
+
+        return "Unable to sign pairing confirmation."
+          . " Please install Digest::SHA first."
+          unless ( defined( $hash->{pairing}{grant}{auth}{auth_signature} ) );
+
+        PHTV_SendCommand( $hash, "pair/grant", $hash->{pairing}{grant} );
+    }
+
     # statusRequest
-    if ( lc( $a[1] ) eq "statusrequest" ) {
+    elsif ( lc( $a[1] ) eq "statusrequest" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1];
 
         delete $hash->{helper}{device}
@@ -373,7 +280,7 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "toggle" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} ne "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) ne "on" ) {
             return PHTV_Set( $hash, $name, "on" );
         }
         else {
@@ -384,7 +291,7 @@ sub PHTV_Set($@) {
 
     # on
     elsif ( lc( $a[1] ) eq "on" ) {
-        if ( $hash->{READINGS}{state}{VAL} eq "absent" ) {
+        if ( ReadingsVal( $name, "state", "absent" ) eq "absent" ) {
             Log3 $name, 3, "PHTV set $name " . $a[1] . " (wakeup)";
             my $wakeupCmd = AttrVal( $name, "wakeupCmd", "" );
             my $macAddr   = AttrVal( $name, "macaddr",   "" );
@@ -417,7 +324,7 @@ sub PHTV_Set($@) {
 "Attribute macaddr not set. Device needs to be reachable to turn it on.";
             }
         }
-        elsif ( $hash->{READINGS}{state}{VAL} eq "off" ) {
+        elsif ( ReadingsVal( $name, "state", "off" ) eq "off" ) {
             Log3 $name, 3, "PHTV set $name " . $a[1];
 
             $cmd = PHTV_GetRemotecontrolCommand("STANDBY");
@@ -430,7 +337,7 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "off" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             $cmd = PHTV_GetRemotecontrolCommand("STANDBY");
             PHTV_SendCommand( $hash, "input/key", '"key": "' . $cmd . '"',
                 "off" );
@@ -441,49 +348,34 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "ambihue" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         return "Device does not seem to support Ambilight"
-          if (
-            (
-                   !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-            )
-            || (
-                (
-                    defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                    && $hash->{READINGS}{ambiLEDBottom}{VAL} == 0
-                )
-                && ( defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                    && $hash->{READINGS}{ambiLEDLeft}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                    && $hash->{READINGS}{ambiLEDRight}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                    && $hash->{READINGS}{ambiLEDTop}{VAL} == 0 )
-            )
-          );
+          if ( ReadingsVal( $name, "ambiLEDBottom", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDLeft",  0 ) == 0
+            && ReadingsVal( $name, "ambiLEDRight", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDTop",   0 ) == 0 );
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             if ( lc( $a[2] ) eq "on" ) {
                 return
                   "No configuration found. Please set ambiHue attributes first."
-                  if ( !defined( $attr{$name}{ambiHueLeft} )
-                    && !defined( $attr{$name}{ambiHueRight} )
-                    && !defined( $attr{$name}{ambiHueTop} )
-                    && !defined( $attr{$name}{ambiHueBottom} ) );
+                  unless ( AttrVal( $name, "ambiHueLeft", undef )
+                    || AttrVal( $name, "ambiHueRight",  undef )
+                    || AttrVal( $name, "ambiHueTop",    undef )
+                    || AttrVal( $name, "ambiHueBottom", undef ) );
 
                 # enable internal Ambilight color
                 PHTV_SendCommand( $hash, "ambilight/mode",
                     '"current": "internal"', "internal" )
-                  if ( $hash->{READINGS}{ambiMode}{VAL} ne "internal" );
+                  if ( ReadingsVal( $name, "ambiMode", "internal" ) ne
+                    "internal" );
 
                 PHTV_SendCommand( $hash, "ambilight/processed", undef, "init" );
             }
             elsif ( lc( $a[2] ) eq "off" ) {
                 readingsSingleUpdate( $hash, "ambiHue", $a[2], 1 )
-                  if ( $hash->{READINGS}{ambiHue}{VAL} ne $a[2] );
+                  if ( ReadingsVal( $name, "ambiHue", "off" ) ne $a[2] );
             }
             else {
                 return "Unknown argument given";
@@ -498,31 +390,15 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "ambimode" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         return "Device does not seem to support Ambilight"
-          if (
-            (
-                   !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-            )
-            || (
-                (
-                    defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                    && $hash->{READINGS}{ambiLEDBottom}{VAL} == 0
-                )
-                && ( defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                    && $hash->{READINGS}{ambiLEDLeft}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                    && $hash->{READINGS}{ambiLEDRight}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                    && $hash->{READINGS}{ambiLEDTop}{VAL} == 0 )
-            )
-          );
+          if ( ReadingsVal( $name, "ambiLEDBottom", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDLeft",  0 ) == 0
+            && ReadingsVal( $name, "ambiLEDRight", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDTop",   0 ) == 0 );
 
-        if ( $hash->{READINGS}{state}{VAL} ne "absent" ) {
+        if ( ReadingsVal( $name, "state", "absent" ) ne "absent" ) {
             if (   lc( $a[2] ) eq "internal"
                 || lc( $a[2] ) eq "manual"
                 || lc( $a[2] ) eq "expert" )
@@ -547,33 +423,17 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "ambipreset" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         return "Device does not seem to support Ambilight"
-          if (
-            (
-                   !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-            )
-            || (
-                (
-                    defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                    && $hash->{READINGS}{ambiLEDBottom}{VAL} == 0
-                )
-                && ( defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                    && $hash->{READINGS}{ambiLEDLeft}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                    && $hash->{READINGS}{ambiLEDRight}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                    && $hash->{READINGS}{ambiLEDTop}{VAL} == 0 )
-            )
-          );
+          if ( ReadingsVal( $name, "ambiLEDBottom", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDLeft",  0 ) == 0
+            && ReadingsVal( $name, "ambiLEDRight", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDTop",   0 ) == 0 );
 
-        if ( $hash->{READINGS}{state}{VAL} ne "absent" ) {
+        if ( ReadingsVal( $name, "state", "absent" ) ne "absent" ) {
 
-            if ( defined( $hash->{READINGS}{ambiLEDLayers}{VAL} ) ) {
+            if ( ReadingsVal( $name, "ambiLEDLayers", undef ) ) {
                 my $json;
 
                 # rainbow
@@ -584,9 +444,12 @@ sub PHTV_Set($@) {
                       if ( !PHTV_isinteger($layer) );
 
                     return "Layer $layer is not existing"
-                      if ( $layer > $hash->{READINGS}{ambiLEDLayers}{VAL} );
+                      if (
+                        $layer > ReadingsVal( $name, "ambiLEDLayers", undef ) );
 
-                    while ( $layer <= $hash->{READINGS}{ambiLEDLayers}{VAL} ) {
+                    while (
+                        $layer <= ReadingsVal( $name, "ambiLEDLayers", undef ) )
+                    {
                         my $rgb;
 
                         foreach my $side ( 'Left', 'Top', 'Right', 'Bottom' ) {
@@ -595,9 +458,7 @@ sub PHTV_Set($@) {
 
                             my $l = "layer" . $layer;
 
-                            if ( defined( $hash->{READINGS}{$ambiLED}{VAL} )
-                                && $hash->{READINGS}{$ambiLED}{VAL} > 0 )
-                            {
+                            if ( ReadingsVal( $name, $ambiLED, 0 ) > 0 ) {
                                 $rgb = { "r" => 255, "g" => 0, "b" => 0 }
                                   if ( $side eq "left"
                                     || $side eq "right" );
@@ -606,7 +467,7 @@ sub PHTV_Set($@) {
                                 if ( $side eq "left" || $side eq "top" ) {
                                     my $led = 0;
                                     while ( $led <=
-                                        $hash->{READINGS}{$ambiLED}{VAL} - 1 )
+                                        ReadingsVal( $name, $ambiLED, 0 ) - 1 )
                                     {
                                         $json->{$l}{$side}{$led}{r} =
                                           $rgb->{r};
@@ -646,7 +507,7 @@ sub PHTV_Set($@) {
                                     || $side eq "bottom" )
                                 {
                                     my $led =
-                                      $hash->{READINGS}{$ambiLED}{VAL} - 1;
+                                      ReadingsVal( $name, $ambiLED, 0 ) - 1;
                                     while ( $led >= 0 ) {
                                         $json->{$l}{$side}{$led}{r} =
                                           $rgb->{r};
@@ -691,7 +552,8 @@ sub PHTV_Set($@) {
                     # enable manual Ambilight color
                     PHTV_SendCommand( $hash, "ambilight/mode",
                         '"current": "manual"', "manual" )
-                      if ( $hash->{READINGS}{ambiMode}{VAL} ne "manual" );
+                      if ( ReadingsVal( $name, "ambiMode", "manual" ) ne
+                        "manual" );
                 }
 
                 # rainbow-pastel
@@ -702,7 +564,7 @@ sub PHTV_Set($@) {
                       if ( !PHTV_isinteger($layer) );
 
                     return "Layer $layer is not existing"
-                      if ( $layer > $hash->{READINGS}{ambiLEDLayers}{VAL} );
+                      if ( $layer > ReadingsVal( $name, "ambiLEDLayers", 0 ) );
 
                     PHTV_Set( $hash, $name, "ambiPreset", "rainbow" );
 
@@ -710,7 +572,8 @@ sub PHTV_Set($@) {
                     PHTV_SendCommand( $hash, "ambilight/mode",
                         '"current": "expert"',
                         "expert", 0.5 )
-                      if ( $hash->{READINGS}{ambiMode}{VAL} ne "expert" );
+                      if ( ReadingsVal( $name, "ambiMode", "expert" ) ne
+                        "expert" );
                 }
 
                 # unknown preset
@@ -734,31 +597,15 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "rgb" ) {
         Log3 $name, 4, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         return "Device does not seem to support Ambilight"
-          if (
-            (
-                   !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-            )
-            || (
-                (
-                    defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                    && $hash->{READINGS}{ambiLEDBottom}{VAL} == 0
-                )
-                && ( defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                    && $hash->{READINGS}{ambiLEDLeft}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                    && $hash->{READINGS}{ambiLEDRight}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                    && $hash->{READINGS}{ambiLEDTop}{VAL} == 0 )
-            )
-          );
+          if ( ReadingsVal( $name, "ambiLEDBottom", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDLeft",  0 ) == 0
+            && ReadingsVal( $name, "ambiLEDRight", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDTop",   0 ) == 0 );
 
-        if ( $hash->{READINGS}{state}{VAL} ne "absent" ) {
+        if ( ReadingsVal( $name, "state", "absent" ) ne "absent" ) {
 
             # set all LEDs at once
             if ( uc( $a[2] ) =~ /^(..)(..)(..)$/ ) {
@@ -785,28 +632,24 @@ sub PHTV_Set($@) {
                 # enable manual Ambilight color if RGB!=000000
                 PHTV_SendCommand( $hash, "ambilight/mode",
                     '"current": "manual"', "manual" )
-                  if ( $hash->{READINGS}{ambiMode}{VAL} eq "internal"
+                  if (
+                    ReadingsVal( $name, "ambiMode", "internal" ) eq "internal"
                     && $rgbsum > 0 );
 
                 # disable manual Ambilight color if RGB=000000
                 PHTV_SendCommand( $hash, "ambilight/mode",
                     '"current": "internal"', "internal" )
-                  if ( $hash->{READINGS}{ambiMode}{VAL} ne "internal"
+                  if (
+                    ReadingsVal( $name, "ambiMode", "internal" ) ne "internal"
                     && $rgbsum == 0 );
 
                 readingsBeginUpdate($hash);
-                readingsBulkUpdate( $hash, "pct", $pct )
-                  if ( $hash->{READINGS}{pct}{VAL} ne $pct );
-                readingsBulkUpdate( $hash, "level", $pct . " %" )
-                  if ( $hash->{READINGS}{level}{VAL} ne $pct . " %" );
-                readingsBulkUpdate( $hash, "hue", $hue )
-                  if ( $hash->{READINGS}{hue}{VAL} ne $hue );
-                readingsBulkUpdate( $hash, "sat", $sat )
-                  if ( $hash->{READINGS}{sat}{VAL} ne $sat );
-                readingsBulkUpdate( $hash, "bri", $bri )
-                  if ( $hash->{READINGS}{bri}{VAL} ne $bri );
-                readingsBulkUpdate( $hash, "rgb", uc( $a[2] ) )
-                  if ( $hash->{READINGS}{rgb}{VAL} ne uc( $a[2] ) );
+                readingsBulkUpdateIfChanged( $hash, "pct",   $pct );
+                readingsBulkUpdateIfChanged( $hash, "level", $pct . " %" );
+                readingsBulkUpdateIfChanged( $hash, "hue",   $hue );
+                readingsBulkUpdateIfChanged( $hash, "sat",   $sat );
+                readingsBulkUpdateIfChanged( $hash, "bri",   $bri );
+                readingsBulkUpdateIfChanged( $hash, "rgb",   uc( $a[2] ) );
                 readingsEndUpdate( $hash, 1 );
             }
 
@@ -892,7 +735,8 @@ sub PHTV_Set($@) {
                 # enable manual Ambilight color if RGB!=000000
                 PHTV_SendCommand( $hash, "ambilight/mode",
                     '"current": "manual"', "manual" )
-                  if ( $hash->{READINGS}{ambiMode}{VAL} eq "internal"
+                  if (
+                    ReadingsVal( $name, "ambiMode", "internal" ) eq "internal"
                     && $rgbsum > 0 );
             }
             else {
@@ -908,45 +752,27 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "hue" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         return "Device does not seem to support Ambilight"
-          if (
-            (
-                   !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-            )
-            || (
-                (
-                    defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                    && $hash->{READINGS}{ambiLEDBottom}{VAL} == 0
-                )
-                && ( defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                    && $hash->{READINGS}{ambiLEDLeft}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                    && $hash->{READINGS}{ambiLEDRight}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                    && $hash->{READINGS}{ambiLEDTop}{VAL} == 0 )
-            )
-          );
+          if ( ReadingsVal( $name, "ambiLEDBottom", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDLeft",  0 ) == 0
+            && ReadingsVal( $name, "ambiLEDRight", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDTop",   0 ) == 0 );
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
-            if ( defined( $hash->{READINGS}{rgb}{VAL} )
-                && $hash->{READINGS}{rgb}{VAL} ne "" )
-            {
-                my $_ = $a[2];
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
+            if ( ReadingsVal( $name, "rgb", "" ) ne "" ) {
                 my $hsb;
                 my $hex;
-                if ( m/^\d+$/ && $_ >= 0 && $_ <= 65535 ) {
-                    $hsb = PHTV_hex2hsb( $hash->{READINGS}{rgb}{VAL} );
-                    $hex = PHTV_hsb2hex( $_, $hsb->{s}, $hsb->{b} );
+                if ( $a[2] =~ m/^\d+$/ && $a[2] >= 0 && $a[2] <= 65535 ) {
+                    $hsb = PHTV_hex2hsb( ReadingsVal( $name, "rgb", "" ) );
+                    $hex = PHTV_hsb2hex( $a[2], $hsb->{s}, $hsb->{b} );
 
                     Log3 $name, 4,
                         "PHTV $name hue - old: "
-                      . $hash->{READINGS}{rgb}{VAL}
-                      . " new: $hex(h=$_ s="
+                      . ReadingsVal( $name, "rgb", "" )
+                      . " new: $hex(h="
+                      . $a[2] . " s="
                       . $hsb->{s} . " b="
                       . $hsb->{b};
 
@@ -967,47 +793,28 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "sat" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         return "Device does not seem to support Ambilight"
-          if (
-            (
-                   !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-            )
-            || (
-                (
-                    defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                    && $hash->{READINGS}{ambiLEDBottom}{VAL} == 0
-                )
-                && ( defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                    && $hash->{READINGS}{ambiLEDLeft}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                    && $hash->{READINGS}{ambiLEDRight}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                    && $hash->{READINGS}{ambiLEDTop}{VAL} == 0 )
-            )
-          );
+          if ( ReadingsVal( $name, "ambiLEDBottom", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDLeft",  0 ) == 0
+            && ReadingsVal( $name, "ambiLEDRight", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDTop",   0 ) == 0 );
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
-            if ( defined( $hash->{READINGS}{rgb}{VAL} )
-                && $hash->{READINGS}{rgb}{VAL} ne "" )
-            {
-                my $_ = $a[2];
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
+            if ( ReadingsVal( $name, "rgb", "" ) ne "" ) {
                 my $hsb;
                 my $hex;
-                if ( m/^\d+$/ && $_ >= 0 && $_ <= 255 ) {
-                    $hsb = PHTV_hex2hsb( $hash->{READINGS}{rgb}{VAL} );
-                    $hex = PHTV_hsb2hex( $hsb->{h}, $_, $hsb->{b} );
+                if ( $a[2] =~ m/^\d+$/ && $a[2] >= 0 && $a[2] <= 255 ) {
+                    $hsb = PHTV_hex2hsb( ReadingsVal( $name, "rgb", "" ) );
+                    $hex = PHTV_hsb2hex( $hsb->{h}, $a[2], $hsb->{b} );
 
                     Log3 $name, 4,
                         "PHTV $name sat - old: "
-                      . $hash->{READINGS}{rgb}{VAL}
+                      . ReadingsVal( $name, "rgb", "" )
                       . " new: $hex(h="
-                      . $hsb->{h}
-                      . " s=$_ b="
+                      . $hsb->{h} . " s="
+                      . $a[2] . " b="
                       . $hsb->{b};
 
                     return PHTV_Set( $hash, $name, "rgb", $hex );
@@ -1027,48 +834,29 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "bri" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         return "Device does not seem to support Ambilight"
-          if (
-            (
-                   !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-            )
-            || (
-                (
-                    defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                    && $hash->{READINGS}{ambiLEDBottom}{VAL} == 0
-                )
-                && ( defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                    && $hash->{READINGS}{ambiLEDLeft}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                    && $hash->{READINGS}{ambiLEDRight}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                    && $hash->{READINGS}{ambiLEDTop}{VAL} == 0 )
-            )
-          );
+          if ( ReadingsVal( $name, "ambiLEDBottom", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDLeft",  0 ) == 0
+            && ReadingsVal( $name, "ambiLEDRight", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDTop",   0 ) == 0 );
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
-            if ( defined( $hash->{READINGS}{rgb}{VAL} )
-                && $hash->{READINGS}{rgb}{VAL} ne "" )
-            {
-                my $_ = $a[2];
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
+            if ( ReadingsVal( $name, "rgb", "" ) ne "" ) {
                 my $hsb;
                 my $hex;
-                if ( m/^\d+$/ && $_ >= 0 && $_ <= 255 ) {
-                    $hsb = PHTV_hex2hsb( $hash->{READINGS}{rgb}{VAL} );
-                    $hex = PHTV_hsb2hex( $hsb->{h}, $hsb->{s}, $_ );
+                if ( $a[2] =~ m/^\d+$/ && $a[2] >= 0 && $a[2] <= 255 ) {
+                    $hsb = PHTV_hex2hsb( ReadingsVal( $name, "rgb", "" ) );
+                    $hex = PHTV_hsb2hex( $hsb->{h}, $hsb->{s}, $a[2] );
 
                     Log3 $name, 4,
                         "PHTV $name bri - old: "
-                      . $hash->{READINGS}{rgb}{VAL}
+                      . ReadingsVal( $name, "rgb", "" )
                       . " new: $hex(h="
                       . $hsb->{h} . " s="
-                      . $hsb->{s}
-                      . " b=$_)";
+                      . $hsb->{s} . " b="
+                      . $a[2] . ")";
 
                     return PHTV_Set( $hash, $name, "rgb", $hex );
                 }
@@ -1087,46 +875,27 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "pct" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         return "Device does not seem to support Ambilight"
-          if (
-            (
-                   !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                && !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-            )
-            || (
-                (
-                    defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                    && $hash->{READINGS}{ambiLEDBottom}{VAL} == 0
-                )
-                && ( defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                    && $hash->{READINGS}{ambiLEDLeft}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                    && $hash->{READINGS}{ambiLEDRight}{VAL} == 0 )
-                && ( defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                    && $hash->{READINGS}{ambiLEDTop}{VAL} == 0 )
-            )
-          );
+          if ( ReadingsVal( $name, "ambiLEDBottom", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDLeft",  0 ) == 0
+            && ReadingsVal( $name, "ambiLEDRight", 0 ) == 0
+            && ReadingsVal( $name, "ambiLEDTop",   0 ) == 0 );
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
-            if ( defined( $hash->{READINGS}{rgb}{VAL} )
-                && $hash->{READINGS}{rgb}{VAL} ne "" )
-            {
-                my $_ = $a[2];
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
+            if ( ReadingsVal( $name, "rgb", "" ) ne "" ) {
                 my $hsb;
                 my $bri;
                 my $hex;
-                if ( m/^\d+$/ && $_ >= 0 && $_ <= 100 ) {
-                    $hsb = PHTV_hex2hsb( $hash->{READINGS}{rgb}{VAL} );
-                    $bri = PHTV_pct2bri($_);
+                if ( $a[2] =~ m/^\d+$/ && $a[2] >= 0 && $a[2] <= 100 ) {
+                    $hsb = PHTV_hex2hsb( ReadingsVal( $name, "rgb", "" ) );
+                    $bri = PHTV_pct2bri( $a[2] );
                     $hex = PHTV_hsb2hex( $hsb->{h}, $hsb->{s}, $bri );
 
                     Log3 $name, 4,
                         "PHTV $name pct - old: "
-                      . $hash->{READINGS}{rgb}{VAL}
+                      . ReadingsVal( $name, "rgb", "" )
                       . " new: $hex(h="
                       . $hsb->{h} . " s="
                       . $hsb->{s}
@@ -1149,12 +918,11 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "volume" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         my $vol;
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
-            my $_ = $a[2];
-            if ( m/^\d+$/ && $_ >= 1 && $_ <= 100 ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
+            if ( $a[2] =~ m/^\d+$/ && $a[2] >= 1 && $a[2] <= 100 ) {
                 if (   defined( $hash->{helper}{audio}{min} )
                     && defined( $hash->{helper}{audio}{max} ) )
                 {
@@ -1173,11 +941,9 @@ sub PHTV_Set($@) {
             PHTV_SendCommand( $hash, "audio/volume", $cmd );
 
             readingsBeginUpdate($hash);
-            readingsBulkUpdate( $hash, "volume", $a[2], 1 )
-              if ( $hash->{READINGS}{volume}{VAL} ne $a[2] );
-            readingsBulkUpdate( $hash, "volumeStraight", $vol, 1 )
-              if ( defined($vol)
-                && $hash->{READINGS}{volumeStraight}{VAL} ne $vol );
+            readingsBulkUpdateIfChanged( $hash, "volume",         $a[2] );
+            readingsBulkUpdateIfChanged( $hash, "volumeStraight", $vol )
+              if ( defined($vol) );
             readingsEndUpdate( $hash, 1 );
         }
         else {
@@ -1189,14 +955,13 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "volumestraight" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        return "No argument given" if ( !defined( $a[2] ) );
+        return "No argument given" unless ( defined( $a[2] ) );
 
         my $vol;
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
-            my $_ = $a[2];
-            if (   m/^\d+$/
-                && $_ >= $hash->{helper}{audio}{min}
-                && $_ <= $hash->{helper}{audio}{max} )
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
+            if (   $a[2] =~ m/^\d+$/
+                && $a[2] >= $hash->{helper}{audio}{min}
+                && $a[2] <= $hash->{helper}{audio}{max} )
             {
                 $vol =
                   int( ( $a[2] / $hash->{helper}{audio}{max} * 100 ) + 0.5 );
@@ -1211,10 +976,8 @@ sub PHTV_Set($@) {
             PHTV_SendCommand( $hash, "audio/volume", $cmd );
 
             readingsBeginUpdate($hash);
-            readingsBulkUpdate( $hash, "volume", $vol, 1 )
-              if ( $hash->{READINGS}{volume}{VAL} ne $vol );
-            readingsBulkUpdate( $hash, "volumeStraight", $a[2], 1 )
-              if ( $hash->{READINGS}{volumeStraight}{VAL} ne $a[2] );
+            readingsBulkUpdateIfChanged( $hash, "volume",         $vol );
+            readingsBulkUpdateIfChanged( $hash, "volumeStraight", $a[2] );
             readingsEndUpdate( $hash, 1 );
         }
         else {
@@ -1226,7 +989,7 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) =~ /^(volumeup|volumedown)$/ ) {
         Log3 $name, 3, "PHTV set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             if ( lc( $a[1] ) eq "volumeup" ) {
                 $cmd = PHTV_GetRemotecontrolCommand("VOLUP");
             }
@@ -1250,25 +1013,25 @@ sub PHTV_Set($@) {
             Log3 $name, 3, "PHTV set $name " . $a[1];
         }
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             if ( !defined( $a[2] ) || $a[2] eq "toggle" ) {
-                if ( $hash->{READINGS}{mute}{VAL} eq "off" ) {
+                if ( ReadingsVal( $name, "mute", "" ) eq "off" ) {
                     $cmd = '"muted": true';
                     readingsSingleUpdate( $hash, "mute", "on", 1 );
                 }
-                elsif ( $hash->{READINGS}{mute}{VAL} eq "on" ) {
+                elsif ( ReadingsVal( $name, "mute", "" ) eq "on" ) {
                     $cmd = '"muted": false';
                     readingsSingleUpdate( $hash, "mute", "off", 1 );
                 }
             }
             elsif ( lc( $a[2] ) eq "off" ) {
-                if ( $hash->{READINGS}{mute}{VAL} ne "off" ) {
+                if ( ReadingsVal( $name, "mute", "" ) ne "off" ) {
                     $cmd = '"muted": false';
                     readingsSingleUpdate( $hash, "mute", "off", 1 );
                 }
             }
             elsif ( lc( $a[2] ) eq "on" ) {
-                if ( $hash->{READINGS}{mute}{VAL} ne "on" ) {
+                if ( ReadingsVal( $name, "mute", "" ) ne "on" ) {
                     $cmd = '"muted": true';
                     readingsSingleUpdate( $hash, "mute", "on", 1 );
                 }
@@ -1288,8 +1051,8 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "remotecontrol" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
-        if ( $hash->{READINGS}{state}{VAL} ne "absent" ) {
-            if ( !defined( $a[2] ) ) {
+        if ( ReadingsVal( $name, "state", "absent" ) ne "absent" ) {
+            unless ( defined( $a[2] ) ) {
                 my $commandKeys = "";
                 for (
                     sort keys %{
@@ -1343,8 +1106,8 @@ sub PHTV_Set($@) {
     # channel
     elsif ( lc( $a[1] ) eq "channel" ) {
         if (   defined( $a[2] )
-            && $hash->{READINGS}{presence}{VAL} eq "present"
-            && $hash->{READINGS}{state}{VAL} ne "on" )
+            && ReadingsVal( $name, "presence", "absent" ) eq "present"
+            && ReadingsVal( $name, "state",    "off" ) ne "on" )
         {
             Log3 $name, 4, "PHTV $name: indirect switching request to ON";
             PHTV_Set( $hash, $name, "on" );
@@ -1354,24 +1117,31 @@ sub PHTV_Set($@) {
 
         return
           "No argument given, choose one of channel presetNumber channelName "
-          if ( !defined( $a[2] ) );
+          unless ( defined( $a[2] ) );
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
-            my $_ = $a[2];
-            if ( defined( $hash->{helper}{device}{channelID}{$_}{id} ) ) {
-                $cmd = $hash->{helper}{device}{channelID}{$_}{id};
-
-                if ( $hash->{READINGS}{channel}{VAL} ne $_ ) {
-                    readingsSingleUpdate( $hash, "channel", $_, 1 );
-                }
-            }
-            elsif ( /^(\d+):(.*):$/
-                && defined( $hash->{helper}{device}{channelPreset}{$_}{id} ) )
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
+            my $channelName = $a[2];
+            if (
+                defined( $hash->{helper}{device}{channelID}{$channelName}{id} )
+              )
             {
-                $cmd = $hash->{helper}{device}{channelPreset}{$_}{id};
+                $cmd = $hash->{helper}{device}{channelID}{$channelName}{id};
+
+                readingsSingleUpdate( $hash, "channel", $channelName, 1 )
+                  if ( ReadingsVal( $name, "channel", "" ) ne $channelName );
+            }
+            elsif (
+                $channelName =~ /^(\d+):(.*):$/
+                && defined(
+                    $hash->{helper}{device}{channelPreset}{$channelName}{id}
+                )
+              )
+            {
+                $cmd =
+                  $hash->{helper}{device}{channelPreset}{$channelName}{id};
             }
             else {
-                return "Argument " . $_
+                return "Argument " . $channelName
                   . " is not a valid integer between 0 and 9999 or servicereference is invalid";
             }
 
@@ -1388,7 +1158,7 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) =~ /^(channelup|channeldown)$/ ) {
         Log3 $name, 3, "PHTV set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             if ( lc( $a[1] ) eq "channelup" ) {
                 $cmd = PHTV_GetRemotecontrolCommand("CHANUP");
             }
@@ -1406,14 +1176,14 @@ sub PHTV_Set($@) {
     # input
     elsif ( lc( $a[1] ) eq "input" ) {
         if (   defined( $a[2] )
-            && $hash->{READINGS}{presence}{VAL} eq "present"
-            && $hash->{READINGS}{state}{VAL} ne "on" )
+            && ReadingsVal( $name, "presence", "absent" ) eq "present"
+            && ReadingsVal( $name, "state",    "off" ) ne "on" )
         {
             Log3 $name, 4, "PHTV $name: indirect switching request to ON";
             PHTV_Set( $hash, $name, "on" );
         }
 
-        return "No 2nd argument given" if ( !defined( $a[2] ) );
+        return "No 2nd argument given" unless ( defined( $a[2] ) );
 
         Log3 $name, 3, "PHTV set $name " . $a[1] . " " . $a[2];
 
@@ -1433,13 +1203,12 @@ sub PHTV_Set($@) {
             return "Unknown source input '" . $a[2] . "' on that device.";
         }
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             PHTV_SendCommand( $hash, "sources/current",
                 '"id": "' . $input_id . '"', $input_id );
 
-            if ( $hash->{READINGS}{input}{VAL} ne $a[2] ) {
-                readingsSingleUpdate( $hash, "input", $a[2], 1 );
-            }
+            readingsSingleUpdate( $hash, "input", $a[2], 1 )
+              if ( ReadingsVal( $name, "input", "" ) ne $a[2] );
         }
         else {
             return "Device needs to be reachable to switch input.";
@@ -1450,7 +1219,7 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) =~ /^(play|pause)$/ ) {
         Log3 $name, 3, "PHTV set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             $cmd = PHTV_GetRemotecontrolCommand("PLAYPAUSE");
             PHTV_SendCommand( $hash, "input/key", '"key": "' . $cmd . '"' );
         }
@@ -1463,7 +1232,7 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "stop" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             $cmd = PHTV_GetRemotecontrolCommand("STOP");
             PHTV_SendCommand( $hash, "input/key", '"key": "' . $cmd . '"' );
         }
@@ -1476,7 +1245,7 @@ sub PHTV_Set($@) {
     elsif ( lc( $a[1] ) eq "record" ) {
         Log3 $name, 3, "PHTV set $name " . $a[1];
 
-        if ( $hash->{READINGS}{state}{VAL} eq "on" ) {
+        if ( ReadingsVal( $name, "state", "off" ) eq "on" ) {
             $cmd = PHTV_GetRemotecontrolCommand("RECORD");
             PHTV_SendCommand( $hash, "input/key", '"key": "' . $cmd . '"' );
         }
@@ -1493,64 +1262,205 @@ sub PHTV_Set($@) {
     return;
 }
 
-###################################
-sub PHTV_Define($$) {
-    my ( $hash, $def ) = @_;
-    my @a = split( "[ \t][ \t]*", $def );
+sub PHTV_Get($@) {
+    my ( $hash, @a ) = @_;
     my $name = $hash->{NAME};
+    my $state = ReadingsVal( $name, "state", "Initialized" );
+    my $what;
 
-    Log3 $name, 5, "PHTV $name: called function PHTV_Define()";
+    Log3 $name, 5, "PHTV $name: called function PHTV_Get()";
 
-    if ( int(@a) < 3 ) {
-        my $msg =
-          "Wrong syntax: define <name> PHTV <ip-or-hostname> [<poll-interval>]";
-        Log3 $name, 4, $msg;
-        return $msg;
+    return "argument is missing" if ( int(@a) < 2 );
+    return if ( $state =~ /^(pairing.*|initialized)$/i );
+
+    $what = $a[1];
+
+    if ( $what =~ /^(power|input|volume|mute|rgb)$/ ) {
+        return ReadingsVal( $name, $what, "no such reading: $what" );
+    }
+    else {
+        return
+"Unknown argument $what, choose one of power:noArg input:noArg volume:noArg mute:noArg rgb:noArg ";
+    }
+}
+
+sub PHTV_Notify($$) {
+    my ( $hash, $dev_hash ) = @_;
+    my $name = $hash->{NAME};
+    my $dev  = $dev_hash->{NAME};
+    my $TYPE = $hash->{TYPE};
+
+    return
+      if (
+           !$init_done
+        or IsDisabled($name)
+        or IsDisabled($dev)
+        or $name eq $dev    # do not process own events
+        or (    !$modules{ $defs{$dev}{TYPE} }{$TYPE}
+            and !$defs{$dev}{$TYPE}
+            and $dev ne "global" )
+      );
+
+    my $events = deviceEvents( $dev_hash, 1 );
+    return unless ($events);
+
+    Log3 $name, 5, "$TYPE: Entering PHTV_Notify() for $dev";
+
+    # global events
+    if ( $dev eq "global" ) {
+        foreach my $event ( @{$events} ) {
+            next unless ( defined($event) );
+
+            # initialize
+            if ( $event =~ /^(INITIALIZED|MODIFIED)(?:\s+(.+))?$/ ) {
+                PHTV_GetStatus($hash)
+                  if ( $1 eq "INITIALIZED" || $2 && $2 eq $name );
+            }
+        }
+
+        return;
     }
 
-    $hash->{TYPE} = "PHTV";
+    return undef;
+}
 
-    my $address = $a[2];
-    $hash->{helper}{ADDRESS} = $address;
+# module Fn ####################################################################
+sub PHTV_GetStatus($;$) {
+    my ( $hash, $update ) = @_;
+    my $name       = $hash->{NAME};
+    my $interval   = $hash->{INTERVAL};
+    my $presence   = ReadingsVal( $name, "presence", "absent" );
+    my $sequential = AttrVal( $name, "sequentialQuery", 0 );
+    my $querySent  = 0;
 
-    # use interval of 45sec if not defined
-    my $interval = $a[3] || 45;
-    $hash->{INTERVAL} = $interval;
+    Log3 $name, 5, "PHTV $name: called function PHTV_GetStatus()";
 
-    $hash->{helper}{PORT} = 1925;
+    $interval = $interval * 1.6
+      if ( ReadingsVal( $name, "ambiHue", "off" ) eq "on" );
 
-    readingsSingleUpdate( $hash, "ambiHue", "off", 0 )
-      if ( defined( $hash->{READINGS}{ambiHue}{VAL} )
-        && $hash->{READINGS}{ambiHue}{VAL} ne "off" );
-
-    $hash->{model} = $hash->{READINGS}{model}{VAL}
-      if ( defined( $hash->{READINGS}{model}{VAL} ) );
-
-    $hash->{swversion} = $hash->{READINGS}{softwareversion}{VAL}
-      if ( defined( $hash->{READINGS}{softwareversion}{VAL} ) );
-
-    # set default settings on first define
-    if ($init_done) {
-        $attr{$name}{webCmd} = 'volume:input:rgb';
-        $attr{$name}{devStateIcon} =
-          'on:rc_GREEN:off off:rc_YELLOW:on absent:rc_STOP:on';
-        $attr{$name}{icon} = 'it_television';
-    }
-
-    # start the status update timer
     RemoveInternalTimer($hash);
-    InternalTimer( gettimeofday() + 2, "PHTV_GetStatus", $hash, 1 );
+    InternalTimer( gettimeofday() + $interval, "PHTV_GetStatus", $hash, 0 );
+
+    return
+      if ( IsDisabled($name) );
+
+    # try to fetch only some information to check device availability
+    unless ($update) {
+        PHTV_SendCommand( $hash, "audio/volume" ) if ( $presence eq "present" );
+        PHTV_SendCommand( $hash, "system" )       if ( $presence eq "absent" );
+
+       # in case we should query the device gently, mark we already sent a query
+        $querySent = 1 if $sequential;
+        $hash->{helper}{sequentialQueryCounter} = 1 if $sequential;
+    }
+
+    # fetch other info if device is on
+    if ( !$querySent
+        && ( ReadingsVal( $name, "state", "off" ) eq "on" || $update ) )
+    {
+
+        # Read device info every 15 minutes only
+        if (
+              !$querySent
+            && $presence eq "present"
+            && (
+                !defined( $hash->{helper}{lastFullUpdate} )
+                || (  !$update
+                    && $hash->{helper}{lastFullUpdate} + 900 le time() )
+            )
+          )
+        {
+            PHTV_SendCommand( $hash, "system" );
+            PHTV_SendCommand( $hash, "ambilight/topology" );
+            $querySent = 1 if $sequential;
+            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
+
+            # Update state
+            $hash->{helper}{lastFullUpdate} = time();
+        }
+
+        # read audio volume
+        if ( !$querySent && $update && $presence eq "absent" ) {
+            PHTV_SendCommand( $hash, "audio/volume" );
+            $querySent = 1 if $sequential;
+            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
+        }
+
+        # read ambilight details
+        if ( !$querySent ) {
+
+            # read ambilight mode
+            PHTV_SendCommand( $hash, "ambilight/mode" );
+            $querySent = 1 if $sequential;
+            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
+
+            # read ambilight RGB value
+            PHTV_SendCommand( $hash, "ambilight/cached" )
+              if ( ReadingsVal( $name, "ambiMode", "internal" ) ne "internal" );
+        }
+
+        # read all sources if not existing
+        if (
+            !$querySent
+            && (   !defined( $hash->{helper}{device}{sourceName} )
+                || !defined( $hash->{helper}{device}{sourceID} ) )
+          )
+        {
+            PHTV_SendCommand( $hash, "sources" );
+            $querySent = 1 if $sequential;
+            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
+        }
+
+        # otherwise read current source
+        elsif ( !$querySent ) {
+            PHTV_SendCommand( $hash, "sources/current" );
+            $querySent = 1 if $sequential;
+            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
+        }
+
+        # read all channels if not existing
+        if (
+            !$querySent
+            && (   !defined( $hash->{helper}{device}{channelName} )
+                || !defined( $hash->{helper}{device}{channelID} ) )
+          )
+        {
+            PHTV_SendCommand( $hash, "channels" );
+            $querySent = 1 if $sequential;
+            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
+        }
+
+        # otherwise read current channel
+        elsif ( !$querySent ) {
+            PHTV_SendCommand( $hash, "channels/current" );
+            $querySent = 1 if $sequential;
+            $hash->{helper}{sequentialQueryCounter}++ if $sequential;
+        }
+
+    }
+
+    # Input alias handling
+    #
+    if ( AttrVal( $name, "inputs", "" ) ne "" ) {
+        my @inputs = split( ':', AttrVal( $name, "inputs", ":" ) );
+
+        if (@inputs) {
+            foreach (@inputs) {
+                if (m/[^,\s]+(,[^,\s]+)+/) {
+                    my @input_names = split( ',', $_ );
+                    $input_names[1] =~ s/\s/_/g;
+                    $hash->{helper}{device}{inputAliases}{ $input_names[0] } =
+                      $input_names[1];
+                    $hash->{helper}{device}{inputNames}{ $input_names[1] } =
+                      $input_names[0];
+                }
+            }
+        }
+    }
 
     return;
 }
 
-############################################################################################################
-#
-#   Begin of helper functions
-#
-############################################################################################################
-
-###################################
 sub PHTV_SendCommandDelayed($) {
     my ($par) = @_;
 
@@ -1563,17 +1473,13 @@ sub PHTV_SendCommandDelayed($) {
         $par->{type} );
 }
 
-###################################
 sub PHTV_SendCommand($$;$$$) {
     my ( $hash, $service, $cmd, $type, $delay ) = @_;
-    my $name    = $hash->{NAME};
-    my $address = $hash->{helper}{ADDRESS};
-    my $port    = $hash->{helper}{PORT};
-    my $protoV  = (
-        defined( $attr{$name}{jsversion} )
-        ? $attr{$name}{jsversion}
-        : "1"
-    );
+    my $name      = $hash->{NAME};
+    my $address   = $hash->{helper}{ADDRESS};
+    my $protoV    = AttrVal( $name, "jsversion", 1 );
+    my $device_id = AttrVal( $name, "device_id", undef );
+    my $auth_key  = AttrVal( $name, "auth_key", undef );
     my $timestamp = gettimeofday();
     my $data;
     my $timeout;
@@ -1602,6 +1508,7 @@ sub PHTV_SendCommand($$;$$$) {
     my $URL;
     my $response;
     my $return;
+    my $auth;
 
     if ( defined( $hash->{helper}{supportedAPIcmds}{$service} )
         && $hash->{helper}{supportedAPIcmds}{$service} == 0 )
@@ -1618,16 +1525,27 @@ sub PHTV_SendCommand($$;$$$) {
         Log3 $name, 4, "PHTV $name: REQ $service/" . urlDecode($data);
     }
 
-    $URL = "http://" . $address . ":" . $port . "/" . $protoV . "/" . $service;
+    # add missing port if required
+    if ( $address !~ m/^.+:[0-9]+$/ ) {
+        $address .= ":1925" if ( $protoV <= 5 );
+        $address .= ":1926" if ( $protoV > 5 );
+    }
 
-    if ( defined( $attr{$name}{timeout} )
-        && $attr{$name}{timeout} =~ /^\d+$/ )
-    {
-        $timeout = $attr{$name}{timeout};
-    }
-    else {
-        $timeout = 7;
-    }
+    # special authentication handling during pairing
+    $auth_key = undef if ( $service =~ /^(pair\/.+|system)/i );
+    $auth_key = $hash->{pairing}{auth_key}
+      if ( $service eq "pair/grant"
+        && defined( $hash->{pairing} )
+        && defined( $hash->{pairing}{auth_key} ) );
+    $auth = "$device_id:$auth_key" if ( $device_id && $auth_key );
+
+    $URL = "http://";
+    $URL = "https://" if ( $protoV > 5 || $address =~ m/^.+:1926$/ );
+    $URL .= "$auth@" if ($auth);
+    $URL .= $address . "/" . $protoV . "/" . $service;
+
+    $timeout = AttrVal( $name, "httpTimeout", AttrVal( $name, "timeout", 7 ) );
+    $timeout = 7 unless ( $timeout =~ /^\d+$/ );
 
     # send request via HTTP-POST method
     Log3 $name, 5, "PHTV $name: GET " . $URL . " (" . urlDecode($data) . ")"
@@ -1635,83 +1553,233 @@ sub PHTV_SendCommand($$;$$$) {
     Log3 $name, 5, "PHTV $name: GET " . $URL . " (#HASH)"
       if ( defined($data) && ref($cmd) eq "HASH" );
     Log3 $name, 5, "PHTV $name: GET " . $URL
-      if ( !defined($data) );
+      unless ( defined($data) );
 
     HttpUtils_NonblockingGet(
         {
-            url        => $URL,
-            timeout    => $timeout,
-            noshutdown => 1,
-            data       => $data,
-            hash       => $hash,
-            service    => $service,
-            cmd        => $cmd,
-            type       => $type,
-            timestamp  => $timestamp,
-            callback   => \&PHTV_ReceiveCommand,
+            url         => $URL,
+            hideauth    => 1,
+            auth        => $auth,
+            digest      => 1,
+            timeout     => $timeout,
+            data        => $data,
+            hash        => $hash,
+            service     => $service,
+            cmd         => $cmd,
+            type        => $type,
+            timestamp   => $timestamp,
+            httpversion => "1.1",
+            callback    => \&PHTV_ReceiveCommand,
+            loglevel    => AttrVal( $name, "httpLoglevel", 4 ),
+            header      => {
+                Agent            => 'FHEM-PHTV/1.0.0',
+                'User-Agent'     => 'FHEM-PHTV/1.0.0',
+                Accept           => 'application/json;charset=UTF-8',
+                'Accept-Charset' => 'UTF-8',
+            },
+            sslargs => {
+                SSL_verify_mode => 0,
+            },
         }
     );
 
     return;
 }
 
-###################################
 sub PHTV_ReceiveCommand($$$) {
     my ( $param, $err, $data ) = @_;
     my $hash       = $param->{hash};
     my $name       = $hash->{NAME};
     my $service    = $param->{service};
     my $cmd        = $param->{cmd};
-    my $sequential = ( defined( $attr{$name}{sequentialQuery} )
-          && $attr{$name}{sequentialQuery} == 1 ) ? 1 : 0;
+    my $code       = $param->{code} ? $param->{code} : 0;
+    my $sequential = AttrVal( $name, "sequentialQuery", 0 );
+    my $protoV     = AttrVal( $name, "jsversion", 1 );
+    my $device_id  = AttrVal( $name, "device_id", undef );
 
-    my $state =
-      ( $hash->{READINGS}{state}{VAL} )
-      ? $hash->{READINGS}{state}{VAL}
-      : "";
-    my $newstate;
-    my $type = ( $param->{type} ) ? $param->{type} : "";
+    my $state    = ReadingsVal( $name, "state", "" );
+    my $newstate = "absent";
+    my $type     = $param->{type} ? $param->{type} : "";
     my $return;
 
     Log3 $name, 5, "PHTV $name: called function PHTV_ReceiveCommand()";
 
     readingsBeginUpdate($hash);
 
-    # device not reachable
-    if ($err) {
+    # pairing request reply
+    if ( $service eq "pair/request" ) {
+        my $errtype = "TIMEOUT";
+        $errtype = "ERROR/$code" if ($code);
+        my $log;
+        my $loglevel = 4;
+
+        if ( $data && $data =~ m/^\s*([{\[][\s\S]+[}\]])\s*$/i ) {
+            $return = decode_json( Encode::encode_utf8($1) ) if ($1);
+
+            if (   ref($return) eq "HASH"
+                && $return->{timestamp}
+                && $return->{auth_key}
+                && $return->{timeout}
+                && $return->{error_id}
+                && $return->{error_id} =~ m/^SUCCESS$/i )
+            {
+                $log      = "$code - Pairing enabled";
+                $loglevel = 3;
+                readingsBulkUpdate( $hash, "state", "pairing" );
+
+                $hash->{PAIRING_BEGIN} = time();
+                $hash->{PAIRING_END} =
+                  $hash->{PAIRING_BEGIN} + $return->{timeout};
+                $hash->{pairing}{auth_key}  = $return->{auth_key};
+                $hash->{pairing}{timeout}   = $return->{timeout};
+                $hash->{pairing}{timestamp} = $return->{timestamp};
+            }
+            else {
+                $log = "$errtype - Pairing request failed";
+                $log .= "\n   $err"        if ( $code && $err );
+                $log .= "\n   Data:\n$err" if ( $code && $data );
+                readingsBulkUpdate( $hash, "state", "pairing request failed" );
+            }
+        }
+        else {
+            $log = "$errtype - Pairing not supported";
+            $log .= "\n   $err"        if ( $code && $err );
+            $log .= "\n   Data:\n$err" if ( $code && $data );
+            readingsBulkUpdate( $hash, "state", "pairing not supported" );
+        }
+
+        Log3 $name, $loglevel, "PHTV $name: $log";
+
+        readingsEndUpdate( $hash, 1 );
+        return;
+    }
+
+    # pairing grant reply
+    elsif ( $service eq "pair/grant" ) {
+        my $errtype = "TIMEOUT";
+        $errtype = "ERROR/$code" if ($code);
+        my $log;
+        my $loglevel = 4;
+        my $interval = 10;
+
+        if ( $data && $data =~ m/^\s*([{\[][\s\S]+[}\]])\s*$/i ) {
+            $return = decode_json( Encode::encode_utf8($1) ) if ($1);
+
+            if (   ref($return) eq "HASH"
+                && $return->{error_id}
+                && $return->{error_id} =~ m/^SUCCESS$/i )
+            {
+                $log      = "$code - Pairing successful";
+                $loglevel = 3;
+                readingsBulkUpdate( $hash, "state", "paired" );
+                fhem 'attr '
+                  . $name
+                  . ' auth_key '
+                  . $hash->{pairing}{auth_key};
+                $interval = 3;
+            }
+            else {
+                $log = "$errtype - Pairing failed";
+                $log .= "\n   $err"        if ( $code && $err );
+                $log .= "\n   Data:\n$err" if ( $code && $data );
+                readingsBulkUpdate( $hash, "state", "pairing failed" );
+            }
+        }
+        else {
+            $log = "$errtype - Pairing grant not supported";
+            $log .= "\n   $err"        if ( $code && $err );
+            $log .= "\n   Data:\n$err" if ( $code && $data );
+            readingsBulkUpdate( $hash, "state", "pairing grant not supported" );
+        }
+
+        Log3 $name, $loglevel, "PHTV $name: $log";
+
+        delete $hash->{pairing};
+        delete $hash->{PAIRING_BEGIN};
+        delete $hash->{PAIRING_END};
+        RemoveInternalTimer($hash);
+        InternalTimer( gettimeofday() + $interval, "PHTV_GetStatus", $hash, 0 );
+
+        readingsEndUpdate( $hash, 1 );
+        return;
+    }
+
+    # authorization/pairing needed
+    elsif ( $code == 401 ) {
+        if (   defined( $hash->{pairing} )
+            && defined( $hash->{PAIRING_END} )
+            && $hash->{PAIRING_END} < time() )
+        {
+            readingsEndUpdate( $hash, 1 );
+            return;
+        }
+
+        readingsBulkUpdateIfChanged( $hash, "presence", "present" );
+        readingsBulkUpdateIfChanged( $hash, "power",    "on" );
+        readingsBulkUpdate( $hash, "state", "pairing-request" );
+
+        fhem 'attr ' . $name . ' jsversion 6'
+          unless ( $protoV > 1 );
+
+        unless ($device_id) {
+            $device_id = PHTV_createDeviceId();
+            fhem 'attr ' . $name . ' device_id ' . $device_id;
+        }
+
+        delete $hash->{pairing}       if ( defined( $hash->{pairing} ) );
+        delete $hash->{PAIRING_BEGIN} if ( defined( $hash->{PAIRING_BEGIN} ) );
+        delete $hash->{PAIRING_END}   if ( defined( $hash->{PAIRING_END} ) );
+        $hash->{pairing}{request} = {
+            device => {
+                device_name => 'fhem',
+                device_os   => 'Android',
+                app_name    => 'FHEM PHTV',
+                type        => 'native',
+                app_id      => 'org.fhem.PHTV',
+                id          => $device_id,
+            },
+            scope => [ "read", "write", "control" ],
+        };
+        PHTV_SendCommand( $hash, "pair/request", $hash->{pairing}{request} );
+
+        readingsEndUpdate( $hash, 1 );
+        return;
+    }
+
+    # device error
+    elsif ( $err && ( !$code || $code ne "200" ) ) {
+        my $errtype = "TIMEOUT";
+        $errtype = "ERROR/$code" if ($code);
 
         if ( !defined($cmd) || ref($cmd) eq "HASH" || $cmd eq "" ) {
-            Log3 $name, 4, "PHTV $name: RCV TIMEOUT $service";
+            Log3 $name, 4, "PHTV $name: RCV $errtype $service" . "\n   $err";
         }
         else {
             Log3 $name, 4,
-              "PHTV $name: RCV TIMEOUT $service/" . urlDecode($cmd);
+                "PHTV $name: RCV $errtype $service/"
+              . urlDecode($cmd)
+              . "\n   $err";
         }
 
-        # device is not reachable or
-        # does not even support master command for audio
-        if ( $service eq "audio/volume"
+        # device is not reachable
+        if (   $service eq "audio/volume"
+            || $service eq "system"
             || ( $service eq "input/key" && $type eq "off" ) )
         {
-            $newstate = "absent";
-
-            if (
-                ( !defined( $hash->{helper}{AVAILABLE} ) )
-                or ( defined( $hash->{helper}{AVAILABLE} )
-                    and $hash->{helper}{AVAILABLE} eq 1 )
-              )
-            {
-                $hash->{helper}{AVAILABLE} = 0;
-                readingsBulkUpdate( $hash, "presence", "absent" );
-            }
+            $newstate = "off" if ($code);
+            readingsBulkUpdateIfChanged( $hash, "presence", "present" )
+              if ($code);
+            readingsBulkUpdateIfChanged( $hash, "presence", "absent" )
+              unless ($code);
         }
 
         # device behaves naughty
-        else {
+        elsif ( $code || ( $data && $data ne "" ) ) {
             $newstate = "on";
+            readingsBulkUpdateIfChanged( $hash, "presence", "present" );
 
             # because it does not seem to support the command
-            if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} ) ) {
+            unless ( defined( $hash->{helper}{supportedAPIcmds}{$service} ) ) {
                 $hash->{helper}{supportedAPIcmds}{$service} = 0;
                 Log3 $name, 4,
                     "PHTV $name: API command '"
@@ -1719,19 +1787,12 @@ sub PHTV_ReceiveCommand($$$) {
                   . "' not supported by device.";
             }
         }
+
     }
 
     # data received
     elsif ($data) {
-        if (
-            ( !defined( $hash->{helper}{AVAILABLE} ) )
-            or ( defined( $hash->{helper}{AVAILABLE} )
-                and $hash->{helper}{AVAILABLE} eq 0 )
-          )
-        {
-            $hash->{helper}{AVAILABLE} = 1;
-            readingsBulkUpdate( $hash, "presence", "present" );
-        }
+        readingsBulkUpdateIfChanged( $hash, "presence", "present" );
 
         if ( !defined($cmd) || ref($cmd) eq "HASH" | $cmd eq "" ) {
             Log3 $name, 4, "PHTV $name: RCV $service";
@@ -1740,72 +1801,61 @@ sub PHTV_ReceiveCommand($$$) {
             Log3 $name, 4, "PHTV $name: RCV $service/" . urlDecode($cmd);
         }
 
-        if ( $data ne "" ) {
-            if ( $data =~ /^{/ || $data =~ /^\[/ ) {
-                if ( !defined($cmd) || ref($cmd) eq "HASH" || $cmd eq "" ) {
-                    Log3 $name, 5, "PHTV $name: RES $service\n" . $data;
-                }
-                else {
-                    Log3 $name, 5,
-                        "PHTV $name: RES $service/"
-                      . urlDecode($cmd) . "\n"
-                      . $data;
-                }
+        if ( $data =~
+m/^\s*(([{\[][\s\S]+[}\]])|(<html>\s*<head>\s*<title>\s*Ok\s*<\/title>\s*<\/head>\s*<body>\s*Ok\s*<\/body>\s*<\/html>))\s*$/i
+          )
+        {
+            $return = decode_json( Encode::encode_utf8($2) ) if ($2);
+            $return = "ok" if ($3);
 
-                $hash->{helper}{supportedAPIcmds}{$service} = 1
-                  if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} )
-                    && $service !~ /^channels\/.*/
-                    && $service !~ /^channellists\/.*/ );
-
-                $return = decode_json( Encode::encode_utf8($data) );
+            if ( !defined($cmd) || ref($cmd) eq "HASH" || $cmd eq "" ) {
+                Log3 $name, 5, "PHTV $name: RES $service\n" . $data;
             }
-
-            elsif ( $data eq
-                "<html><head><title>Ok</title></head><body>Ok</body></html>" )
-            {
-                if ( !defined($cmd) || ref($cmd) eq "HASH" || $cmd eq "" ) {
-                    Log3 $name, 4, "PHTV $name: RES $service - ok";
-                }
-                else {
-                    Log3 $name, 4,
-                      "PHTV $name: RES $service/" . urlDecode($cmd) . " - ok";
-                }
-
-                $hash->{helper}{supportedAPIcmds}{$service} = 1
-                  if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} )
-                    && $service !~ /^channels\/.*/
-                    && $service !~ /^channellists\/.*/ );
-
-                $return = "ok";
-            }
-
             else {
-                if ( !defined($cmd) || ref($cmd) eq "HASH" || $cmd eq "" ) {
-                    Log3 $name, 5, "PHTV $name: RES ERROR $service\n" . $data;
-                }
-                else {
-                    Log3 $name, 5,
-                        "PHTV $name: RES ERROR $service/"
-                      . urlDecode($cmd) . "\n"
-                      . $data;
-                }
-
-                if ( !defined( $hash->{helper}{supportedAPIcmds}{$service} ) ) {
-                    $hash->{helper}{supportedAPIcmds}{$service} = 0;
-                    Log3 $name, 4,
-                        "PHTV $name: API command '"
-                      . $service
-                      . "' not supported by device.";
-                }
-
-                return undef;
+                Log3 $name, 5,
+                  "PHTV $name: RES $service/" . urlDecode($cmd) . "\n" . $data;
             }
+
+            $hash->{helper}{supportedAPIcmds}{$service} = 1
+              unless ( defined( $hash->{helper}{supportedAPIcmds}{$service} )
+                || $service =~ /^channels\/.*/
+                || $service =~ /^channellists\/.*/ );
+        }
+
+        elsif ( $data ne "" ) {
+            if ( !defined($cmd) || ref($cmd) eq "HASH" || $cmd eq "" ) {
+                Log3 $name, 5, "PHTV $name: RES ERROR/$code $service\n" . $data;
+            }
+            else {
+                Log3 $name, 5,
+                    "PHTV $name: RES ERROR/$code $service/"
+                  . urlDecode($cmd) . "\n"
+                  . $data;
+            }
+
+            unless ( defined( $hash->{helper}{supportedAPIcmds}{$service} ) ) {
+                $hash->{helper}{supportedAPIcmds}{$service} = 0;
+                Log3 $name, 4,
+                    "PHTV $name: API command '"
+                  . $service
+                  . "' not supported by device.";
+            }
+
+            return undef;
         }
 
         #######################
         # process return data
         #
         $newstate = "on";
+
+        if ( ref($return) eq "HASH" ) {
+            for ( keys %{$return} ) {
+                next unless ( $_ =~ /^(.*)_encrypted$/ );
+                my $r = $1;
+                $return->{$r} = $return->{$_};
+            }
+        }
 
         # audio/volume
         if ( $service eq "audio/volume" ) {
@@ -1819,46 +1869,27 @@ sub PHTV_ReceiveCommand($$$) {
                     $hash->{helper}{audio}{min} = $return->{min};
                     $hash->{helper}{audio}{max} = $return->{max};
 
-                    $vol = int(
+                    $vol =
+                      int(
                         ( $return->{current} / $return->{max} * 100 ) + 0.5 );
                 }
 
                 # volume
-                if ( !defined( $hash->{READINGS}{volume}{VAL} )
-                    || $hash->{READINGS}{volume}{VAL} ne $vol )
-                {
-                    readingsBulkUpdate( $hash, "volume", $vol );
-                }
+                readingsBulkUpdateIfChanged( $hash, "volume", $vol );
 
                 # volumeStraight
-                if (
-                    defined( $return->{current} )
-                    && ( !defined( $hash->{READINGS}{volumeStraight}{VAL} )
-                        || $hash->{READINGS}{volumeStraight}{VAL} ne
-                        $return->{current} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "volumeStraight",
+                if ( defined( $return->{current} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "volumeStraight",
                         $return->{current} );
                 }
 
                 if ( defined( $return->{muted} ) ) {
-                    if (
-                        $return->{muted} eq "false"
-                        && ( !defined( $hash->{READINGS}{mute}{VAL} )
-                            || $hash->{READINGS}{mute}{VAL} ne "off" )
-                      )
-                    {
-                        readingsBulkUpdate( $hash, "mute", "off" );
+                    if ( $return->{muted} eq "false" ) {
+                        readingsBulkUpdateIfChanged( $hash, "mute", "off" );
                     }
 
-                    elsif (
-                        $return->{muted} eq "true"
-                        && ( !defined( $hash->{READINGS}{mute}{VAL} )
-                            || $hash->{READINGS}{mute}{VAL} ne "on" )
-                      )
-                    {
-                        readingsBulkUpdate( $hash, "mute", "on" );
+                    elsif ( $return->{muted} eq "true" ) {
+                        readingsBulkUpdateIfChanged( $hash, "mute", "on" );
                     }
                 }
 
@@ -1889,14 +1920,14 @@ sub PHTV_ReceiveCommand($$$) {
                     # and user set attribut for lazy devices
                     if (   $newstate eq "on"
                         && $newstate ne $state
-                        && defined( $attr{$name}{drippyFactor} )
-                        && $attr{$name}{drippyFactor} ne ""
-                        && $attr{$name}{drippyFactor} ge 0 )
+                        && AttrVal( $name, "drippyFactor", -1 ) ge 0 )
                     {
                         RemoveInternalTimer($hash);
                         InternalTimer(
-                            gettimeofday() + $attr{$name}{drippyFactor},
-                            "PHTV_GetStatus", $hash, 1 );
+                            gettimeofday() +
+                              AttrVal( $name, "drippyFactor", 0 ),
+                            "PHTV_GetStatus", $hash, 1
+                        );
                     }
                     else {
                         PHTV_GetStatus( $hash, 1 );
@@ -1907,79 +1938,142 @@ sub PHTV_ReceiveCommand($$$) {
 
         # system
         elsif ( $service eq "system" ) {
+
+            ######### 2013 device
+            # {
+            #   "menulanguage": "English",
+            #   "name": "Loredos TV",
+            #   "country": "Germany",
+            #   "serialnumber": "ZH1D1319003420",
+            #   "softwareversion": "QF2EU-0.173.65.0",
+            #   "model": "55PFL8008S/12"
+            # }
+
+######### 2016 device
+# {
+#     "menulanguage" : "German", "name" : "NN", "country" : "Germany",
+#       "serialnumber_encrypted"
+#       : "9Ujg7qk0jWyPF7opK7RsswTePRBq6dZTCFwUIgF\/Q94=\n",
+#       "softwareversion_encrypted"
+#       : "mCOnRshweMpSjXKxwNxJ7h+5VzkcYTUeqY70o6lZyWE=\n",
+#       "model_encrypted"    : "DWxvf4moWe49A7uQOri7\/LcObzUIvy9HNxMoMMp1gdE=\n",
+#       "deviceid_encrypted" : "rkhmRw5JDPqaZ9h2yQoOdrj\/j26uyo288XumhKsG9Ck=\n",
+#       "nettvversion"       : "6.0.2", "epgsource" : "one",
+#       "api_version"        : { "Major" : 6, "Minor" : 2, "Patch" : 0 },
+#       "featuring"
+#       : {
+#         "jsonfeatures"
+#         : {
+#             "editfavorites" : [ "TVChannels",  "SatChannels" ],
+#             "recordings"    : [ "List",        "Schedule", "Manage" ],
+#             "ambilight"     : [ "LoungeLight", "Hue", "Ambilight" ],
+#             "menuitems" : ["Setup_Menu"],
+#             "textentry"
+#             : [
+#                 "context_based", "initial_string_available",
+#                 "editor_info_available"
+#             ],
+#             "applications" : [ "TV_Apps", "TV_Games", "TV_Settings" ],
+#             "pointer"      : ["not_available"],
+#             "inputkey"     : ["key"],
+#             "activities"   : ["intent"],
+#             "channels"     : ["preset_string"],
+#             "mappings"     : ["server_mapping"]
+#         },
+#         "systemfeatures"
+#         : {
+#             "tvtype"            : "consumer",
+#             "content"           : [ "dmr", "dms_tad" ],
+#             "tvsearch"          : "intent",
+#             "pairing_type"      : "digest_auth_pairing",
+#             "secured_transport" : "true"
+#         }
+#       }
+# }
+
             if ( ref($return) eq "HASH" ) {
 
                 # language
-                if (
-                    defined( $return->{menulanguage} )
-                    && ( !defined( $hash->{READINGS}{language}{VAL} )
-                        || $hash->{READINGS}{language}{VAL} ne
-                        $return->{menulanguage} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "language",
+                if ( defined( $return->{menulanguage} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "language",
                         $return->{menulanguage} );
                 }
 
                 # name
-                if (
-                    defined( $return->{name} )
-                    && ( !defined( $hash->{READINGS}{systemname}{VAL} )
-                        || $hash->{READINGS}{systemname}{VAL} ne
-                        $return->{name} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "systemname", $return->{name} );
+                if ( defined( $return->{name} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "systemname",
+                        $return->{name} );
                 }
 
                 # country
-                if (
-                    defined( $return->{country} )
-                    && ( !defined( $hash->{READINGS}{country}{VAL} )
-                        || $hash->{READINGS}{country}{VAL} ne
-                        $return->{country} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "country", $return->{country} );
+                if ( defined( $return->{country} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "country",
+                        $return->{country} );
                 }
 
                 # serialnumber
-                if (
-                    defined( $return->{serialnumber} )
-                    && ( !defined( $hash->{READINGS}{serialnumber}{VAL} )
-                        || $hash->{READINGS}{serialnumber}{VAL} ne
-                        $return->{serialnumber} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "serialnumber",
+                if ( defined( $return->{serialnumber} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "serialnumber",
                         $return->{serialnumber} );
                 }
 
                 # softwareversion
                 if ( defined( $return->{softwareversion} ) ) {
-                    if ( !defined( $hash->{READINGS}{softwareversion}{VAL} )
-                        || $hash->{READINGS}{softwareversion}{VAL} ne
-                        $return->{softwareversion} )
-                    {
-                        readingsBulkUpdate( $hash, "softwareversion",
-                            $return->{softwareversion} );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "softwareversion",
+                        $return->{softwareversion} );
                     $hash->{swversion} = $return->{softwareversion};
                 }
 
                 # model
                 if ( defined( $return->{model} ) ) {
-                    if ( !defined( $hash->{READINGS}{model}{VAL} )
-                        || $hash->{READINGS}{model}{VAL} ne $return->{model} )
-                    {
-                        readingsBulkUpdate( $hash, "model", $return->{model} );
-                    }
-                    $hash->{model} = $return->{model};
+                    readingsBulkUpdateIfChanged( $hash, "model",
+                        uc( $return->{model} ) );
+                    $hash->{model} = uc( $return->{model} );
+                    $attr{$name}{model} = uc( $return->{model} );
                 }
+
+                # epgsource
+                if ( defined( $return->{epgsource} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "epgsource",
+                        $return->{epgsource} );
+                }
+
+                # nettvversion
+                if ( defined( $return->{nettvversion} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "nettvversion",
+                        $return->{nettvversion} );
+                }
+
+                # api_version
+                if (   defined( $return->{api_version} )
+                    && defined( $return->{api_version}{Major} )
+                    && defined( $return->{api_version}{Minor} )
+                    && defined( $return->{api_version}{Patch} ) )
+                {
+                    $hash->{api_version} = $return->{api_version};
+
+                    readingsBulkUpdateIfChanged( $hash, "api_version",
+                            $return->{api_version}{Major} . "."
+                          . $return->{api_version}{Minor} . "."
+                          . $return->{api_version}{Patch} );
+
+                    fhem 'attr '
+                      . $name
+                      . ' jsversion '
+                      . $return->{api_version}{Major}
+                      if ( $protoV ne $return->{api_version}{Major} );
+                }
+
+                # featuring
+                if ( defined( $return->{featuring} ) ) {
+                    $hash->{featuring} = $return->{featuring};
+                }
+
             }
 
             # continue query cascade in case sequential query is enabled
-            PHTV_GetStatus( $hash, 1 ) if $sequential;
+            PHTV_GetStatus( $hash, 1 )
+              if ( $sequential || $state ne $newstate );
         }
 
         # sources
@@ -2000,7 +2094,7 @@ sub PHTV_ReceiveCommand($$$) {
                     $hash->{helper}{device}{sourceID}{$input_name} = $input;
                     $inputs .= $input_name . ":";
                 }
-                if ( !defined( $attr{$name}{inputs} ) ) {
+                unless ( defined( AttrVal( $name, "inputs", undef ) ) ) {
                     $inputs = substr( $inputs, 0, -1 );
                     $attr{$name}{inputs} = $inputs;
                 }
@@ -2013,17 +2107,24 @@ sub PHTV_ReceiveCommand($$$) {
         # sources/current
         elsif ( $service eq "sources/current" ) {
             if ( ref($return) eq "HASH" ) {
-                $cmd = $hash->{helper}{device}{sourceName}{ $return->{id} };
+                if ( defined( $return->{id} ) ) {
+                    $return->{id} =~ s/^\s+//;
+                    $return->{id} =~ s/\s+$//;
+                    $cmd = (
+                          $hash->{helper}{device}{sourceName}{ $return->{id} }
+                        ? $hash->{helper}{device}{sourceName}{ $return->{id} }
+                        : "-"
+                    );
+                }
+                else {
+                    $cmd = "-";
+                }
 
                 # Alias handling
                 $cmd = $hash->{helper}{device}{inputAliases}{$cmd}
                   if ( defined( $hash->{helper}{device}{inputAliases}{$cmd} ) );
 
-                if ( !defined( $hash->{READINGS}{input}{VAL} )
-                    || $hash->{READINGS}{input}{VAL} ne $cmd )
-                {
-                    readingsBulkUpdate( $hash, "input", $cmd );
-                }
+                readingsBulkUpdateIfChanged( $hash, "input", $cmd );
             }
             elsif ( $return eq "ok" ) {
                 $cmd =
@@ -2035,11 +2136,7 @@ sub PHTV_ReceiveCommand($$$) {
                 $cmd = $hash->{helper}{device}{inputAliases}{$cmd}
                   if ( defined( $hash->{helper}{device}{inputAliases}{$cmd} ) );
 
-                if ( !defined( $hash->{READINGS}{input}{VAL} )
-                    || $hash->{READINGS}{input}{VAL} ne $cmd )
-                {
-                    readingsBulkUpdate( $hash, "input", $cmd );
-                }
+                readingsBulkUpdateIfChanged( $hash, "input", $cmd );
             }
 
             # SEQUENTIAL QUERY CASCADE - next: channels
@@ -2076,6 +2173,7 @@ sub PHTV_ReceiveCommand($$$) {
                     $channel_name =~ s/\s+$//;
                     $channel_name =~ s/\s/_/g;
                     $channel_name =~ s/,/./g;
+                    $channel_name =~ s///g;
                     if ( $channel_name ne "" ) {
                         $hash->{helper}{device}{channelName}{$channel}{name} =
                           $channel_name;
@@ -2116,11 +2214,7 @@ sub PHTV_ReceiveCommand($$$) {
                     $cmd = "-";
                 }
 
-                if ( !defined( $hash->{READINGS}{channel}{VAL} )
-                    || $hash->{READINGS}{channel}{VAL} ne $cmd )
-                {
-                    readingsBulkUpdate( $hash, "channel", $cmd );
-                }
+                readingsBulkUpdateIfChanged( $hash, "channel", $cmd );
 
                 # read channel details if type is known
                 if ( defined( $return->{id} ) && $return->{id} ne "" ) {
@@ -2142,11 +2236,7 @@ sub PHTV_ReceiveCommand($$$) {
                   ? $hash->{helper}{device}{channelName}{$type}{name}
                   : $type;
 
-                if ( !defined( $hash->{READINGS}{channel}{VAL} )
-                    || $hash->{READINGS}{channel}{VAL} ne $cmd )
-                {
-                    readingsBulkUpdate( $hash, "channel", $cmd );
-                }
+                readingsBulkUpdateIfChanged( $hash, "channel", $cmd );
 
                 # read channel details if type is known
                 if ( defined($type) && $type ne "" ) {
@@ -2170,104 +2260,55 @@ sub PHTV_ReceiveCommand($$$) {
 
                 # currentMedia
                 if ( defined( $return->{preset} ) ) {
-                    if ( !defined( $hash->{READINGS}{currentMedia}{VAL} )
-                        || $hash->{READINGS}{currentMedia}{VAL} ne
-                        $return->{preset} )
-                    {
-                        readingsBulkUpdate( $hash, "currentMedia",
-                            $return->{preset} );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "currentMedia",
+                        $return->{preset} );
                 }
                 else {
-                    if ( !defined( $hash->{READINGS}{currentMedia}{VAL} )
-                        || $hash->{READINGS}{currentMedia}{VAL} ne "-" )
-                    {
-                        readingsBulkUpdate( $hash, "currentMedia", "-" );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "currentMedia", "-" );
                 }
 
                 # servicename
                 if ( defined( $return->{name} ) ) {
-                    if ( !defined( $hash->{READINGS}{servicename}{VAL} )
-                        || $hash->{READINGS}{servicename}{VAL} ne
-                        $return->{name} )
-                    {
-                        readingsBulkUpdate( $hash, "servicename",
-                            $return->{name} );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "servicename",
+                        $return->{name} );
                 }
                 else {
-                    if ( !defined( $hash->{READINGS}{servicename}{VAL} )
-                        || $hash->{READINGS}{servicename}{VAL} ne "-" )
-                    {
-                        readingsBulkUpdate( $hash, "servicename", "-" );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "servicename", "-" );
                 }
 
                 # frequency
                 if ( defined( $return->{frequency} ) ) {
-                    if ( !defined( $hash->{READINGS}{frequency}{VAL} )
-                        || $hash->{READINGS}{frequency}{VAL} ne
-                        $return->{frequency} )
-                    {
-                        readingsBulkUpdate( $hash, "frequency",
-                            $return->{frequency} );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "frequency",
+                        $return->{frequency} );
                 }
                 else {
-                    if ( !defined( $hash->{READINGS}{frequency}{VAL} )
-                        || $hash->{READINGS}{frequency}{VAL} ne "-" )
-                    {
-                        readingsBulkUpdate( $hash, "frequency", "-" );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "frequency", "-" );
                 }
 
                 # onid
                 if ( defined( $return->{onid} ) ) {
-                    if ( !defined( $hash->{READINGS}{onid}{VAL} )
-                        || $hash->{READINGS}{onid}{VAL} ne $return->{onid} )
-                    {
-                        readingsBulkUpdate( $hash, "onid", $return->{onid} );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "onid",
+                        $return->{onid} );
                 }
                 else {
-                    if ( !defined( $hash->{READINGS}{onid}{VAL} )
-                        || $hash->{READINGS}{onid}{VAL} ne "-" )
-                    {
-                        readingsBulkUpdate( $hash, "onid", "-" );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "onid", "-" );
                 }
 
                 # tsid
                 if ( defined( $return->{tsid} ) ) {
-                    if ( !defined( $hash->{READINGS}{tsid}{VAL} )
-                        || $hash->{READINGS}{tsid}{VAL} ne $return->{tsid} )
-                    {
-                        readingsBulkUpdate( $hash, "tsid", $return->{tsid} );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "tsid",
+                        $return->{tsid} );
                 }
                 else {
-                    if ( !defined( $hash->{READINGS}{tsid}{VAL} )
-                        || $hash->{READINGS}{tsid}{VAL} ne "-" )
-                    {
-                        readingsBulkUpdate( $hash, "tsid", "-" );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "tsid", "-" );
                 }
 
                 # sid
                 if ( defined( $return->{sid} ) ) {
-                    if ( !defined( $hash->{READINGS}{sid}{VAL} )
-                        || $hash->{READINGS}{sid}{VAL} ne $return->{sid} )
-                    {
-                        readingsBulkUpdate( $hash, "sid", $return->{sid} );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "sid", $return->{sid} );
                 }
                 else {
-                    if ( !defined( $hash->{READINGS}{sid}{VAL} )
-                        || $hash->{READINGS}{sid}{VAL} ne "-" )
-                    {
-                        readingsBulkUpdate( $hash, "sid", "-" );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "sid", "-" );
                 }
 
                 # receiveMode
@@ -2279,25 +2320,17 @@ sub PHTV_ReceiveCommand($$$) {
                       ? $return->{digital}
                       : "analog";
 
-                    if ( !defined( $hash->{READINGS}{receiveMode}{VAL} )
-                        || $hash->{READINGS}{receiveMode}{VAL} ne $receiveMode )
-                    {
-                        readingsBulkUpdate( $hash, "receiveMode",
-                            $receiveMode );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "receiveMode",
+                        $receiveMode );
                 }
                 else {
-                    if ( !defined( $hash->{READINGS}{receiveMode}{VAL} )
-                        || $hash->{READINGS}{receiveMode}{VAL} ne "-" )
-                    {
-                        readingsBulkUpdate( $hash, "receiveMode", "-" );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "receiveMode", "-" );
                 }
 
             }
 
             # read all channellists if not existing
-            if ( !defined( $hash->{helper}{device}{channellists} ) ) {
+            unless ( defined( $hash->{helper}{device}{channellists} ) ) {
                 PHTV_SendCommand( $hash, "channellists" );
                 $hash->{helper}{sequentialQueryCounter}++ if $sequential;
             }
@@ -2357,56 +2390,28 @@ sub PHTV_ReceiveCommand($$$) {
         elsif ( $service eq "ambilight/topology" ) {
             if ( ref($return) eq "HASH" ) {
 
-                if (
-                    defined( $return->{layers} )
-                    && ( !defined( $hash->{READINGS}{ambiLEDLayers}{VAL} )
-                        || $hash->{READINGS}{ambiLEDLayers}{VAL} ne
-                        $return->{layers} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "ambiLEDLayers",
+                if ( defined( $return->{layers} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "ambiLEDLayers",
                         $return->{layers} );
                 }
 
-                if (
-                    defined( $return->{left} )
-                    && ( !defined( $hash->{READINGS}{ambiLEDLeft}{VAL} )
-                        || $hash->{READINGS}{ambiLEDLeft}{VAL} ne
-                        $return->{left} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "ambiLEDLeft", $return->{left} );
+                if ( defined( $return->{left} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "ambiLEDLeft",
+                        $return->{left} );
                 }
 
-                if (
-                    defined( $return->{top} )
-                    && ( !defined( $hash->{READINGS}{ambiLEDTop}{VAL} )
-                        || $hash->{READINGS}{ambiLEDTop}{VAL} ne
-                        $return->{top} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "ambiLEDTop", $return->{top} );
+                if ( defined( $return->{top} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "ambiLEDTop",
+                        $return->{top} );
                 }
 
-                if (
-                    defined( $return->{right} )
-                    && ( !defined( $hash->{READINGS}{ambiLEDRight}{VAL} )
-                        || $hash->{READINGS}{ambiLEDRight}{VAL} ne
-                        $return->{right} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "ambiLEDRight",
+                if ( defined( $return->{right} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "ambiLEDRight",
                         $return->{right} );
                 }
 
-                if (
-                    defined( $return->{bottom} )
-                    && ( !defined( $hash->{READINGS}{ambiLEDBottom}{VAL} )
-                        || $hash->{READINGS}{ambiLEDBottom}{VAL} ne
-                        $return->{bottom} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "ambiLEDBottom",
+                if ( defined( $return->{bottom} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "ambiLEDBottom",
                         $return->{bottom} );
                 }
 
@@ -2417,23 +2422,14 @@ sub PHTV_ReceiveCommand($$$) {
         elsif ( $service eq "ambilight/mode" ) {
             if ( ref($return) eq "HASH" ) {
 
-                if (
-                    defined( $return->{current} )
-                    && ( !defined( $hash->{READINGS}{ambiMode}{VAL} )
-                        || $hash->{READINGS}{ambiMode}{VAL} ne
-                        $return->{current} )
-                  )
-                {
-                    readingsBulkUpdate( $hash, "ambiMode", $return->{current} );
+                if ( defined( $return->{current} ) ) {
+                    readingsBulkUpdateIfChanged( $hash, "ambiMode",
+                        $return->{current} );
                 }
 
             }
             elsif ( $return eq "ok" ) {
-                if ( !defined( $hash->{READINGS}{ambiMode}{VAL} )
-                    || $hash->{READINGS}{ambiMode}{VAL} ne $type )
-                {
-                    readingsBulkUpdate( $hash, "ambiMode", $type );
-                }
+                readingsBulkUpdateIfChanged( $hash, "ambiMode", $type );
             }
 
             # SEQUENTIAL QUERY CASCADE - next: sources
@@ -2481,15 +2477,8 @@ sub PHTV_ReceiveCommand($$$) {
                             $hexsum = $hex   if ( $hexsum eq "" );
                             $hexsum = "diff" if ( $hexsum ne $hex );
 
-                            if (
-                                !defined(
-                                    $hash->{READINGS}{$readingname}{VAL}
-                                )
-                                || $hash->{READINGS}{$readingname}{VAL} ne $hex
-                              )
-                            {
-                                readingsBulkUpdate( $hash, $readingname, $hex );
-                            }
+                            readingsBulkUpdateIfChanged( $hash,
+                                $readingname, $hex );
                         }
                     }
                 }
@@ -2501,41 +2490,17 @@ sub PHTV_ReceiveCommand($$$) {
                     my $bri = $hsb->{b};
                     my $pct = PHTV_bri2pct($bri);
 
-                    if ( !defined( $hash->{READINGS}{rgb}{VAL} )
-                        || $hash->{READINGS}{rgb}{VAL} ne $hexsum )
-                    {
-                        readingsBulkUpdate( $hash, "rgb", $hexsum );
-                    }
-
-                    if ( !defined( $hash->{READINGS}{hue}{VAL} )
-                        || $hash->{READINGS}{hue}{VAL} ne $hue )
-                    {
-                        readingsBulkUpdate( $hash, "hue", $hue );
-                    }
-
-                    if ( !defined( $hash->{READINGS}{sat}{VAL} )
-                        || $hash->{READINGS}{sat}{VAL} ne $sat )
-                    {
-                        readingsBulkUpdate( $hash, "sat", $sat );
-                    }
-
-                    if ( !defined( $hash->{READINGS}{bri}{VAL} )
-                        || $hash->{READINGS}{bri}{VAL} ne $bri )
-                    {
-                        readingsBulkUpdate( $hash, "bri", $bri );
-                    }
-
-                    if ( !defined( $hash->{READINGS}{pct}{VAL} )
-                        || $hash->{READINGS}{pct}{VAL} ne $pct )
-                    {
-                        readingsBulkUpdate( $hash, "pct",   $pct );
-                        readingsBulkUpdate( $hash, "level", $pct . " %" );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "rgb",   $hexsum );
+                    readingsBulkUpdateIfChanged( $hash, "hue",   $hue );
+                    readingsBulkUpdateIfChanged( $hash, "sat",   $sat );
+                    readingsBulkUpdateIfChanged( $hash, "bri",   $bri );
+                    readingsBulkUpdateIfChanged( $hash, "pct",   $pct );
+                    readingsBulkUpdateIfChanged( $hash, "level", $pct . " %" );
                 }
             }
             elsif ( $return eq "ok" ) {
                 if ( $type =~ /^(..)(..)(..)$/
-                    && defined( $hash->{READINGS}{ambiLEDLayers}{VAL} ) )
+                    && ReadingsVal( $name, "ambiLEDLayers", undef ) )
                 {
                     my $hsb = PHTV_hex2hsb($type);
                     my $hue = $hsb->{h};
@@ -2543,41 +2508,17 @@ sub PHTV_ReceiveCommand($$$) {
                     my $bri = $hsb->{b};
                     my $pct = PHTV_bri2pct($bri);
 
-                    if ( !defined( $hash->{READINGS}{rgb}{VAL} )
-                        || $hash->{READINGS}{rgb}{VAL} ne $type )
-                    {
-                        readingsBulkUpdate( $hash, "rgb", $type );
-                    }
+                    readingsBulkUpdateIfChanged( $hash, "rgb",   $type );
+                    readingsBulkUpdateIfChanged( $hash, "hue",   $hue );
+                    readingsBulkUpdateIfChanged( $hash, "sat",   $sat );
+                    readingsBulkUpdateIfChanged( $hash, "bri",   $bri );
+                    readingsBulkUpdateIfChanged( $hash, "pct",   $pct );
+                    readingsBulkUpdateIfChanged( $hash, "level", $pct . " %" );
 
-                    if ( !defined( $hash->{READINGS}{hue}{VAL} )
-                        || $hash->{READINGS}{hue}{VAL} ne $hue )
-                    {
-                        readingsBulkUpdate( $hash, "hue", $hue );
-                    }
-
-                    if ( !defined( $hash->{READINGS}{sat}{VAL} )
-                        || $hash->{READINGS}{sat}{VAL} ne $sat )
-                    {
-                        readingsBulkUpdate( $hash, "sat", $sat );
-                    }
-
-                    if ( !defined( $hash->{READINGS}{bri}{VAL} )
-                        || $hash->{READINGS}{bri}{VAL} ne $bri )
-                    {
-                        readingsBulkUpdate( $hash, "bri", $bri );
-                    }
-
-                    if ( !defined( $hash->{READINGS}{pct}{VAL} )
-                        || $hash->{READINGS}{pct}{VAL} ne $pct )
-                    {
-                        readingsBulkUpdate( $hash, "pct",   $pct );
-                        readingsBulkUpdate( $hash, "level", $pct . " %" );
-                    }
-
-                    if ( defined( $hash->{READINGS}{ambiLEDLayers}{VAL} ) ) {
+                    if ( ReadingsVal( $name, "ambiLEDLayers", undef ) ) {
                         my $layer = 1;
-                        while (
-                            $layer <= $hash->{READINGS}{ambiLEDLayers}{VAL} )
+                        while ( $layer <=
+                            ReadingsVal( $name, "ambiLEDLayers", undef ) )
                         {
 
                             foreach
@@ -2593,29 +2534,17 @@ sub PHTV_ReceiveCommand($$$) {
                                 $s =~ s/right/R/  if ( $side eq "right" );
                                 $s =~ s/bottom/B/ if ( $side eq "bottom" );
 
-                                if ( defined( $hash->{READINGS}{$ambiLED}{VAL} )
-                                    && $hash->{READINGS}{$ambiLED}{VAL} > 0 )
-                                {
+                                if ( ReadingsVal( $name, $ambiLED, 0 ) > 0 ) {
                                     my $led = 0;
 
                                     while ( $led <=
-                                        $hash->{READINGS}{$ambiLED}{VAL} - 1 )
+                                        ReadingsVal( $name, $ambiLED, 0 ) - 1 )
                                     {
                                         my $readingname =
                                           "rgb_" . $l . $s . $led;
 
-                                        if (
-                                            !defined(
-                                                $hash->{READINGS}
-                                                  {$readingname}{VAL}
-                                            )
-                                            || $hash->{READINGS}
-                                            {$readingname}{VAL} ne $type
-                                          )
-                                        {
-                                            readingsBulkUpdate( $hash,
-                                                $readingname, $type );
-                                        }
+                                        readingsBulkUpdateIfChanged( $hash,
+                                            $readingname, $type );
 
                                         $led++;
                                     }
@@ -2639,21 +2568,19 @@ sub PHTV_ReceiveCommand($$$) {
                 # run ambiHue
                 if (
                     (
-                           $hash->{READINGS}{ambiHue}{VAL} eq "on"
+                        ReadingsVal( $name, "ambiHue", "off" ) eq "on"
                         || $type eq "init"
                     )
-                    && (   defined( $attr{$name}{ambiHueLeft} )
-                        || defined( $attr{$name}{ambiHueRight} )
-                        || defined( $attr{$name}{ambiHueTop} )
-                        || defined( $attr{$name}{ambiHueBottom} ) )
+                    && (   defined( AttrVal( $name, "ambiHueLeft", undef ) )
+                        || defined( AttrVal( $name, "ambiHueRight",  undef ) )
+                        || defined( AttrVal( $name, "ambiHueTop",    undef ) )
+                        || defined( AttrVal( $name, "ambiHueBottom", undef ) ) )
                   )
                 {
 
                     my $transitiontime =
-                      ( $attr{$name}{ambiHueLatency} )
-                      ? int( $attr{$name}{ambiHueLatency} / 100 + 0.5 )
-                      : 3;
-
+                      int(
+                        AttrVal( $name, "ambiHueLatency", 300 ) / 100 + 0.5 );
                     $transitiontime = 3 if ( $transitiontime < 3 );
 
                     foreach my $side ( 'Left', 'Top', 'Right', 'Bottom' ) {
@@ -2662,15 +2589,13 @@ sub PHTV_ReceiveCommand($$$) {
                         my $s       = lc($side);
 
                         # $ambiHue
-                        if (   defined( $attr{$name}{$ambiHue} )
-                            && $attr{$name}{$ambiHue} ne ""
+                        if (   AttrVal( $name, $ambiHue, "" ) ne ""
                             && defined( $return->{layer1}->{$s} )
                             && ref( $return->{layer1}->{$s} ) eq "HASH"
-                            && defined( $hash->{READINGS}{$ambiLED}{VAL} )
-                            && $hash->{READINGS}{$ambiLED}{VAL} > 0 )
+                            && ReadingsVal( $name, $ambiLED, 0 ) > 0 )
                         {
                             my @devices =
-                              split( " ", $attr{$name}{$ambiHue} );
+                              split( " ", AttrVal( $name, $ambiHue, "" ) );
 
                             Log3 $name, 5,
 "PHTV $name: processing devices from attribute $ambiHue";
@@ -2691,10 +2616,8 @@ sub PHTV_ReceiveCommand($$$) {
                                 Log3 $name, 5, $logtext;
 
                                 # next for if HUE device is not ready
-                                if (   !defined( $defs{$dev} )
-                                    || !defined( $defs{$dev}{TYPE} )
-                                    || $defs{$dev}{TYPE} ne "HUEDevice"
-                                    || $defs{$dev}{READINGS}{reachable}{VAL} ne
+                                if (  !IsDevice( $dev, "HUEDevice" )
+                                    || ReadingsVal( $dev, "reachable", 0 ) ne
                                     "1" )
                                 {
                                     Log3 $name, 5,
@@ -2705,7 +2628,7 @@ sub PHTV_ReceiveCommand($$$) {
                                 # determine reference LEDs
                                 if ( !defined($led) || $led eq "" ) {
                                     my $led_middle = int(
-                                        $hash->{READINGS}{$ambiLED}{VAL} / 2 +
+                                        ReadingsVal( $name, $ambiLED, 0 ) / 2 +
                                           0.5 ) - 1;
 
                                     # take the middle LED and
@@ -2833,12 +2756,9 @@ sub PHTV_ReceiveCommand($$$) {
                                 }
 
                                 # temp. disable event triggers for HUEDevice
-                                if (
-                                    !defined(
-                                        $attr{$dev}{"event-on-change-reading"}
-                                    )
-                                    || $attr{$dev}{"event-on-change-reading"}
-                                    ne "none"
+                                unless (
+                                    AttrVal( $dev, "event-on-change-reading",
+                                        "" ) eq "none"
                                   )
                                 {
                                     $attr{$dev}{"event-on-change-reading"} =
@@ -2934,9 +2854,7 @@ sub PHTV_ReceiveCommand($$$) {
 
                     my $duration = gettimeofday() - $param->{timestamp};
                     my $minLatency =
-                      ( $attr{$name}{ambiHueLatency} )
-                      ? $attr{$name}{ambiHueLatency} / 1000
-                      : 0.20;
+                      AttrVal( $name, "ambiHueLatency", 200 ) / 1000;
                     my $waittime = $minLatency - $duration;
 
                     # latency compensation
@@ -2955,25 +2873,23 @@ sub PHTV_ReceiveCommand($$$) {
 
                 # cleanup after stopping ambiHue
                 elsif (
-                    $hash->{READINGS}{ambiHue}{VAL} eq "off"
-                    || (   !defined( $attr{$name}{ambiHueLeft} )
-                        && !defined( $attr{$name}{ambiHueRight} )
-                        && !defined( $attr{$name}{ambiHueTop} )
-                        && !defined( $attr{$name}{ambiHueBottom} ) )
+                    ReadingsVal( $name, "ambiHue", "off" ) eq "off"
+                    || (   !defined( AttrVal( $name, "ambiHueLeft", undef ) )
+                        && !defined( AttrVal( $name, "ambiHueRight",  undef ) )
+                        && !defined( AttrVal( $name, "ambiHueTop",    undef ) )
+                        && !defined( AttrVal( $name, "ambiHueBottom", undef ) )
+                    )
                   )
                 {
                     delete $hash->{helper}{ambiHueDelay};
                     delete $hash->{helper}{ambiHueColor};
 
-                    readingsBulkUpdate( $hash, "ambiHue", "off" )
-                      if ( $hash->{READINGS}{ambiHue}{VAL} ne "off" );
+                    readingsBulkUpdateIfChanged( $hash, "ambiHue", "off" );
 
                     # ambiHueLeft
-                    if ( defined( $attr{$name}{ambiHueLeft} )
-                        && $attr{$name}{ambiHueLeft} ne "" )
-                    {
+                    if ( AttrVal( $name, "ambiHueLeft", "" ) ne "" ) {
                         my @devices =
-                          split( " ", $attr{$name}{ambiHueLeft} );
+                          split( " ", AttrVal( $name, "ambiHueLeft", "" ) );
 
                         foreach (@devices) {
                             my ( $dev, $led ) = split( /:/, $_ );
@@ -2986,11 +2902,9 @@ sub PHTV_ReceiveCommand($$$) {
                     }
 
                     # ambiHueTop
-                    if ( defined( $attr{$name}{ambiHueTop} )
-                        && $attr{$name}{ambiHueTop} ne "" )
-                    {
+                    if ( AttrVal( $name, "ambiHueTop", "" ) ne "" ) {
                         my @devices =
-                          split( " ", $attr{$name}{ambiHueTop} );
+                          split( " ", AttrVal( $name, "ambiHueTop", "" ) );
 
                         foreach (@devices) {
                             my ( $dev, $led ) = split( /:/, $_ );
@@ -3003,11 +2917,9 @@ sub PHTV_ReceiveCommand($$$) {
                     }
 
                     # ambiHueRight
-                    if ( defined( $attr{$name}{ambiHueRight} )
-                        && $attr{$name}{ambiHueRight} ne "" )
-                    {
+                    if ( AttrVal( $name, "ambiHueRight", "" ) ne "" ) {
                         my @devices =
-                          split( " ", $attr{$name}{ambiHueRight} );
+                          split( " ", AttrVal( $name, "ambiHueRight", "" ) );
 
                         foreach (@devices) {
                             my ( $dev, $led ) = split( /:/, $_ );
@@ -3020,9 +2932,7 @@ sub PHTV_ReceiveCommand($$$) {
                     }
 
                     # ambiHueBottom
-                    if ( defined( $attr{$name}{ambiHueBottom} )
-                        && $attr{$name}{ambiHueBottom} ne "" )
-                    {
+                    if ( AttrVal( $name, "ambiHueBottom", "" ) ne "" ) {
                         my @devices =
                           split( " ", $attr{$name}{ambiHueBottom} );
 
@@ -3050,22 +2960,17 @@ sub PHTV_ReceiveCommand($$$) {
     # Set reading for power
     #
     my $readingPower = "off";
-    if ( $newstate eq "on" ) {
-        $readingPower = "on";
-    }
-    if ( !defined( $hash->{READINGS}{power}{VAL} )
-        || $hash->{READINGS}{power}{VAL} ne $readingPower )
-    {
-        readingsBulkUpdate( $hash, "power", $readingPower );
-    }
+    $readingPower = "on"
+      if ( $newstate eq "on" );
+    readingsBulkUpdateIfChanged( $hash, "power", $readingPower );
 
     # Set reading for state
     #
-    if ( !defined( $hash->{READINGS}{state}{VAL} )
-        || $hash->{READINGS}{state}{VAL} ne $newstate )
-    {
-        readingsBulkUpdate( $hash, "state", $newstate );
-    }
+    readingsBulkUpdateIfChanged( $hash, "state", $newstate );
+
+    # Set reading for stateAV
+    my $stateAV = PHTV_GetStateAV($hash);
+    readingsBulkUpdateIfChanged( $hash, "stateAV", $stateAV );
 
     # Set PHTV online-only readings to "-" in case box is in
     # offline or in standby mode
@@ -3080,59 +2985,21 @@ sub PHTV_ReceiveCommand($$$) {
             'tsid',        'sid',       'receiveMode',
           )
         {
-            if ( !defined( $hash->{READINGS}{$_}{VAL} )
-                || $hash->{READINGS}{$_}{VAL} ne "-" )
-            {
-                readingsBulkUpdate( $hash, $_, "-" );
-            }
+            readingsBulkUpdateIfChanged( $hash, $_, "-" );
         }
 
-        if ( !defined( $hash->{READINGS}{ambiHue}{VAL} )
-            || $hash->{READINGS}{ambiHue}{VAL} ne "off" )
-        {
-            readingsBulkUpdate( $hash, "ambiHue", "off" );
-        }
+        readingsBulkUpdateIfChanged( $hash, "ambiHue",  "off" );
+        readingsBulkUpdateIfChanged( $hash, "ambiMode", "internal" );
+        readingsBulkUpdateIfChanged( $hash, "rgb",      "000000" );
+        readingsBulkUpdateIfChanged( $hash, "hue",      "0" );
+        readingsBulkUpdateIfChanged( $hash, "sat",      "0" );
+        readingsBulkUpdateIfChanged( $hash, "bri",      "0" );
+        readingsBulkUpdateIfChanged( $hash, "pct",      "0" );
+        readingsBulkUpdateIfChanged( $hash, "level",    "0 %" );
 
-        if ( !defined( $hash->{READINGS}{ambiMode}{VAL} )
-            || $hash->{READINGS}{ambiMode}{VAL} ne "internal" )
-        {
-            readingsBulkUpdate( $hash, "ambiMode", "internal" );
-        }
-
-        if ( !defined( $hash->{READINGS}{rgb}{VAL} )
-            || $hash->{READINGS}{rgb}{VAL} ne "000000" )
-        {
-            readingsBulkUpdate( $hash, "rgb", "000000" );
-        }
-
-        if ( !defined( $hash->{READINGS}{hue}{VAL} )
-            || $hash->{READINGS}{hue}{VAL} ne "0" )
-        {
-            readingsBulkUpdate( $hash, "hue", "0" );
-        }
-
-        if ( !defined( $hash->{READINGS}{sat}{VAL} )
-            || $hash->{READINGS}{sat}{VAL} ne "0" )
-        {
-            readingsBulkUpdate( $hash, "sat", "0" );
-        }
-
-        if ( !defined( $hash->{READINGS}{bri}{VAL} )
-            || $hash->{READINGS}{bri}{VAL} ne "0" )
-        {
-            readingsBulkUpdate( $hash, "bri", "0" );
-        }
-
-        if ( !defined( $hash->{READINGS}{pct}{VAL} )
-            || $hash->{READINGS}{pct}{VAL} ne "0" )
-        {
-            readingsBulkUpdate( $hash, "pct",   "0" );
-            readingsBulkUpdate( $hash, "level", "0 %" );
-        }
-
-        if ( defined( $hash->{READINGS}{ambiLEDLayers}{VAL} ) ) {
+        if ( ReadingsVal( $name, "ambiLEDLayers", undef ) ) {
             my $layer = 1;
-            while ( $layer <= $hash->{READINGS}{ambiLEDLayers}{VAL} ) {
+            while ( $layer <= ReadingsVal( $name, "ambiLEDLayers", undef ) ) {
 
                 foreach my $side ( 'Left', 'Top', 'Right', 'Bottom' ) {
                     my $ambiLED = "ambiLED$side";
@@ -3145,25 +3012,15 @@ sub PHTV_ReceiveCommand($$$) {
                     $s =~ s/right/R/  if ( $side eq "right" );
                     $s =~ s/bottom/B/ if ( $side eq "bottom" );
 
-                    if ( defined( $hash->{READINGS}{$ambiLED}{VAL} )
-                        && $hash->{READINGS}{$ambiLED}{VAL} > 0 )
-                    {
+                    if ( ReadingsVal( $name, $ambiLED, 0 ) > 0 ) {
                         my $led = 0;
 
-                        while ( $led <= $hash->{READINGS}{$ambiLED}{VAL} - 1 ) {
+                        while ( $led <= ReadingsVal( $name, $ambiLED, 0 ) - 1 )
+                        {
                             my $readingname = "rgb_" . $l . $s . $led;
 
-                            if (
-                                !defined(
-                                    $hash->{READINGS}{$readingname}{VAL}
-                                )
-                                || $hash->{READINGS}{$readingname}{VAL} ne
-                                "000000"
-                              )
-                            {
-                                readingsBulkUpdate( $hash,
-                                    $readingname, "000000" );
-                            }
+                            readingsBulkUpdateIfChanged( $hash,
+                                $readingname, "000000" );
 
                             $led++;
                         }
@@ -3186,29 +3043,33 @@ sub PHTV_ReceiveCommand($$$) {
     return;
 }
 
-###################################
-sub PHTV_Undefine($$) {
-    my ( $hash, $arg ) = @_;
+sub PHTV_GetStateAV($) {
+    my ($hash) = @_;
     my $name = $hash->{NAME};
 
-    Log3 $name, 5, "PHTV $name: called function PHTV_Undefine()";
-
-    # Stop the internal GetStatus-Loop and exit
-    RemoveInternalTimer($hash);
-
-    return;
+    if ( ReadingsVal( $name, "presence", "absent" ) eq "absent" ) {
+        return "absent";
+    }
+    elsif ( ReadingsVal( $name, "power", "off" ) eq "off" ) {
+        return "off";
+    }
+    elsif ( ReadingsVal( $name, "mute", "off" ) eq "on" ) {
+        return "muted";
+    }
+    elsif ( ReadingsVal( $name, "playStatus", "stopped" ) ne "stopped" ) {
+        return ReadingsVal( $name, "playStatus", "stopped" );
+    }
+    else {
+        return ReadingsVal( $name, "power", "off" );
+    }
 }
 
-###################################
 sub PHTV_wake ($) {
     my ($hash) = @_;
     my $name = $hash->{NAME};
-    my $mac_addr =
-      ( defined( $attr{$name}{macaddr} ) )
-      ? $attr{$name}{macaddr}
-      : "-";
-    my $address = '255.255.255.255';
-    my $port    = 9;
+    my $mac_addr = AttrVal( $name, "macaddr", "-" );
+    my $address  = '255.255.255.255';
+    my $port     = 9;
 
     if ( $mac_addr ne "-" ) {
         my $sock = new IO::Socket::INET( Proto => 'udp' )
@@ -3241,8 +3102,6 @@ sub PHTV_wake ($) {
     return 1;
 }
 
-#####################################
-# Callback from 95_remotecontrol for command makenotify.
 sub PHTV_RCmakenotify($$) {
     my ( $nam, $ndev ) = @_;
     my $nname = "notify_$nam";
@@ -3252,10 +3111,6 @@ sub PHTV_RCmakenotify($$) {
     return "Notify created by PHTV: $nname";
 }
 
-#####################################
-# RC layouts
-
-# Philips TV with SVG
 sub PHTV_RClayout_SVG() {
     my @row;
 
@@ -3290,7 +3145,6 @@ sub PHTV_RClayout_SVG() {
     return @row;
 }
 
-# Philips TV with PNG
 sub PHTV_RClayout() {
     my @row;
 
@@ -3321,7 +3175,6 @@ sub PHTV_RClayout() {
     return @row;
 }
 
-###################################
 sub PHTV_GetRemotecontrolCommand($) {
     my ($command) = @_;
     my $commands = {
@@ -3393,26 +3246,22 @@ sub PHTV_GetRemotecontrolCommand($) {
     }
 }
 
-###################################
 sub PHTV_isinteger {
     defined $_[0] && $_[0] =~ /^[+-]?\d+$/;
 }
 
-###################################
 sub PHTV_bri2pct($) {
     my ($bri) = @_;
     return 0 if ( $bri <= 0 );
     return int( $bri / 255 * 100 + 0.5 );
 }
 
-###################################
 sub PHTV_pct2bri($) {
     my ($pct) = @_;
     return 0 if ( $pct <= 0 );
     return int( $pct / 100 * 255 + 0.5 );
 }
 
-###################################
 sub PHTV_hex2rgb($) {
     my ($hex) = @_;
     if ( uc($hex) =~ /^(..)(..)(..)$/ ) {
@@ -3427,7 +3276,6 @@ sub PHTV_hex2rgb($) {
     }
 }
 
-###################################
 sub PHTV_rgb2hex($$$) {
     my ( $r, $g, $b ) = @_;
     my $return = sprintf( "%2.2X%2.2X%2.2X", $r, $g, $b );
@@ -3435,7 +3283,6 @@ sub PHTV_rgb2hex($$$) {
     return uc($return);
 }
 
-###################################
 sub PHTV_hex2hsb($;$) {
     my ( $hex, $type ) = @_;
     $type = lc($type) if ( defined( ($type) && $type ne "" ) );
@@ -3452,14 +3299,12 @@ sub PHTV_hex2hsb($;$) {
     }
 }
 
-###################################
 sub PHTV_hsb2hex($$$) {
     my ( $h, $s, $b ) = @_;
     my $rgb = PHTV_hsb2rgb( $h, $s, $b );
     return PHTV_rgb2hex( $rgb->{r}, $rgb->{g}, $rgb->{b} );
 }
 
-###################################
 sub PHTV_rgb2hsb ($$$) {
     my ( $r, $g, $b ) = @_;
 
@@ -3481,7 +3326,6 @@ sub PHTV_rgb2hsb ($$$) {
     };
 }
 
-###################################
 sub PHTV_hsb2rgb ($$$) {
     my ( $h, $s, $bri ) = @_;
 
@@ -3503,7 +3347,6 @@ sub PHTV_hsb2rgb ($$$) {
     };
 }
 
-###################################
 sub PHTV_rgb2hsv($$$) {
     my ( $r, $g, $b ) = @_;
     my ( $M, $m, $c, $h, $s, $v );
@@ -3545,7 +3388,6 @@ sub PHTV_rgb2hsv($$$) {
     };
 }
 
-###################################
 sub PHTV_hsv2rgb($$$) {
     my ( $h, $s, $v ) = @_;
     my $r = 0.0;
@@ -3606,7 +3448,6 @@ sub PHTV_hsv2rgb($$$) {
     };
 }
 
-###################################
 sub PHTV_max {
     my ( $max, @vars ) = @_;
     for (@vars) {
@@ -3616,7 +3457,6 @@ sub PHTV_max {
     return $max;
 }
 
-###################################
 sub PHTV_min {
     my ( $min, @vars ) = @_;
     for (@vars) {
@@ -3625,10 +3465,45 @@ sub PHTV_min {
     return $min;
 }
 
+sub PHTV_createDeviceId() {
+    my $deviceid;
+    my @chars = ( "A" .. "Z", "a" .. "z", 0 .. 9 );
+    $deviceid .= $chars[ rand @chars ] for 1 .. 16;
+    return $deviceid;
+}
+
+sub PHTV_createAuthSignature($$$) {
+    my ( $timestamp, $pin, $secretkey ) = @_;
+    my $base64 = 0;
+    my $authsignature;
+
+    if ( $secretkey =~ m/.*=+$/ ) {
+        $secretkey = decode_base64($secretkey);
+        $base64    = 1;
+    }
+
+    eval {
+        require Digest::SHA;
+        import Digest::SHA qw( hmac_sha1_hex );
+        $authsignature = hmac_sha1_hex( $timestamp . trim($pin), $secretkey );
+    };
+    return
+      if ($@);
+
+    while ( length($authsignature) % 4 ) {
+        $authsignature .= '=';
+    }
+
+    return trim( encode_base64($authsignature) ) if ($base64);
+    return $authsignature;
+}
+
 1;
 
 =pod
 =item device
+=item summary control for Philips TV devices and their Ambilight via network connection
+=item summary_DE Steuerung von Philips TV Ger&auml;ten und Ambilight &uuml;ber das Netzwerk
 =begin html
 
 <a name="PHTV"></a>
@@ -3641,7 +3516,7 @@ sub PHTV_min {
     <code>define &lt;name&gt; PHTV &lt;ip-address-or-hostname&gt; [&lt;poll-interval&gt;]</code>
     <br><br>
 
-    This module controls Philips TV devices and their Ambilight.<br><br>
+    This module controls Philips TV devices and their Ambilight via network connection.<br><br>
     Defining a PHTV device will schedule an internal task (interval can be set
     with optional parameter &lt;poll-interval&gt; in seconds, if not set, the value is 45
     seconds), which periodically reads the status of the device and triggers notify/filelog commands.<br><br>
@@ -3653,10 +3528,15 @@ sub PHTV_min {
        # With custom interval of 20 seconds<br>
        define PhilipsTV PHTV 192.168.0.10 20
     </code></ul>
+  <br>
+  <br>
+    <i>Note:</i> Some older devices might need to have the API activated first. If you get no response from your
+    device, try to input "5646877223" on the remote while watching TV (which spells jointspace on the digits).
+    A popup might appear stating the API was successfully enabled.
   </ul>
   <br>
   <br>
-  
+
   <a name="PHTVset"></a>
   <b>Set </b>
   <ul>
@@ -3803,7 +3683,7 @@ sub PHTV_min {
     <li><b>disable</b> - Disable polling (true/false)</li>
     <li><b>drippyFactor</b> - Adds some delay in seconds after low-performance devices came up to allow more time to become responsive (default=0)</li>
     <li><b>inputs</b> - Presents the inputs read from device. Inputs can be renamed by adding <code>,NewName</code> right after the original name.</li>
-    <li><b>jsversion</b> - JointSpace protocol version; e.g. pre2014 devices use 1, 2014 devices use 5 and 2015 devices use 6. defaults to 1</li>
+    <li><b>jsversion</b> - JointSpace protocol version; e.g. pre2014 devices use 1, 2014 devices use 5 and >=2015 devices use 6. defaults to 1</li>
     <li><b>sequentialQuery</b> - avoid parallel queries for low-performance devices</li>
     <li><b>timeout</b> - Set different polling timeout in seconds (default=7)</li>
   </ul></ul>
@@ -3854,7 +3734,7 @@ sub PHTV_min {
 <h3>PHTV</h3>
 <ul>
 Eine deutsche Version der Dokumentation ist derzeit nicht vorhanden.
-Die englische Version ist hier zu finden: 
+Die englische Version ist hier zu finden:
 </ul>
 <ul>
 <a href='http://fhem.de/commandref.html#PHTV'>PHTV</a>

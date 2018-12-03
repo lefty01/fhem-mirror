@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 00_CUL.pm 17559 2018-10-18 07:45:07Z rudolfkoenig $
 package main;
 
 use strict;
@@ -25,7 +25,7 @@ my %gets = (    # Name, Data to send to the CUL, Regexp for the answer
   "raw"      => ["", '.*'],
   "uptime"   => ["t", '^[0-9A-F]{8}[\r\n]*$' ],
   "fhtbuf"   => ["T03", '^[0-9A-F]+[\r\n]*$' ],
-  "cmds"     => ["?", '.*Use one of[ \*0-9A-Za-z]+[\r\n]*$' ],
+  "cmds"     => ["?", '.*Use one of( .)*[\r\n]*$' ],
   "credit10ms" => [ "X", '^.. *\d*[\r\n]*$' ],
 );
 
@@ -45,16 +45,20 @@ my %sets = (
 
 my @ampllist = (24, 27, 30, 33, 36, 38, 40, 42); # rAmpl(dB)
 
-my $clientsSlowRF    = ":FS20:FHT.*:KS300:USF1000:BS:HMS: ".
+my $sccMods = "STACKABLE_CC:TSSTACKED:STACKABLE";
+my $culNameRe = "^(CUL|TSCUL)\$";
+
+my $clientsSlowRF    = ":FS20:FHT.*:KS300:USF1000:BS:HMS:FS20V: ".
                        ":CUL_EM:CUL_WS:CUL_FHTTK:CUL_HOERMANN: ".
                        ":ESA2000:CUL_IR:CUL_TX:Revolt:IT:UNIRoll:SOMFY: ".
-                       ":STACKABLE_CC:CUL_RFR::CUL_TCM97001:CUL_REDIRECT:";
-my $clientsHomeMatic = ":CUL_HM:HMS:CUL_IR:STACKABLE_CC:";
-my $clientsMAX       = ":CUL_MAX:HMS:CUL_IR:STACKABLE_CC:";
-my $clientsWMBus     = ":WMBUS:HMS:CUL_IR:STACKABLE_CC:";
-my $clientsKOPP_FC   = ":KOPP_FC:HMS:CUL_IR:STACKABLE_CC:";
+                       ":$sccMods:CUL_RFR::CUL_TCM97001:CUL_REDIRECT:";
+my $clientsHomeMatic = ":CUL_HM:HMS:CUL_IR:$sccMods:";
+my $clientsMAX       = ":CUL_MAX:HMS:CUL_IR:$sccMods:";
+my $clientsWMBus     = ":WMBUS:HMS:CUL_IR:$sccMods:";
+my $clientsKOPP_FC   = ":KOPP_FC:HMS:CUL_IR:$sccMods:";
 
 my %matchListSlowRF = (
+    "0:FS20V"     => "^81..(04|0c)..0101a001......00[89a-f]...",
     "1:USF1000"   => "^81..(04|0c)..0101a001a5ceaa00....",
     "2:BS"        => "^81..(04|0c)..0101a001a5cf",
     "3:FS20"      => "^81..(04|0c)..0101a001",
@@ -62,7 +66,7 @@ my %matchListSlowRF = (
     "5:KS300"     => "^810d04..4027a001",
     "6:CUL_WS"    => "^K.....",
     "7:CUL_EM"    => "^E0.................\$",
-    "8:HMS"       => "^810e04....(1|5|9).a001",
+    "8:HMS"       => "^810e04......a001",
     "9:CUL_FHTTK" => "^T[A-F0-9]{8}",
     "A:CUL_RFR"   => "^[0-9A-F]{4}U.",
     "B:CUL_HOERMANN"=> "^R..........",
@@ -76,6 +80,8 @@ my %matchListSlowRF = (
     "J:SOMFY"     => "^Y[r|t|s]:?[A-F0-9]+",
     "K:CUL_TCM97001"  => "^s[A-F0-9]+",
     "L:CUL_REDIRECT"  => "^o+",
+    "M:TSSTACKED"=>"^\\*",
+    "N:STACKABLE"=>"^\\*",
 );
 
 my %matchListHomeMatic = (
@@ -83,6 +89,8 @@ my %matchListHomeMatic = (
     "8:HMS"       => "^810e04....(1|5|9).a001", # CUNO OneWire HMS Emulation
     "D:CUL_IR"    => "^I............",
     "H:STACKABLE_CC"=>"^\\*",
+    "M:TSSTACKED"=>"^\\*",
+    "N:STACKABLE"=>"^\\*",
 );
 
 my %matchListMAX = (
@@ -90,6 +98,8 @@ my %matchListMAX = (
     "8:HMS"       => "^810e04....(1|5|9).a001", # CUNO OneWire HMS Emulation
     "D:CUL_IR"    => "^I............",
     "H:STACKABLE_CC"=>"^\\*",
+    "M:TSSTACKED"=>"^\\*",
+    "N:STACKABLE"=>"^\\*",
 );
 
 my %matchListWMBus = (
@@ -97,6 +107,8 @@ my %matchListWMBus = (
     "8:HMS"       => "^810e04....(1|5|9).a001", # CUNO OneWire HMS Emulation
     "D:CUL_IR"    => "^I............",
     "H:STACKABLE_CC"=>"^\\*",
+    "M:TSSTACKED"=>"^\\*",
+    "N:STACKABLE"=>"^\\*",
 );
 
 my %matchListKOPP_FC = (
@@ -104,6 +116,8 @@ my %matchListKOPP_FC = (
     "8:HMS"       => "^810e04....(1|5|9).a001", # CUNO OneWire HMS Emulation
     "D:CUL_IR"    => "^I............",
     "H:STACKABLE_CC"=>"^\\*",
+    "M:TSSTACKED"=>"^\\*",
+    "N:STACKABLE"=>"^\\*",
 );
 
 
@@ -126,15 +140,22 @@ CUL_Initialize($)
   $hash->{GetFn}   = "CUL_Get";
   $hash->{SetFn}   = "CUL_Set";
   $hash->{AttrFn}  = "CUL_Attr";
-  $hash->{AttrList}= "do_not_notify:1,0 dummy:1,0 " .
-                     "showtime:1,0 model:CUL,CUN sendpool addvaltrigger ".
-                     "rfmode:SlowRF,HomeMatic,MAX,WMBus_T,WMBus_S,KOPP_FC ".
-                     "hmId longids ".
-                     "hmProtocolEvents:0_off,1_dump,2_dumpFull,3_dumpTrigger " .
-                     $readingFnAttributes;
-
+  no warnings 'qw';
+  my @attrList = qw(
+    addvaltrigger
+    connectCommand
+    do_not_notify:1,0
+    dummy:1,0
+    hmId longids 
+    hmProtocolEvents:0_off,1_dump,2_dumpFull,3_dumpTrigger 
+    model:CUL,CUN,CUNO,SCC,nanoCUL
+    rfmode:SlowRF,HomeMatic,MAX,WMBus_T,WMBus_S,WMBus_C,KOPP_FC 
+    sendpool
+    showtime:1,0
+  );
+  use warnings 'qw';
+  $hash->{AttrList} = join(" ", @attrList)." ".$readingFnAttributes;
   $hash->{ShutdownFn} = "CUL_Shutdown";
-
 }
 
 sub
@@ -173,7 +194,7 @@ CUL_Define($$)
     my $x = $1;
     foreach my $d (keys %defs) {
       next if($d eq $name);
-      if($defs{$d}{TYPE} eq "CUL") {
+      if($defs{$d}{TYPE} =~ m/$culNameRe/) {
         if(uc($defs{$d}{FHTID}) =~ m/^$x/) {
           my $m = "$name: Cannot define multiple CULs with identical ".
                         "first two digits ($x)";
@@ -403,7 +424,8 @@ CUL_Get($@)
   } else {
 
     CUL_SimpleWrite($hash, $gets{$a[1]}[0] . $arg);
-    ($err, $msg) = CUL_ReadAnswer($hash, $a[1], 0, $gets{$a[1]}[1]);
+    my $mtch = defined($a[3]) ? $a[3] : $gets{$a[1]}[1]; # optional
+    ($err, $msg) = CUL_ReadAnswer($hash, $a[1], 0, $mtch);
     if(!defined($msg)) {
       DevIo_Disconnected($hash);
       $msg = "No answer";
@@ -424,7 +446,7 @@ CUL_Get($@)
 
   }
 
-  readingsSingleUpdate($hash, $a[1], $msg, 0);
+  readingsSingleUpdate($hash, $a[1], $msg, 1);
 
   return "$a[0] $a[1] => $msg";
 }
@@ -490,10 +512,13 @@ CUL_DoInit($)
     $fhtid =~ s/[\r\n]//g;
     Log3 $name, 5, "GOT CUL fhtid: $fhtid";
     if(!defined($fhtid) || $fhtid ne $hash->{FHTID}) {
-      Log3 $name, 2, "Setting CUL fhtid from $fhtid to " . $hash->{FHTID};
+      Log3 $name, 2, "Setting $name fhtid from $fhtid to " . $hash->{FHTID};
       CUL_SimpleWrite($hash, "T01" . $hash->{FHTID});
     }
   }
+
+  my $cc = AttrVal($name, "connectCommand", undef);
+  CUL_SimpleWrite($hash, $cc) if($cc);
 
   readingsSingleUpdate($hash, "state", "Initialized", 1);
 
@@ -512,7 +537,7 @@ CUL_ReadAnswer($$$$)
   my ($hash, $arg, $anydata, $regexp) = @_;
   my $ohash = $hash;
 
-  while($hash->{TYPE} ne "CUL") {   # Look for the first "real" CUL
+  while($hash && $hash->{TYPE} !~ m/$culNameRe/) {
     $hash = $hash->{IODev};
   }
   return ("No FD", undef)
@@ -815,10 +840,6 @@ CUL_Parse($$$$@)
 {
   my ($hash, $iohash, $name, $rmsg, $initstr) = @_;
 
-  if($rmsg =~ m/^\*/) {                           # STACKABLE_CC
-    Dispatch($hash, $rmsg, undef);
-    return;
-  }
   if($rmsg =~ m/^V/) {                            # CUN* keepalive
     Log3 $name, 4, "CUL_Parse: $name $rmsg";
     return;
@@ -867,10 +888,6 @@ CUL_Parse($$$$@)
       $dmsg = sprintf("81%02x04xx0909a001%s00%s",
                        $len/2+7, substr($dmsg,1,6), substr($dmsg,7));
       $dmsg = lc($dmsg);
-
-    } else {
-      ;                                            # => 09_CUL_FHTTK.pm
-
     }
 
   } elsif($fn eq "H" && $len >= 13) {              # Reformat for 12_HMS.pm
@@ -902,16 +919,6 @@ CUL_Parse($$$$@)
     $dmsg = lc($dmsg);
   } elsif($fn eq "i" && $len >= 7) {              # IT
     $dmsg = lc($dmsg);
-  } elsif($fn eq "Y" && $len >= 3) {               # SOMFY RTS
-    ;
-  } elsif($fn eq "S" && $len >= 33) {              # CUL_ESA / ESA2000 / Native
-    ;
-  } elsif($fn eq "E" && $len >= 11) {              # CUL_EM / Native
-    ;
-  } elsif($fn eq "R" && $len >= 11) {              # CUL_HOERMANN / Native
-    ;
-  } elsif($fn eq "I" && $len >= 12) {              # IR-CUL/CUN/CUNO
-    ;
   } elsif($fn eq "A" && $len >= 20) {              # AskSin/BidCos/HomeMatic
     my $src = substr($dmsg,9,6);
     if($modules{CUL_HM}{defptr}{$src}){
@@ -926,16 +933,6 @@ CUL_Parse($$$$@)
     $dmsg .= "::$rssi" if (defined($rssi));
   } elsif($fn eq "t" && $len >= 5)  {              # TX3
     $dmsg = "TX".substr($dmsg,1);                  # t.* is occupied by FHTTK
-  } elsif($fn eq "s" && $len >= 5)  {              # CUL_TCM97001
-    ;
-  } elsif($fn eq "o" && $len >= 5)  {              # CUL_REDIRECT
-    ;
-  } elsif($fn eq "k" && $len >= 20) {              # KOPP_FC
-    ;
-  } else {
-    DoTrigger($name, "UNKNOWNCODE $dmsg");
-    Log3 $name, 2, "$name: unknown message $dmsg";
-    return;
   }
 
   $hash->{"${name}_MSGCNT"}++;
@@ -987,38 +984,24 @@ CUL_SimpleWrite(@)
   my ($hash, $msg, $nonl) = @_;
   return if(!$hash);
   ($hash, $msg) = CUL_prefix(1, $hash, $msg);
-
-  my $name = $hash->{NAME};
-  if (AttrVal($name,"rfmode","") eq "HomeMatic"){
-    Log3 $name, 4, "CUL_send:  $name".join(" ",unpack('A2A2A2A4A6A6A*',$msg));
-  }
-  else{
-    Log3 $name, 5, "SW: $msg";
-  }
-
-  $msg .= "\n" unless($nonl);
-
-  $hash->{USBDev}->write($msg)    if($hash->{USBDev});
-  syswrite($hash->{TCPDev}, $msg) if($hash->{TCPDev});
-  syswrite($hash->{DIODev}, $msg) if($hash->{DIODev});
-
-  # Some linux installations are broken with 0.001, T01 returns no answer
-  select(undef, undef, undef, 0.01);
+  DevIo_SimpleWrite($hash, $msg, 2, !$nonl);
 }
 
 sub
 CUL_Attr(@)
 {
   my ($cmd,$name,$aName,$aVal) = @_;
+  my $hash = $defs{$name};
+
   if($aName eq "rfmode") {
 
-    my $hash = $defs{$name};
 
     $aVal = "SlowRF" if(!$aVal ||
                          ($aVal ne "HomeMatic" 
                           && $aVal ne "MAX" 
                           && $aVal ne "WMBus_T" 
                           && $aVal ne "WMBus_S" 
+                          && $aVal ne "WMBus_C" 
                           && $aVal ne "KOPP_FC"));
     my $msg = $hash->{NAME} . ": Mode $aVal not supported";
 
@@ -1074,6 +1057,18 @@ CUL_Attr(@)
         Log3 $name, 2, $msg;
         return $msg;
       }
+    } elsif($aVal eq "WMBus_C") {
+      return if($hash->{initString} =~ m/brt/);
+      if($hash->{CMDS} =~ m/b/ || IsDummy($hash->{NAME}) || !$hash->{FD}) {
+        $hash->{Clients} = $clientsWMBus;
+        $hash->{MatchList} = \%matchListWMBus;
+        $hash->{initString} = "X21\nbrc"; # Use C-Mode
+        CUL_WriteInit($hash);
+   
+      } else {
+        Log3 $name, 2, $msg;
+        return $msg;
+      }      
     } elsif($aVal eq "KOPP_FC") {
       if($hash->{CMDS} =~ m/k/ || IsDummy($hash->{NAME}) || !$hash->{FD}) {
         $hash->{Clients} = $clientsKOPP_FC;
@@ -1106,6 +1101,10 @@ CUL_Attr(@)
       return "wrong syntax: hmId must be 6-digit-hex-code (3 byte)"
         if($aVal !~ m/^[A-F0-9]{6}$/i);
     }
+
+  } elsif($aName eq "connectCommand"){
+    CUL_SimpleWrite($hash, $aVal) if($cmd eq "set");
+
   }
 
   return undef;
@@ -1115,12 +1114,10 @@ sub
 CUL_prefix($$$)
 {
   my ($isadd, $hash, $msg) = @_;
-  my $t = $hash->{TYPE};
-  while($t ne "CUL") {
+  while($hash && $hash->{TYPE} !~ m/$culNameRe/) {
     $msg = CallFn($hash->{NAME}, $isadd ? "AddPrefix":"DelPrefix", $hash, $msg);
     $hash = $hash->{IODev};
     last if(!$hash);
-    $t = $hash->{TYPE};
   }
   return ($hash, $msg);
 }
@@ -1128,6 +1125,8 @@ CUL_prefix($$$)
 1;
 
 =pod
+=item summary    connect devices with the culfw Firmware, e.g. Busware CUL
+=item summary_DE Anbindung von Geraeten mit dem culfw Firmware, z.Bsp. Busware CUL
 =begin html
 
 <a name="CUL"></a>
@@ -1311,50 +1310,18 @@ CUL_prefix($$$)
   <a name="CULattr"></a>
   <b>Attributes</b>
   <ul>
-    <li><a href="#do_not_notify">do_not_notify</a></li>
-    <li><a href="#attrdummy">dummy</a></li>
-    <li><a href="#showtime">showtime</a></li>
-    <li><a href="#model">model</a> (CUL,CUN)</li>
-    <li><a name="sendpool">sendpool</a><br>
-        If using more than one CUL for covering a large area, sending
-        different events by the different CUL's might disturb each other. This
-        phenomenon is also known as the Palm-Beach-Resort effect.
-        Putting them in a common sendpool will serialize sending the events.
-        E.g. if you have three CUN's, you have to specify following
-        attributes:<br>
-        <code>attr CUN1 sendpool CUN1,CUN2,CUN3<br>
-        attr CUN2 sendpool CUN1,CUN2,CUN3<br>
-        attr CUN3 sendpool CUN1,CUN2,CUN3</code><br>
-        </li><br>
     <li><a name="addvaltrigger">addvaltrigger</a><br>
         Create triggers for additional device values. Right now these are RSSI
         and RAWMSG for the CUL family and RAWMSG for the FHZ.
         </li><br>
-    <li><a name="rfmode">rfmode</a><br>
-        Configure the RF Transceiver of the CUL (the CC1101). Available
-        arguments are:
-        <ul>
-        <li>SlowRF<br>
-            To communicate with FS20/FHT/HMS/EM1010/S300/Hoermann devices @1 kHz
-            datarate. This is the default.</li>
 
-        <li>HomeMatic<br>
-            To communicate with HomeMatic type of devices @10 kHz datarate.</li>
+    <li><a name="connectCommand">connectCommand</a><br>
+      raw culfw command sent to the CUL after a (re-)connect of the USB device,
+      and sending the usual initialization needed for the configured rfmode.
+      </li>
 
-        <li>MAX<br>
-            To communicate with MAX! type of devices @10 kHz datarate.</li>
-
-        <li>WMBus_S</li>
-        <li>WMBus_T<br>
-            To communicate with Wireless M-Bus devices like water, gas or
-            electrical meters.  Wireless M-Bus uses two different communication
-            modes, S-Mode and T-Mode. While in this mode, no reception of other
-            protocols like SlowRF or HomeMatic is possible. See also the WMBUS
-            FHEM Module.
-            </li>
-        </ul>
-        </li><br>
-
+    <li><a href="#do_not_notify">do_not_notify</a></li>
+    <li><a href="#attrdummy">dummy</a></li>
     <li><a name="hmId">hmId</a><br>
         Set the HomeMatic ID of this device. If this attribute is absent, the
         ID will be F1&lt;FHTID&gt;. Note 1: After setting or changing this
@@ -1370,7 +1337,8 @@ CUL_prefix($$$)
         Example:
         <ul>
         <code>
-        2012-05-17 09:44:22.515 CUL CULHM RCV L:0B N:81 CMD:A258 SRC:...... DST:...... 0000 (TYPE=88,WAKEMEUP,BIDI,RPTEN)
+        2012-05-17 09:44:22.515 CUL CULHM RCV L:0B N:81 CMD:A258 SRC:......
+          DST:...... 0000 (TYPE=88,WAKEMEUP,BIDI,RPTEN)
         </code>
         </ul>
         </li><br>
@@ -1395,7 +1363,47 @@ CUL_prefix($$$)
         # Will generate devices names like SD_WS07_TH_3 for channel 3.<br>
         attr cul longids SD_WS07
         </code></ul>
-    </li><br>
+        </li><br>
+
+    <li><a href="#model">model</a> (CUL,CUN,etc)</li>
+    <li><a name="sendpool">sendpool</a><br>
+        If using more than one CUL for covering a large area, sending
+        different events by the different CUL's might disturb each other. This
+        phenomenon is also known as the Palm-Beach-Resort effect.
+        Putting them in a common sendpool will serialize sending the events.
+        E.g. if you have three CUN's, you have to specify following
+        attributes:<br>
+        <code>attr CUN1 sendpool CUN1,CUN2,CUN3<br>
+        attr CUN2 sendpool CUN1,CUN2,CUN3<br>
+        attr CUN3 sendpool CUN1,CUN2,CUN3</code><br>
+        </li><br>
+    <li><a name="rfmode">rfmode</a><br>
+        Configure the RF Transceiver of the CUL (the CC1101). Available
+        arguments are:
+        <ul>
+        <li>SlowRF<br>
+            To communicate with FS20/FHT/HMS/EM1010/S300/Hoermann devices @1 kHz
+            datarate. This is the default.</li>
+
+        <li>HomeMatic<br>
+            To communicate with HomeMatic type of devices @10 kHz datarate.</li>
+
+        <li>MAX<br>
+            To communicate with MAX! type of devices @10 kHz datarate.</li>
+
+        <li>WMBus_S</li>
+        <li>WMBus_T</li>
+        <li>WMBus_C<br>
+            To communicate with Wireless M-Bus devices like water, gas or
+            electrical meters.  Wireless M-Bus uses three different communication
+            modes, S-Mode, T-Mode and C-Mode. While in this mode, no reception of other
+            protocols like SlowRF or HomeMatic is possible. See also the WMBUS
+            FHEM Module.
+            </li>
+        </ul>
+        </li><br>
+    <li><a href="#showtime">showtime</a></li>
+
         
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
   </ul>
@@ -1519,9 +1527,9 @@ CUL_prefix($$$)
         <ul>
         <li>freq bestimmt sowohl die Empfangs- als auch die Sendefrequenz.<br>
             Bemerkung: Auch wenn der CC1101 zwischen den Frequenzen 315 und 915
-            MHz eingestellt werden kann, ist die Antennenanbindung bzw. die Antenne
-            des CUL exakt auf eine Frequenz eingestellt.
-            Standard ist 868.3 MHz (bzw. 433 MHz).</li>
+            MHz eingestellt werden kann, ist die Antennenanbindung bzw. die
+            Antenne des CUL exakt auf eine Frequenz eingestellt.  Standard ist
+            868.3 MHz (bzw. 433 MHz).</li>
 
         <li>bWidth kann zwischen 58 kHz und 812 kHz variiert werden.
             Gro&szlig;e Werte sind empfindlicher gegen Interferencen, aber
@@ -1613,53 +1621,19 @@ CUL_prefix($$$)
   <a name="CULattr"></a>
   <b>Attribute</b>
   <ul>
-    <li><a href="#do_not_notify">do_not_notify</a></li>
-    <li><a href="#attrdummy">dummy</a></li>
-    <li><a href="#showtime">showtime</a></li>
-    <li><a href="#model">model</a> (CUL,CUN)</li>
-    <li><a name="sendpool">sendpool</a><br>
-        Wenn mehr als ein CUL verwendet wird, um einen gr&ouml;&szlig;eren
-        Bereich abzudecken, k&ouml;nnen diese sich gegenseitig
-        beeinflussen. Dieses Ph&auml;nomen wird auch Palm-Beach-Resort Effekt
-        genannt.  Wenn man diese zu einen gemeinsamen Sende"pool"
-        zusammenschlie&szlig;t, wird das Senden der einzelnen Telegramme
-        seriell (d.h. hintereinander) durchgef&uuml;hrt.
-        Wenn z.B. drei CUN's zur
-        Verf&uuml;gung stehen, werden folgende Attribute gesetzt:<br>
-        <code>attr CUN1 sendpool CUN1,CUN2,CUN3<br>
-        attr CUN2 sendpool CUN1,CUN2,CUN3<br>
-        attr CUN3 sendpool CUN1,CUN2,CUN3</code><br>
-        </li><br>
-
     <li><a name="addvaltrigger">addvaltrigger</a><br>
         Generiert Trigger f&uuml;r zus&auml;tzliche Werte. Momentan sind dies
         RSSI und RAWMSG f&uuml;r die CUL Familie und RAWMSG f&uuml;r FHZ.
         </li><br>
 
-    <li><a name="rfmode">rfmode</a><br>
-        Konfiguriert den RF Transceiver des CULs (CC1101). Verf&uuml;gbare
-        Argumente sind:
-        <ul>
-        <li>SlowRF<br>
-            F&uuml;r die Kommunikation mit FS20/FHT/HMS/EM1010/S300/Hoermann
-            Ger&auml;ten @1 kHz Datenrate (Standardeinstellung).</li>
+    <li><a name="connectCommand">connectCommand</a><br>
+      culfw Befehl, was nach dem Verbindungsaufbau mit dem USB-Ger&auml;t, nach
+      Senden der zum Initialisieren der konfigurierten rfmode ben&ouml;tigten
+      Befehle gesendet wird.
+      </li>
 
-        <li>HomeMatic<br>
-            F&uuml;r die Kommunikation mit HomeMatic Ger&auml;ten @10 kHz
-            Datenrate.</li>
-
-        <li>MAX<br>
-            F&uuml;r die Kommunikation mit MAX! Ger&auml;ten @10 kHz
-            Datenrate.</li>
-        <li>WMBus_S</li>
-        <li>WMBus_T<br>
-            F&uuml;r die Kommunikation mit Wireless M-Bus Ger&auml;ten wie
-            Wasser-, Gas- oder Elektroz&auml;hlern.  Wireless M-Bus verwendet
-            zwei unterschiedliche Kommunikationsarten, S-Mode und T-Mode.  In
-            diesem Modus ist der Empfang von anderen Protokollen wie SlowRF
-            oder HomeMatic nicht m&ouml;glich.</li>
-        </ul>
-        </li><br>
+    <li><a href="#do_not_notify">do_not_notify</a></li>
+    <li><a href="#attrdummy">dummy</a></li>
 
     <li><a name="hmId">hmId</a><br>
         Setzt die HomeMatic ID des Ger&auml;tes. Wenn dieses Attribut fehlt,
@@ -1678,7 +1652,8 @@ CUL_prefix($$$)
         Beispiel:
         <ul>
         <code>
-        2012-05-17 09:44:22.515 CUL CULHM RCV L:0B N:81 CMD:A258 SRC:...... DST:...... 0000 (TYPE=88,WAKEMEUP,BIDI,RPTEN)
+        2012-05-17 09:44:22.515 CUL CULHM RCV L:0B N:81 CMD:A258 SRC:......
+          DST:...... 0000 (TYPE=88,WAKEMEUP,BIDI,RPTEN)
         </code>
         </ul>
         </li><br>
@@ -1705,6 +1680,49 @@ CUL_prefix($$$)
         </code></ul>
     </li><br>
     
+    <li><a href="#model">model</a> (CUL,CUN)</li><br>
+
+    <li><a name="rfmode">rfmode</a><br>
+        Konfiguriert den RF Transceiver des CULs (CC1101). Verf&uuml;gbare
+        Argumente sind:
+        <ul>
+        <li>SlowRF<br>
+            F&uuml;r die Kommunikation mit FS20/FHT/HMS/EM1010/S300/Hoermann
+            Ger&auml;ten @1 kHz Datenrate (Standardeinstellung).</li>
+
+        <li>HomeMatic<br>
+            F&uuml;r die Kommunikation mit HomeMatic Ger&auml;ten @10 kHz
+            Datenrate.</li>
+
+        <li>MAX<br>
+            F&uuml;r die Kommunikation mit MAX! Ger&auml;ten @10 kHz
+            Datenrate.</li>
+        <li>WMBus_S</li>
+        <li>WMBus_T</li>
+        <li>WMBus_C<br>
+            F&uuml;r die Kommunikation mit Wireless M-Bus Ger&auml;ten wie
+            Wasser-, Gas- oder Elektroz&auml;hlern.  Wireless M-Bus verwendet
+            drei unterschiedliche Kommunikationsarten, S-Mode, T-Mode und C-Mode.  In
+            diesem Modus ist der Empfang von anderen Protokollen wie SlowRF
+            oder HomeMatic nicht m&ouml;glich.</li>
+        </ul>
+        </li><br>
+
+    <li><a name="sendpool">sendpool</a><br>
+        Wenn mehr als ein CUL verwendet wird, um einen gr&ouml;&szlig;eren
+        Bereich abzudecken, k&ouml;nnen diese sich gegenseitig
+        beeinflussen. Dieses Ph&auml;nomen wird auch Palm-Beach-Resort Effekt
+        genannt.  Wenn man diese zu einen gemeinsamen Sende"pool"
+        zusammenschlie&szlig;t, wird das Senden der einzelnen Telegramme
+        seriell (d.h. hintereinander) durchgef&uuml;hrt.
+        Wenn z.B. drei CUN's zur
+        Verf&uuml;gung stehen, werden folgende Attribute gesetzt:<br>
+        <code>attr CUN1 sendpool CUN1,CUN2,CUN3<br>
+        attr CUN2 sendpool CUN1,CUN2,CUN3<br>
+        attr CUN3 sendpool CUN1,CUN2,CUN3</code><br>
+        </li><br>
+
+    <li><a href="#showtime">showtime</a></li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
   </ul>
   <br>

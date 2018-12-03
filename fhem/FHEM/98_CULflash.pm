@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 98_CULflash.pm 11984 2016-08-19 12:47:50Z rudolfkoenig $
 package main;
 use strict;
 use warnings;
@@ -97,6 +97,8 @@ CommandCULflash($$)
 
 =pod
 =item command
+=item summary    flash (USB-)CUL device with culfw
+=item summary_DE USB-CUL Ger&auml;te mit Firmware versorgen (flashen)
 =begin html
 
 <a name="CULflash"></a>

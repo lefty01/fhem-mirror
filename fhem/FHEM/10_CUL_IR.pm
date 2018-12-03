@@ -5,7 +5,7 @@
 # 
 # Published under GNU GPL License
 ######################################################
-# $Id$
+# $Id: 10_CUL_IR.pm 3580 2013-08-02 16:17:38Z betateilchen $
 package main;
 
 use strict;

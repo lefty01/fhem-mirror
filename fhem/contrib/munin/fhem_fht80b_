@@ -2,7 +2,7 @@
 # -*- bash -*-
 # vim: ft=bash
 #
-# $Id$
+# $Id: fhem_fht80b_ 6173 2014-06-29 01:48:49Z magenbrot $
 #
 
 : << =cut

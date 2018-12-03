@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 00_HMLAN.pm 14073 2017-04-22 13:45:25Z martinp876 $
 package main;
 
 
@@ -31,6 +31,7 @@ sub HMLAN_getVerbLvl ($$$$);
 my %sets = ( "open"         => ""
             ,"close"        => ""
             ,"reopen"       => ""
+            ,"restart"      => ""
             ,"hmPairForSec" => "HomeMatic"
             ,"hmPairSerial" => "HomeMatic"
             ,"reassignIDs"  => ""
@@ -79,7 +80,7 @@ sub HMLAN_Initialize($) {
                      "loadLevel ".
                      "hmLanQlen:1_min,2_low,3_normal,4_high,5_critical ".
                      "wdTimer:5,10,15,20,25 ".
-                     "logIDs ".
+                     "logIDs:multiple,sys,all,broadcast ".
                      $readingFnAttributes;
 }
 sub HMLAN_Define($$) {#########################################################
@@ -116,12 +117,12 @@ sub HMLAN_Define($$) {#########################################################
   my @arr = ();
   @{$hash->{helper}{q}{apIDs}} = \@arr;
 
-  $hash->{helper}{q}{scnt}     = 0;
-  $hash->{helper}{q}{loadNo}   = 0;
-  $hash->{helper}{q}{loadLast} = 0;    
-  $hash->{msgLoadHistory}      = (60/$HMmlSlice)."min steps: "
-                                .join("/",("-") x $HMmlSlice);
-  $hash->{msgLoadCurrent}      = 0;
+  $hash->{helper}{q}{scnt}        = 0;
+  $hash->{helper}{q}{loadNo}      = 0;
+  $hash->{helper}{q}{loadLastMax} = 0;   # max load in last slice
+  my @ald = ("0") x $HMmlSlice;
+  $hash->{helper}{q}{ald}         = \@ald;  # array of load events  
+  $hash->{msgLoadCurrent}         = 0;
   
   $defs{$name}{helper}{log}{all} = 0;# selective log support
   $defs{$name}{helper}{log}{sys} = 0;
@@ -170,6 +171,7 @@ sub HMLAN_Notify(@) {##########################################################
       HMLAN_Attr("set",$hash->{NAME},"logIDs",$aVal) if($aVal);
       delete $hash->{helper}{attrPend};
     }
+    HMLAN_writeAesKey($hash->{NAME});
   }
   elsif ($dev->{NAME} eq $hash->{NAME}){
     foreach (grep (m/CONNECTED$/,@{$dev->{CHANGED}})) { # connect/disconnect
@@ -248,6 +250,7 @@ sub HMLAN_Attr(@) {############################################################
     }
   }
   elsif($aName eq "logIDs"){
+    HMLAN_UpdtLogId();
     if ($cmd eq "set"){
       if ($init_done){
         if ($aVal){
@@ -266,10 +269,12 @@ sub HMLAN_Attr(@) {############################################################
           }
           else{
             $defs{$name}{helper}{log}{all}=0;
+            for (@ids) {s/broadcast/000000/g};
             $_=substr(CUL_HM_name2Id($_),0,6) foreach(grep !/^$/,@ids);
             $_="" foreach(grep !/^[A-F0-9]{6}$/,@ids);
             @ids = HMLAN_noDup(@ids);
             push @idName,CUL_HM_id2Name($_) foreach(@ids);
+            for (@idName) {s/000000/broadcast/g};
           }
           $attr{$name}{$aName} = join(",",@idName);
           @{$defs{$name}{helper}{log}{ids}}=grep !/^(sys|all)$/,@ids;
@@ -347,21 +352,36 @@ sub HMLAN_Attr(@) {############################################################
   return;
 }
 
+sub HMLAN_UpdtLogId() {####################################################
+  $modules{HMLAN}{AttrList} =~ s/logIDs:.*? //;
+  $modules{HMLAN}{AttrList} =~ s/logIDs:.*?$//;
+  $modules{HMLAN}{AttrList} .= " logIDs:multiple,sys,all,broadcast,"
+                               .join(",",(devspec2array("TYPE=CUL_HM:FILTER=DEF=......:FILTER=model!=ActionDetector")));
+  return;
+}
+
+
 sub HMLAN_UpdtMsgLoad($$) {####################################################
   my($name,$val) = @_;
   my $hash = $defs{$name};
+  my $hashQ = $defs{$name}{helper}{q};
 
-  my $t = int(gettimeofday()/(3600/$HMmlSlice))%$HMmlSlice;
+  $hash->{msgLoadCurrent} = $val;
+  my ($r) = grep { $_ <= $val } @{$hash->{helper}{loadLvl}{a}};
+  readingsSingleUpdate($hash,"loadLvl",$hash->{helper}{loadLvl}{h}{$r},1);
   
-  if ($hash->{helper}{q}{loadNo} != $t){
-    $hash->{helper}{q}{loadNo} = $t;    
-    my (undef,@a) = split(": ",$hash->{msgLoadHistory});
-    @a = ( ($hash->{msgLoadCurrent} - $hash->{helper}{q}{loadLast})
-          ,split("/",$a[0]));
-    $hash->{helper}{q}{loadLast} = $hash->{msgLoadCurrent};    
+  $hashQ->{loadLastMax} = $val if ($hashQ->{loadLastMax} < $val);
+  my $t = int(gettimeofday()/(3600/$HMmlSlice))%$HMmlSlice;
+  if ($hashQ->{loadNo} != $t){
+    $hashQ->{loadNo} = $t;    
+
+    unshift @{$hashQ->{ald}},$hashQ->{loadLastMax};
+    #relative history my @a = map{$hashQ->{ald}[$_] - 
+    #relative history             $hashQ->{ald}[$_ + 1]} (0..($HMmlSlice-1));
+    #relative history $hash->{msgLoadHistory}    = (60/$HMmlSlice)."min steps: ".join("/",@a);
+    pop @{$hashQ->{ald}};
     
-    $hash->{msgLoadHistory} = (60/$HMmlSlice)."min steps: "
-                             .join("/",@a[0...($HMmlSlice-1)]);
+    $hash->{msgLoadHistoryAbs} = (60/$HMmlSlice)."min steps: ".join("/",@{$hashQ->{ald}});
        # try to release high-load condition with a dummy message
        # one a while
     if (ReadingsVal($name,"cond","") =~ m /(Warning-HighLoad|ERROR-Overload)/){
@@ -370,11 +390,8 @@ sub HMLAN_UpdtMsgLoad($$) {####################################################
                          .AttrVal($name,"hmId","999999")
                          ."000000");
     }
+    $hashQ->{loadLastMax} = 0;
   }  
-  $hash->{msgLoadCurrent} = $val;
-
-  my ($r) = grep { $_ <= $val } @{$hash->{helper}{loadLvl}{a}};
-  readingsSingleUpdate($hash,"loadLvl",$hash->{helper}{loadLvl}{h}{$r},1);
   return;
 }
 
@@ -434,6 +451,10 @@ sub HMLAN_Set($@) {############################################################
     DevIo_CloseDev($hash);
     HMLAN_condUpdate($hash,253);#set disconnected
     DevIo_OpenDev($hash, 0, "HMLAN_DoInit");
+  }
+  elsif($cmd eq "restart")      { #################################
+    HMLAN_SimpleWrite($hash, "Y05,");
+    HMLAN_condUpdate($hash,253);#set disconnected
   }
   elsif($cmd eq "close")        { #################################
     DevIo_CloseDev($hash);
@@ -673,7 +694,7 @@ sub HMLAN_Parse($$) {##########################################################
     $hash->{helper}{ids}{$src}{flg} = 0 if ($type eq "00");
 
     if ($stat){# message with status information
-      HMLAN_condUpdate($hash,$HMcnd)if ($hash->{helper}{q}{HMcndN} != $HMcnd);
+      HMLAN_condUpdate($hash,$HMcnd) if ($hash->{helper}{q}{HMcndN} != $HMcnd);
       my $myId = $attr{$name}{hmId};
       if    ($stat & 0x03 && $dst eq $myId){HMLAN_qResp($hash,$src,0);}
       elsif ($stat & 0x08 && $src eq $myId){HMLAN_qResp($hash,$dst,0);}
@@ -940,7 +961,6 @@ sub HMLAN_assignIDs($){
 sub HMLAN_writeAesKey($) {#####################################################
   my ($name) = @_;
   return if (!$name || !$defs{$name} || $defs{$name}{TYPE} ne "HMLAN");
-  return if (!$init_done);
   my %keys = ();
   my $vccu = InternalVal($name,"owner_CCU",$name);
   $vccu = $name if(!AttrVal($vccu,"hmKey",""));
@@ -1008,7 +1028,7 @@ sub HMLAN_KeepAliveCheck($) {##################################################
   my $hash = $defs{$name};
   if ($hash->{helper}{q}{keepAliveRec} != 1){# no answer
     if ($hash->{helper}{q}{keepAliveRpt} >2){# give up here
-      HMLAN_condUpdate($hash,252);# trigger timeout event
+      HMLAN_condUpdate($hash,253);# trigger timeout event
       DevIo_Disconnected($hash);
     }
     else{
@@ -1017,9 +1037,9 @@ sub HMLAN_KeepAliveCheck($) {##################################################
     }
   }
   else{
-    $hash->{helper}{q}{keepAliveRpt}=0;
+    $hash->{helper}{q}{keepAliveRpt} = 0;
+    HMLAN_condUpdate($hash,0) if ($hash->{helper}{q}{HMcndN} == 255);
   }
-
 }
 sub HMLAN_secSince2000() {#####################################################
   # Calculate the local time in seconds from 2000.
@@ -1070,6 +1090,11 @@ sub HMLAN_clearQ($) {#clear pending acks due to timeout########################
 sub HMLAN_condUpdate($$) {#####################################################
   my($hash,$HMcnd) = @_;
   my $name = $hash->{NAME};
+  if (AttrVal($name,"dummy",undef)){
+    readingsSingleUpdate($hash,"state","disconnected",1);
+    $hash->{XmitOpen} = 0;
+    return;
+  }
   my $hashCnd = $hash->{helper}{cnd};#short to helper
   my $hashQ   = $hash->{helper}{q};#short to helper
   $hash->{helper}{cnd}{$HMcnd} = 0 if (!$hash->{helper}{cnd} || 
@@ -1087,7 +1112,7 @@ sub HMLAN_condUpdate($$) {#####################################################
           if (InternalVal($name,"STATE","") eq "overload");
   }
 
-  my $HMcndTxt = $HMcond{$HMcnd}?$HMcond{$HMcnd}:"Unknown:$HMcnd";
+  my $HMcndTxt = $HMcond{$HMcnd} ? $HMcond{$HMcnd} : "Unknown:$HMcnd";
   Log3 $hash, 1, "HMLAN_Parse: $name new condition $HMcndTxt";
   my $txt;
   $txt .= $HMcond{$_}.":".$hash->{helper}{cnd}{$_}." "
@@ -1132,6 +1157,9 @@ sub HMLAN_getVerbLvl ($$$$){#get verboseLevel for message
 1;
 
 =pod
+=item device
+=item summary    IO device for wireless homematic
+=item summary_DE IO device für funkgesteuerte Homematic Devices
 =begin html
 
 <a name="HMLAN"></a>
@@ -1167,8 +1195,14 @@ sub HMLAN_getVerbLvl ($$$$){#get verboseLevel for message
     <ul>
         <li><a href="#hmPairForSec">hmPairForSec</a></li>
         <li><a href="#hmPairSerial">hmPairSerial</a></li>
+        <li><a href="#hmreopen">reopen</a>
+           reconnect the device
+           </li>
+        <li><a href="#hmrestart">restart</a>
+          Restart the device
+          </li>
         <li><a href="#HMLANset_reassignIDs">reassignIDs</a>
-          Syncs the IDs between HMLAN and teh FHEM list. 
+          Syncs the IDs between HMLAN and the FHEM list. 
           Usually this is done automatically and only is recomended if there is a difference in counts.
           </li>
     <br><br>
@@ -1247,8 +1281,8 @@ sub HMLAN_getVerbLvl ($$$$){#get verboseLevel for message
           Current transmit load of HMLAN. When capacity reaches 100% HMLAN stops sending and waits for 
           reduction. See also:
           <a href="#HMLANloadLevel">loadLevel</a><br></li>
-      <li><B>msgLoadHistory</B><br>
-          Historical transmition load of HMLAN.</li>
+      <li><B>msgLoadHistoryAbs</B><br>
+          Historical transmition load of IO.</li>
       <li><B>msgParseDly</B><br>
           calculates the delay of messages in ms from send in HMLAN until processing in FHEM.
           It therefore gives an indication about FHEM system performance.
@@ -1304,6 +1338,11 @@ sub HMLAN_getVerbLvl ($$$$){#get verboseLevel for message
     <ul>
         <li><a href="#hmPairForSec">hmPairForSec</a></li>
         <li><a href="#hmPairSerial">hmPairSerial</a></li>
+        <li><a href="#hmreopen">reopen</a>
+           Connection zum IO device neu starten</li>
+        <li><a href="#hmrestart">restart</a>
+           Neustart des IOdevice
+           </li>
         <li><a href="#HMLANset_reassignIDs">reassignIDs</a>
           Synchronisiert die im HMLAN eingetragenen IDs mit der von FHEM verwalteten Liste. 
           I.a. findet dies automatisch statt, koennte aber in reset Fällen abweichen.
@@ -1392,8 +1431,8 @@ sub HMLAN_getVerbLvl ($$$$){#get verboseLevel for message
           Aktuelle Funklast des HMLAN. Da HMLAN nur eine begrenzte Kapzit&auml;t je Stunde hat 
           Telegramme abzusetzen stellt es bei 100% das Senden ein. Siehe auch
           <a href="#loadLevel">loadLevel</a><br></li>
-      <li><B>msgLoadHistory</B><br>
-          Funklast vergangener Zeitabschnitte.</li>
+      <li><B>msgLoadHistoryAbs</B><br>
+          IO Funkbelastung vergangener Zeitabschnitte.</li>
       <li><B>msgParseDly</B><br>
           Kalkuliert die Verz&ouml;gerungen einer Meldung vom Zeitpunkt des Abschickens im HMLAN 
           bis zu Verarbeitung in FHEM. Deshalb ist dies ein Indikator f&uuml;r die Leistungsf&auml;higkeit 
@@ -1416,6 +1455,5 @@ sub HMLAN_getVerbLvl ($$$$){#get verboseLevel for message
     </ul>
 
 </ul>
-=end html
-
+=end html_DE
 =cut

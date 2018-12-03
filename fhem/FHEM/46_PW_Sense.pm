@@ -22,7 +22,7 @@
 # The GNU General Public License may also be found at http://www.gnu.org/licenses/gpl-2.0.html .
 ###################################
 #
-# $Id$ 
+# $Id: 46_PW_Sense.pm 11989 2016-08-19 17:50:52Z icinger $ 
 package main;
 
 use strict;
@@ -147,6 +147,8 @@ sub PW_Sense_Parse($$)
 
 =pod
 =item device
+=item summary    Submodule for 45_Plugwise
+=item summary_DE Untermodul zu 45_Plugwise
 =begin html
 
 <a name="PW_Sense"></a>

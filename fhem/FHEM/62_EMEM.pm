@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 62_EMEM.pm 14888 2017-08-13 12:07:12Z rudolfkoenig $
 package main;
 
 use strict;
@@ -139,6 +139,8 @@ EMEM_Define($$)
 1;
 
 =pod
+=item summary    EM1000EM devices communicating over the EM1010PC
+=item summary_DE EM1000EM Ger&auml;te angebunden &uuml;ber ein EM1010PC
 =begin html
 
 <a name="EMEM"></a>

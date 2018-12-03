@@ -3,7 +3,7 @@
 #
 # (c) 2014 Arno Willig <akw@bytefeed.de>
 #
-# $Id$
+# $Id: 30_ENECSYSGW.pm 5117 2014-03-03 19:33:15Z akw $
 
 package main;
 

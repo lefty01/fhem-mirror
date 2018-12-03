@@ -12,7 +12,7 @@ my $arg="-t $txn";
 #my $arg="-r $txn";      # local testing
 my @lang = ("EN", "DE");
 my $exitCode = 0;
-use constant TAGS => qw{ul li code b i u td tr table div};
+use constant TAGS => qw{ul li code b i u table tr td div h4 h3};
 
 my $log = `$svnlook log $arg $repos`;
 if($log !~ m/^.*:.*$/s) {
@@ -31,6 +31,8 @@ foreach my $row (split("\n", $fList)) {
   my ($type, $fName) = split(" ", $row);
   next if($type eq "D");
   next if(!$fName);
+  my $pl = `svnlook pl $arg $repos $fName`;
+  die ("Setting svn:externals is prohibited") if($pl =~ m/svn:externals/);
 
   # check for 80 chars per line conformity
   if($fName =~ m/CHANGED/) {
@@ -75,12 +77,17 @@ foreach my $row (split("\n", $fList)) {
       unless($props =~ /Id/);
   }
 
-  next if($fName !~ m+FHEM/\d\d_(.*).pm$+);
-  my $modName = $1;
+  next if($fName !~ m+FHEM/(\d\d)_(.*).pm$+);
+  my ($modNum, $modName) = ($1, $2);
+  my %ninetyniners = ("SUNRISE_EL"=>1, "Utils"=>1);
+  err $fName, "99 is a reserved prefix, not allowed for $modName"
+    if($modNum eq "99" && !$ninetyniners{$modName});
+
   foreach my $lang (@lang) {
     my $suffix = ($lang eq "EN" ? "" : "_$lang");
     my $tag;
     my %tagcount= ();
+    map { $tagcount{$_} = 0 } TAGS;
     my %llwct = (); # Last line with closed tag
     open(MOD, "$svnlook $arg cat $repos $fName|") ||
         die("Cant svnlook cat $fName:$!\n");
@@ -88,11 +95,19 @@ foreach my $row (split("\n", $fList)) {
     my $line = 0;
     my $docCount = 0;
     my $hasLink = 0;
+    my $hasSummary = 0;
+
     while(my $l = <MOD>) {
       $line++;
 
       err $fName, "DOS line encoding is not supported."
         if($l =~ m/^=begin html$suffix.*\r/);
+
+      if($l =~ m/^=item summary$suffix\s+(.+?)\s*$/) {
+        err $fName, "$lang: summary is longer than 80 chars on line $line"
+          if(length($1) > 80);
+        $hasSummary = 1;
+      }
 
       if($l =~ m/^=begin html$suffix$/) {
         $l = <MOD>;    # skip one line, to be able to repeat join+split
@@ -110,6 +125,10 @@ foreach my $row (split("\n", $fList)) {
           my $ot = ($tagcount{$tag} ? $tagcount{$tag} : 0);
           $tagcount{$tag} +=()= ($l =~ /<$tag>/gi);
           $tagcount{$tag} -=()= ($l =~ /<\/$tag>/gi);
+          if($tagcount{$tag} < 0) {
+            err $fName, "$lang: negative tagcount for $tag, line $line";
+            $tagcount{$tag} = 0;
+          }
           $llwct{$tag} = $line if(!$llwct{$tag} || ($ot && !$tagcount{$tag}));
         }
       }
@@ -120,6 +139,9 @@ foreach my $row (split("\n", $fList)) {
       if(!$suffix && !$docCount);
     err $fName, "$lang: No <a name=\"$modName\"> link"
       if(!$suffix && $docCount && !$hasLink);
+    err $fName, "$lang: No summary description found"
+      if(!$suffix && $docCount && !$hasSummary);
+
     foreach $tag (TAGS) {
       err $fName, "$lang: Unbalanced $tag ($tagcount{$tag}, last line ok: $llwct{$tag})"
         if($tagcount{$tag});

@@ -1,5 +1,5 @@
 ################################################################
-# $Id$
+# $Id: 98_JsonList2.pm 17230 2018-08-30 13:03:48Z rudolfkoenig $
 ################################################################
 
 package main;
@@ -25,32 +25,24 @@ JsonList2_Escape($)
 {
   my $a = shift;
   return "null" if(!defined($a));
-  my %esc = (
-    "\n" => '\n',
-    "\r" => '\r',
-    "\t" => '\t',
-    "\f" => '\f',
-    "\b" => '\b',
-    "\"" => '\"',
-    "\\" => '\\\\',
-    "\'" => '\\\'',
-  );
-  $a =~ s/([\x22\x5c\n\r\t\f\b])/$esc{$1}/eg;
+  $a =~ s/([\x00-\x09\x0b-\x19\x5c])/sprintf '\u%04x', ord($1)/ge; # Forum 57377
+  $a =~ s/"/\\"/g; 
+  $a =~ s/\n/\\n/g; 
+  my $b = "x$a";
+  $a = "<BINARY>" if(!utf8::decode($b)); # Forum #55318
   return $a;
 }
 
 sub
 JsonList2_dumpHash($$$$$$)
 {
-  my ($arrp, $name, $h, $isReading, $si, $attr) = @_;
+  my ($arrp, $name, $h, $isReading, $showInternal, $attr) = @_;
   my $ret = "";
+  my %filter = map { $_=>1 } @$attr if(@$attr);
   
-  my @arr = grep { $si || $_ !~ m/^\./ } sort keys %{$h};
-  @arr = grep { !ref($h->{$_}) } @arr if(!$isReading);
-  if($attr) {
-    @arr = grep { $attr eq $_ } @arr;
-  }
-
+  my @arr = grep { ($showInternal || $_ !~ m/^\./) &&
+                   ($isReading || !ref($h->{$_}) ) &&
+                   (!@$attr || $filter{$_}) } sort keys %{$h};
   for(my $i2=0; $i2 < @arr; $i2++) {
     my $k = $arr[$i2];
     $ret .= "      \"".JsonList2_Escape($k)."\": ";
@@ -63,8 +55,11 @@ JsonList2_dumpHash($$$$$$)
     $ret .= "," if($i2 < int(@arr)-1);
     $ret .= "\n" if(int(@arr)>1);
   }
-  return if($attr && !$ret);
-  push(@{$arrp}, "    \"$name\": {".(int(@arr)>1 ? "\n" : "")."$ret    }");
+  if(@arr > 1) {
+    push @{$arrp}, "    \"$name\": {\n$ret    }";
+  } else {
+    push @{$arrp}, "    \"$name\": {$ret }";
+  }
 }
 
 #####################################
@@ -76,12 +71,13 @@ CommandJsonList2($$)
   my $ret;
   my $cnt=0;
   my $si = AttrVal("global", "showInternalValues", 0);
-  my $attr;
+  my @attr;
+
+  $cl->{contenttype} = "application/json; charset=utf-8" if($cl);
 
   if($param) {
-    my @arg = split(" ", $param);
-    $attr = $arg[1];
-    @d = devspec2array($arg[0],$cl);
+    @attr = split(" ", $param);
+    @d = devspec2array(shift(@attr),$cl);
 
   } else {
     @d = devspec2array(".*", $cl);      # Needed for Authorization
@@ -102,13 +98,13 @@ CommandJsonList2($$)
     next if(!$h || !$n);
 
     my @r;
-    if(!$attr) {
+    if(!@attr) {
       push(@r,"    \"PossibleSets\":\"".JsonList2_Escape(getAllSets($n))."\"");
       push(@r,"    \"PossibleAttrs\":\"".JsonList2_Escape(getAllAttr($n))."\"");
     }
-    JsonList2_dumpHash(\@r, "Internals", $h,             0, $si, $attr);
-    JsonList2_dumpHash(\@r, "Readings",  $h->{READINGS}, 1, $si, $attr);
-    JsonList2_dumpHash(\@r, "Attributes",$attr{$d},      0, $si, $attr);
+    JsonList2_dumpHash(\@r, "Internals", $h,             0, $si, \@attr);
+    JsonList2_dumpHash(\@r, "Readings",  $h->{READINGS}, 1, $si, \@attr);
+    JsonList2_dumpHash(\@r, "Attributes",$attr{$d},      0, $si, \@attr);
 
     next if(!@r);
     $ret .= ",\n" if($cnt);
@@ -128,21 +124,24 @@ CommandJsonList2($$)
 
 =pod
 =item command
+=item summary    show device data in JSON format
+=item summary_DE zeigt Ger&auml;tedaten in JSON Format an
+
 =begin html
 
 <a name="JsonList2"></a>
 <h3>JsonList2</h3>
 <ul>
-  <code>jsonlist [&lt;devspec&gt;] [&lt;value&gt;]</code>
+  <code>jsonlist2 [&lt;devspec&gt;] [&lt;value1&gt; &lt;value2&gt; ...]</code>
   <br><br>
   This is a command, to be issued on the command line (FHEMWEB or telnet
   interface). Can also be called via HTTP by
   <ul>
-  http://fhemhost:8083/fhem?cmd=jsonlist2&XHR=1
+  http://fhemhost:8083/fhem?cmd=jsonlist2&amp;XHR=1
   </ul>
   Returns an JSON tree of the internal values, readings and attributes of the
   requested definitions.<br>
-  If value is specified, then output only the corresponding internal (like DEF,
+  If valueX is specified, then output only the corresponding internal (like DEF,
   TYPE, etc), reading (actuator, measured-temp) or attribute for all devices
   from the devspec.<br><br>
   <b>Note</b>: the old command jsonlist (without the 2 as suffix) is deprecated
@@ -156,17 +155,17 @@ CommandJsonList2($$)
 <a name="JsonList2"></a>
 <h3>JsonList2</h3>
 <ul>
-  <code>jsonlist [&lt;devspec&gt;]</code>
+  <code>jsonlist2 [&lt;devspec&gt;] [&lt;value1&gt; &lt;value2&gt; ...]</code>
   <br><br>
   Dieses Befehl sollte in der FHEMWEB oder telnet Eingabezeile ausgef&uuml;hrt
   werden, kann aber auch direkt &uuml;ber HTTP abgerufen werden &uuml;ber 
   <ul>
-  http://fhemhost:8083/fhem?cmd=jsonlist2&XHR=1
+  http://fhemhost:8083/fhem?cmd=jsonlist2&amp;XHR=1
   </ul>
   Es liefert die JSON Darstellung der internen Variablen, Readings und
   Attribute zur&uuml;ck.<br>
 
-  Wenn value angegeben ist, dann wird nur der entsprechende Internal (DEF,
+  Wenn valueX angegeben ist, dann wird nur der entsprechende Internal (DEF,
   TYPE, usw), Reading (actuator, measured-temp) oder Attribut
   zur&uuml;ckgeliefert f&uuml;r alle Ger&auml;te die in devspec angegeben sind.
   <br><br>

@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 11_OWDevice.pm 14523 2017-06-16 05:15:56Z neubert $
 ##############################################################################
 #
 #     11_OWDevice.pm
@@ -27,8 +27,11 @@ package main;
 
 use strict;
 use warnings;
+no if $] >= 5.017011, warnings => 'experimental::smartmatch';
 
 use vars qw(%owdevice);
+
+
 
 # 1-Wire devices (order by family code)
 # http://owfs.sourceforge.net/family.html
@@ -118,6 +121,14 @@ $owdevice{"1D"} = {
     "offset"    => [ qw(counters.A counters.B) ],
     "interface" => "counter",
 };
+$owdevice{"1F"} = {
+    # DS2409 - Microlan Coupler
+    "read"      => [],
+    "write"     => [],
+    "poll"      => [],
+    "state"     => [],
+    "interface" => "none",
+};
 $owdevice{"20"} = {
     # DS2450 - Quad A/D Converter
     "read"      => [ qw(alarm/high.A alarm/high.B alarm/high.C alarm/high.D alarm/high.ALL),
@@ -179,6 +190,20 @@ $owdevice{"22"} = {
     "alarm"     => 1,
     "interface" => "temperature",
 };
+$owdevice{"23"} = {
+    # DS2433 - 4kbit 1-Wire RAM
+    "read"      => [ qw(memory),
+                     qw(pages/page.0 pages/page.1 pages/page.2 pages/page.3 pages/page.4 pages/page.5),
+                     qw(pages/page.6 pages/page.7 pages/page.8 pages/page.9 pages/page.10 pages/page.11),
+                     qw(pages/page.12 pages/page.13 pages/page.14 pages/page.15) ],
+    "write"     => [ qw(memory),
+                     qw(pages/page.0 pages/page.1 pages/page.2 pages/page.3 pages/page.4 pages/page.5),
+                     qw(pages/page.6 pages/page.7 pages/page.8 pages/page.9 pages/page.10 pages/page.11),
+                     qw(pages/page.12 pages/page.13 pages/page.14 pages/page.15) ],
+    "poll"      => [ qw(id) ],
+    "state"     => [ ],
+    "interface" => "multisensor",
+};
 $owdevice{"24"} = {
     # DS2415 - 1-Wire Time Chip
     # DS1904 - RTC iButton
@@ -205,9 +230,10 @@ $owdevice{"26"} = {
                      qw(HIH4000/humidity),
                      qw(HTM1735/humidity),
                      qw(DATANAB/humidity),
+                     qw(HIH3600/humidity),
                      qw(humidity),
                      qw(B1-R1-A/pressure B1-R1-A/gain B1-R1-A/offset),
-                     qw(S3-R1-A/current S3-R1-A/illumination S3-R1-A/gain),
+                     qw(S3-R1-A/current S3-R1-A/illumination S3-R1-A/illuminance S3-R1-A/gain),
                      qw(MultiSensor/type),
                      qw(offset) ],
     "write"     => [ qw(pages/page.0 pages/page.1 pages/page.2 pages/page.3 pages/page.4),
@@ -352,13 +378,12 @@ OWDevice_Initialize($)
   $hash->{GetFn}     = "OWDevice_Get";
   $hash->{SetFn}     = "OWDevice_Set";
   $hash->{DefFn}     = "OWDevice_Define";
-  $hash->{NOTIFYDEV} = "global";
   $hash->{NotifyFn}  = "OWDevice_Notify";
   $hash->{NotifyOrderPrefix}= "50b-";
   $hash->{UndefFn}   = "OWDevice_Undef";
   $hash->{AttrFn}    = "OWDevice_Attr";
 
-  $hash->{AttrList}  = "IODev uncached trimvalues polls interfaces model ".  
+  $hash->{AttrList}  = "IODev uncached trimvalues polls interfaces model cstrings ".
                        "resolution:9,10,11,12 ".
                        $readingFnAttributes;
 }
@@ -376,7 +401,10 @@ OWDevice_GetDetails($) {
 
   my ($hash)= @_;
 
-  my $family= substr($hash->{fhem}{address}, 0, 2);
+  my @path= split('/', $hash->{fhem}{address});
+  my $address= $path[-1];
+  #main::Debug "address is $address";
+  my $family= substr($address, 0, 2);
   my @getters= @{$owdevice{$family}{"read"}};
   my @setters= @{$owdevice{$family}{"write"}};
   my @polls= @{$owdevice{$family}{"poll"}};
@@ -443,13 +471,15 @@ OWDevice_ReadValue($$) {
         my $path = "$cache/$address/$reading";
         $path .= AttrVal($hash->{NAME},"resolution","") if( $reading eq "temperature" );
         #my ($seconds, $microseconds) = gettimeofday();
+        #main::Debug "OWDevice_ReadValue NAME=" . $hash->{NAME} . " path=$path";
         my $value= OWDevice_ReadFromServer($hash,"read",$path);
         #my ($seconds2, $microseconds2) = gettimeofday();
         #my $msec = sprintf( "%03d msec", (($seconds2-$seconds)*1000000 + $microseconds2-$microseconds)/1000 );
         #Debug "$path => $value; $msec";  
         if($interface ne "id") {
           if(defined($value)) {
-            $value= trim($value) if(AttrVal($hash,"trimvalues",1));
+            $value=~ s/\0.*$//g  if(AttrVal($hash->{NAME},"cstrings",0));
+            $value= trim($value) if(AttrVal($hash->{NAME},"trimvalues",1));
           } else {
             Log3 $hash, 3, $hash->{NAME} . ": reading $reading did not return a value";
           }
@@ -459,13 +489,14 @@ OWDevice_ReadValue($$) {
 }
 
 ###################################
-sub
-OWDevice_WriteValue($$$) {
+sub OWDevice_WriteValue($$$) {
 
         my ($hash,$reading,$value)= @_;
 
+        my $cache= (AttrVal($hash->{NAME},"uncached","")) ? "/uncached" : "";
         my $address= $hash->{fhem}{address};
-        IOWrite($hash, "/$address/$reading", $value);
+        my $path = "$cache/$address/$reading";
+        IOWrite($hash, $path, $value);
         return $value;
 }
 
@@ -663,6 +694,8 @@ OWDevice_Define($$)
         $hash->{fhem}{alerting}= $alerting;
         Log3 $name, 5, "$name: alerting: $alerting";
 
+        $hash->{NOTIFYDEV} = "global";
+        
         if( $init_done ) {
           OWDevice_InitValues($hash);
           OWDevice_UpdateValues($hash) if(defined($hash->{fhem}{interval}));
@@ -725,6 +758,9 @@ OWDevice_InitValues($)
 
 ###################################
 =pod
+=item device
+=item summary controls a One-Wire (1Wire) device
+=item summary_DE steuert ein One-Wire- (1Wire-) Gerät
 =begin html
 
 <a name="OWDevice"></a>
@@ -739,6 +775,10 @@ OWDevice_InitValues($)
 
     Defines a 1-wire device. The 1-wire device is identified by its &lt;address&gt;. It is
     served by the most recently defined <a href="#OWServer">OWServer</a>.
+    <br><br>
+    Devices beyond 1-wire hubs (DS2409, address family 1F) need to be addressed by the full path, e.g.
+    <code>1F.0AC004000000/main/26.A157B6000000</code> (no leading slash). They are
+    not automatically detected.
     <br><br>
 
     If &lt;interval&gt; is given, the OWServer is polled every &lt;interval&gt; seconds for
@@ -762,6 +802,7 @@ OWDevice_InitValues($)
       <li>DS2423 - 4kbit 1-Wire RAM with Counter</li>
       <li>DS2450 - Quad A/D Converter</li>
       <li>DS1822 - Econo 1-Wire Digital Thermometer</li>
+      <li>DS2433 - 4kbit 1-Wire RAM</li>
       <li>DS2415 - 1-Wire Time Chip</li>
       <li>DS1904 - RTC iButton</li>
       <li>DS2438 - Smart Battery Monitor</li>
@@ -770,6 +811,7 @@ OWDevice_InitValues($)
       <li>DS2408 - 1-Wire 8 Channel Addressable Switch</li>
       <li>DS2413 - Dual Channel Addressable Switch</li>
       <li>DS1825 - Programmable Resolution 1-Wire Digital Thermometer with ID</li>
+      <li>DS2409 - Microlan Coupler (no function implemented)</li>
       <li>EDS0066 - Multisensor for temperature and pressure</li>
       <li>LCD - LCD controller by Louis Swart</li>
     </ul>
@@ -864,6 +906,7 @@ OWDevice_InitValues($)
        belong to it, then continue with the next OWServer and the attached OWDevices, and so on. 	 
     </li>
     <li>trimvalues: removes leading and trailing whitespace from readings. Default is 1 (on).</li>
+    <li>cstrings: interprets reading as C-style string, i.e. stops reading on the first zero byte. Default is 0 (off).</li>
     <li>polls: a comma-separated list of readings to poll. This supersedes the list of default readings to poll.</li>
     <li>interfaces: supersedes the interfaces exposed by that device.</li>
     <li>model: preset with device type, e.g. DS18S20.</li>
@@ -897,6 +940,10 @@ OWDevice_InitValues($)
     Definiert ein 1-Wire- Gerät. 1-Wire- Geräte werden anhand ihrer Adresse &lt;address&gt; definiert. Diese wird
     durch den zuvor eingerichteten <a href="#OWServer">OWServer</a> bereitgestellt.
     <br><br>
+    Ger&auml;te hinter 1-wire-Hubs (DS2409, Adressfamilie 1F) m&uuml;ssen &uuml;ber den vollen Pfad adressiert werden, z.B.
+    <code>1F.0AC004000000/main/26.A157B6000000</code> (kein f&uuml;hrender Schr&auml;gstrich). Sie werden nicht
+    automatisch erkannt.
+    <br><br>
 
     Wird zusätzlich  &lt;interval&gt; angegeben, ruft OWServer alle &lt;interval&gt; Sekunden
     einen Datensatz des Gerätes ab.
@@ -918,6 +965,7 @@ OWDevice_InitValues($)
       <li>DS2423 - Dual-Zählerbaustein mit Speicherfunktion</li>
       <li>DS2450 - Vierfach-A/D Umsetzer</li>
       <li>DS1822 - Econo-Thermosensor</li>
+      <li>DS2433 - 4kbit 1-Wire RAM</li>
       <li>DS2415 - Zeitgeber- Schaltkreis </li>
       <li>DS1904 - iButton-Echtzeituhr</li>
       <li>DS2438 - Smart-Batterie-Monitor</li>
@@ -939,7 +987,7 @@ OWDevice_InitValues($)
     Beispiele zur Einrichtung:
     <ul>
       <code>
-      define myOWServer localhost:4304<br><br>
+      define myOWServer OWServer localhost:4304<br><br>
       get myOWServer devices<br>
       10.487653020800 DS18S20<br><br>
       define myT1 10.487653020800<br><br>
@@ -1021,6 +1069,7 @@ OWDevice_InitValues($)
         nächste OWServer-Instanz, gefolgt von den zugehörigen OWDevice-Geräten, usw.   
     </li>
     <li>trimvalues: Entfernt voran- und nachgestellte Leerzeichen aus den readings. Standartwert ist 1 (ein).</li>
+    <li>cstrings: Interpretiert die readings als C-String, d.h. h&ouml;rt mit dem ersten 0-Byte zu lesen auf. Standardwert ist 0 (off).</li>
     <li>polls: Eine per Komma getrennte Liste der abzurufenden readings. Mit diesem Attribut unterdrückt man alle standartmäßig abgerufenen readings und ersetzt sie durch die eigene Zusammenstellung.</li>
     <li>interfaces: Ersetzt die durch dieses Gerät erzeugten Interfaces.</li>
     <li>model: Angabe des Gerätetyps, z.B.: DS18S20.</li>

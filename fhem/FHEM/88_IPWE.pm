@@ -5,7 +5,7 @@ package main;
 # Modul for FHEM
 #
 # contributed by thomas dressler 2008
-# $Id$
+# $Id: 88_IPWE.pm 2076 2012-11-04 13:49:43Z rudolfkoenig $
 
 use strict;
 use warnings;

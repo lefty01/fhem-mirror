@@ -2,7 +2,7 @@
 #
 # ControlPoint.pm
 #
-# $Id$
+# $Id: ControlPoint.pm 16658 2018-04-25 06:00:12Z Reinerlein $
 #
 # Now (in this version) part of Fhem.
 #
@@ -48,8 +48,48 @@ use constant DEFAULT_SSDP_SEARCH_PORT => 8008;
 use constant DEFAULT_SUBSCRIPTION_PORT => 8058;
 use constant DEFAULT_SUBSCRIPTION_URL => '/eventSub';
 
-our %IGNOREIP;
-our %USEDONLYIP;
+our @IGNOREIP;
+our @USEDONLYIP;
+our $LogLevel;
+our $EnvPrefix;
+
+sub isIgnoreIP($) {
+	my($ip) = @_;
+	
+	foreach my $elem (@IGNOREIP) {
+		if ($elem =~ m/^\/(.*)\/$/) {
+			if ($ip =~ m/^$1$/) {
+				return 1;
+			}
+		} else {
+			if ($ip eq $elem) {
+				return 1;
+			}
+		}
+	}
+	
+	return 0;
+}
+
+sub isUsedOnlyIP($) {
+	my($ip) = @_;
+	
+	return 1 if (!scalar(@USEDONLYIP));
+	
+	foreach my $elem (@USEDONLYIP) {
+		if ($elem =~ m/^\/(.*)\/$/) {
+			if ($ip =~ m/^$1$/) {
+				return 1;
+			}
+		} else {
+			if ($ip eq $elem) {
+				return 1;
+			}
+		}
+	}
+	
+	return 0;
+}
 
 sub new {
     my($self, %args) = @_;
@@ -60,11 +100,16 @@ sub new {
     my $searchPort = defined($args{SearchPort}) ? $args{SearchPort} : DEFAULT_SSDP_SEARCH_PORT;
     my $subscriptionPort = defined($args{SubscriptionPort}) ? $args{SubscriptionPort} : DEFAULT_SUBSCRIPTION_PORT;
 	my $maxWait = $args{MaxWait} || 3;
-	%IGNOREIP = %{$args{IgnoreIP}};
-	%USEDONLYIP = %{$args{UsedOnlyIP}};
+	@IGNOREIP = @{$args{IgnoreIP}};
+	@USEDONLYIP = @{$args{UsedOnlyIP}};
+	$LogLevel = $args{LogLevel} || 0;
+	$EnvPrefix = $args{EnvPrefix} || $SOAP::Constants::PREFIX_ENV;
+	
+	my $reuseport = $args{ReusePort};
+	$reuseport = 0 if (!defined($reuseport));
 
 	# Create the socket on which search requests go out
-    $self->{_searchSocket} = IO::Socket::INET->new(Proto => 'udp', LocalPort => $searchPort) || croak("Error creating search socket: $!\n");
+    $self->{_searchSocket} = IO::Socket::INET->new(Proto => 'udp', LocalPort => $searchPort) || carp("Error creating search socket: $!\n");
 	setsockopt($self->{_searchSocket}, 
 			   IP_LEVEL,
 			   IP_MULTICAST_TTL,
@@ -73,16 +118,31 @@ sub new {
 
 	# Create the socket on which we'll listen for events to which we are
 	# subscribed.
-    $self->{_subscriptionSocket} = HTTP::Daemon->new(LocalPort => $subscriptionPort, Reuse=>1, Listen=>20) || croak("Error creating subscription socket: $!\n");
+    $self->{_subscriptionSocket} = HTTP::Daemon->new(LocalPort => $subscriptionPort, Reuse=>1, Listen=>20) || carp("Error creating subscription socket: $!\n");
 	$self->{_subscriptionURL} = $args{SubscriptionURL} || DEFAULT_SUBSCRIPTION_URL;
 	$self->{_subscriptionPort} = $self->{_subscriptionSocket}->sockport();;
 
 	# Create the socket on which we'll listen for SSDP Notifications.
-	$self->{_ssdpMulticastSocket} = IO::Socket::INET->new(
-													 Proto => 'udp',
-													 Reuse => 1,
-													 LocalPort => SSDP_PORT) ||
-	croak("Error creating SSDP multicast listen socket: $!\n");
+	# First try with ReusePort (if given as parameter)...
+	eval {
+		$self->{_ssdpMulticastSocket} = IO::Socket::INET->new(
+														 Proto => 'udp',
+														 Reuse => 1,
+														 ReusePort => $reuseport,
+														 LocalPort => SSDP_PORT) ||
+		croak("Error creating SSDP multicast listen socket: $!\n");
+	};
+	if ($@ =~ /Your vendor has not defined Socket macro SO_REUSEPORT/i) {
+		$self->{_ssdpMulticastSocket} = IO::Socket::INET->new(
+														 Proto => 'udp',
+														 Reuse => 1,
+														 LocalPort => SSDP_PORT) ||
+		croak("Error creating SSDP multicast listen socket: $!\n");
+	} elsif($@) {
+		# Weiterwerfen...
+		croak($@);
+	}
+	
 	my $ip_mreq = inet_aton(SSDP_IP) . INADDR_ANY;
 	setsockopt($self->{_ssdpMulticastSocket}, 
 			   IP_LEVEL,
@@ -169,8 +229,8 @@ sub handleOnce {
 	}
 	elsif ($socket == $self->{_subscriptionSocket}) {
 		if (my $connect = $socket->accept()) {
-			return if (scalar(%USEDONLYIP) && (!$USEDONLYIP{$connect->peerhost()}));
-			return if ($IGNOREIP{$connect->peerhost()});
+			return if (!isUsedOnlyIP($connect->peerhost()));
+			return if (isIgnoreIP($connect->peerhost()));
 			$self->_receiveSubscriptionNotification($connect);
 		}
 	}
@@ -306,7 +366,7 @@ sub _createDevice {
 													  {ControlPoint => $self});
 	} else {
 		carp('400-URL-Absolute-Error! Location: "'.$location.'", Content: "'.$response->content.'"') if ($response->code == 400);
-		carp("Loading device description failed with error: " . $response->code . " " . $response->message) if ($response->code != 200);
+		carp("Loading device description failed with error: " . $response->code . " " . $response->message . ' (Location: ' . $location . ')') if ($response->code != 200);
 	}
 	#pop(@LWP::Protocol::http::EXTRA_SOCK_OPTS);
 	@LWP::Protocol::http::EXTRA_SOCK_OPTS = @SOCK_OPTS_Backup;
@@ -373,8 +433,8 @@ sub _receiveSearchResponse {
 	my $peer = recv($socket, $buf, 2048, 0);
 	my @peerdata = unpack_sockaddr_in($peer);
 	
-	return if (scalar(%USEDONLYIP) && (!$USEDONLYIP{inet_ntoa($peerdata[1])}));
-	return if ($IGNOREIP{inet_ntoa($peerdata[1])});
+	return if (!isUsedOnlyIP(inet_ntoa($peerdata[1])));
+	return if (isIgnoreIP(inet_ntoa($peerdata[1])));
 
 	if ($buf !~ /\015?\012\015?\012/) {
 		return;
@@ -391,6 +451,7 @@ sub _receiveSearchResponse {
         foreach my $searchkey (keys %{$self->{_activeSearches}}) {
             my $search = $self->{_activeSearches}->{$searchkey};
             if ($search->{_type} && $buf =~ $search->{_type}) {
+            	print 'xxxx.xx.xx xx:xx:xx 5: ControlPoint: Accepted Search-Response: "'.$buf.'"'."\n" if ($LogLevel >= 5);
                 $found = 1;
                 last;
             }
@@ -400,7 +461,7 @@ sub _receiveSearchResponse {
                 last;
             }
 
-            if ($search->{_friendlyName} && $search->{_friendlyName}) {
+            if ($search->{_friendlyName} && $buf =~ $search->{_friendlyName}) {
                 $found = 1;
                 last;
             }
@@ -408,7 +469,7 @@ sub _receiveSearchResponse {
         }
 
         if (! $found) {
-            #print "Unknown response: " . Dumper($buf); #ALW uncomment
+            print 'xxxx.xx.xx xx:xx:xx 5: ControlPoint: Unknown Search-Response: "'.$buf.'"'."\n" if ($LogLevel >= 5);
             return;
         } 
 
@@ -431,10 +492,13 @@ sub _receiveSSDPEvent {
 	my $buf = '';
 
 	my $peer = recv($socket, $buf, 2048, 0);
-	my @peerdata = unpack_sockaddr_in($peer);
+	return if (!defined($peer));
 	
-	return if (scalar(%USEDONLYIP) && (!$USEDONLYIP{inet_ntoa($peerdata[1])}));
-	return if ($IGNOREIP{inet_ntoa($peerdata[1])});
+	my @peerdata = unpack_sockaddr_in($peer);
+	return if (!@peerdata);
+	
+	return if (!isUsedOnlyIP(inet_ntoa($peerdata[1])));
+	return if (isIgnoreIP(inet_ntoa($peerdata[1])));
 
 	if ($buf !~ /\015?\012\015?\012/) {
 		return;
@@ -647,6 +711,7 @@ sub queryStateVariable {
         my $result;
         if ($SOAP::Lite::VERSION >= 0.67) {
             $result = SOAP::Lite
+                    ->envprefix($EnvPrefix)
                     ->ns("u")
                     ->uri('urn:schemas-upnp-org:control-1-0')
                     ->proxy($self->controlURL)
@@ -656,6 +721,7 @@ sub queryStateVariable {
                                                ->value($name));
         } else {
             $result = SOAP::Lite
+                    ->envprefix($EnvPrefix)
                     ->uri('urn:schemas-upnp-org:control-1-0')
                     ->proxy($self->controlURL)
                     ->call('QueryStateVariable' => 
@@ -702,26 +768,27 @@ sub subscribe {
 		my $ua = LWP::UserAgent->new(timeout => 20);
 		my $response = $ua->request($request);
 
-		if ($response->is_success &&
-			$response->code == 200) {
-			my $sid = $response->header('SID');
-			$timeout = $response->header('Timeout');
-			if ($timeout =~ /^Second-(\d+)$/) {
-				$timeout = $1;
+		if ($response->is_success) {
+			if ($response->code == 200) {
+				my $sid = $response->header('SID');
+				$timeout = $response->header('Timeout');
+				if ($timeout =~ /^Second-(\d+)$/) {
+					$timeout = $1;
+				}
+	
+				my $subscription = UPnP::ControlPoint::Subscription->new(
+											   Service => $self,
+											   Callback => $callback,
+											   SID => $sid,
+											   Timeout => $timeout,
+											   EventSubURL => "$url");
+				$cp->addSubscription($subscription);
+				return $subscription;
+			} else {
+				carp("Subscription request successful but answered with error: " . $response->code . " " . $response->message);
 			}
-
-			my $subscription = UPnP::ControlPoint::Subscription->new(
-										   Service => $self,
-										   Callback => $callback,
-										   SID => $sid,
-										   Timeout => $timeout,
-										   EventSubURL => "$url");
-			$cp->addSubscription($subscription);
-			return $subscription;
-		} 
-		else {
-			carp("Subscription request failed with error: " . 
-				 $response->code . " " . $response->message);
+		} else {
+			carp("Subscription request failed with error: " . $response->code . " " . $response->message);
 		}
 	}
 
@@ -748,7 +815,7 @@ sub unsubscribe {
 	}
 	else {
 		if ($response->code != 412) {
-			croak("Unsubscription request failed with error: " . 
+			carp("Unsubscription request failed with error: " . 
 				 $response->code . " " . $response->message);
 		}
 	}
@@ -817,12 +884,12 @@ sub new {
         if ($SOAP::Lite::VERSION >= 0.67) {
             return bless {
                     _service => $service,
-                    _proxy => SOAP::Lite->ns("u")->uri($service->serviceType)->proxy($service->controlURL),
+                    _proxy => SOAP::Lite->envprefix($EnvPrefix)->ns("u")->uri($service->serviceType)->proxy($service->controlURL),
             }, $class;
         } else {
             return bless {
                     _service => $service,
-                    _proxy => SOAP::Lite->uri($service->serviceType)->proxy($service->controlURL),
+                    _proxy => SOAP::Lite->envprefix($EnvPrefix)->uri($service->serviceType)->proxy($service->controlURL),
             }, $class;
         }
 }
@@ -1050,7 +1117,7 @@ sub renew {
 		$self->{_startTime} = Time::HiRes::time();
 	}
 	else {
-		croak("Renewal of subscription failed with error: " . 
+		carp("Renewal of subscription failed with error: " . 
 			 $response->code . " " . $response->message);
 	}
 	

@@ -1,5 +1,5 @@
 #############################################
-# $Id$
+# $Id: 11_FHT8V.pm 14888 2017-08-13 12:07:12Z rudolfkoenig $
 package main;
 
 use strict;
@@ -122,6 +122,8 @@ FHT8V_Get($@)
 1;
 
 =pod
+=item summary    module for the FHT8v controlled directly by a culfw device
+=item summary_DE Anbindung von FHT8v Ventilen &uuml;ber ein culfw Ger&auml;t
 =begin html
 
 <a name="FHT8V"></a>

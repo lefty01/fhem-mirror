@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 98_count.pm 11992 2016-08-19 18:18:00Z betateilchen $
 
 package main;
 use strict;
@@ -40,6 +40,8 @@ sub CommandCount($$)
 1;
 
 =pod
+=item summary    count devices based on devspec
+=item summary_DE z&auml;hlt Ger&auml;te, die einer devspec entsprechen
 =item command
 =begin html
 

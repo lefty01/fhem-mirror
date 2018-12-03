@@ -21,7 +21,7 @@
 # You should have received a copy of the GNU General Public License along
 # with smarthomatic. If not, see <http://www.gnu.org/licenses/>.
 ##########################################################################
-# $Id$
+# $Id: SHC_datafields.pm 8182 2015-03-09 19:03:15Z rr2000 $
 
 package SHC_util;
 

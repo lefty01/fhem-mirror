@@ -1,6 +1,6 @@
 #################################################################################
 # 
-# $Id$ 
+# $Id: 89_VCONTROL.pm 11776 2016-07-10 13:57:22Z adamwit $ 
 #
 # FHEM Module for Viessman Vitotronic200  / Typ  KW1 und KW2
 #
@@ -42,6 +42,12 @@ use constant GET_TIMER_PAUSED => 0;
 use constant GET_CONFIG_ACTIVE => 1;
 use constant GET_CONFIG_PAUSED => 0;
 
+use constant PROTOCOL_KW  => 1;
+use constant PROTOCOL_GWG => 2;
+use constant PROTOCOL_300 => 3;
+
+my $viess_protocol = PROTOCOL_KW;
+
 #Poll Parameter
 my $defaultPollInterval = 180;
 my $last_cmd = 0;
@@ -72,8 +78,8 @@ my %DayHash;
 my @mode = ("WW","RED","NORM","H+WW","H+WW FS","ABSCHALT");
 my $temp_mode=0;
 
-#define LAN Hardware (1) or USB device (0)
-my $LAN_HW = 0;
+#define TCP Connection (1) or USB device (0)
+my $TCP_CONNECTION = 0;
 
 ######################################################################################
 sub VCONTROL_1ByteUParse($$);
@@ -105,8 +111,7 @@ sub VCONTROL_CmdConfig($);
 sub VCONTROL_ReInit($);
 
 
-sub
-VCONTROL_Initialize($)
+sub VCONTROL_Initialize($)
 {
   my ($hash) = @_;
 
@@ -127,8 +132,7 @@ VCONTROL_Initialize($)
 #####################################
 # define <name> VIESSMANN <port> <command_config> [<interval>] 
 
-sub
-VCONTROL_Define($$)
+sub VCONTROL_Define($$)
 {
   my ($hash, $def) = @_;
   my @a = split("[ \t][ \t]*", $def);
@@ -140,16 +144,18 @@ VCONTROL_Define($$)
   	return $msg;
   }
 
-  #Close Device to initialize properly
-    ###USB
+  #Determine if USB device or TCP Connection is used
+ 
   if (index($a[2], ':') == -1) {
+     ###USB
      delete $hash->{USBDev};
      delete $hash->{FD};
   }
   else {
-    ###LAN Hardware found
-    $LAN_HW = 1;
+    ###TCP Connection
+    $TCP_CONNECTION = 1;
   }
+  #Close Device to initialize properly
   DevIo_CloseDev($hash);
 
   my $name = $a[0];
@@ -189,9 +195,9 @@ VCONTROL_Define($$)
   Log3($name, 3, "VCONTROL opening VCONTROL device $dev");
   
   my $ret = undef;
-      ###USB
-  if (index($a[2], ':') == -1) {
-
+     
+  if ($TCP_CONNECTION == 0) {
+     ###USB
      if ($^O=~/Win/) {
         require Win32::SerialPort;
         $po = new Win32::SerialPort ($dev);
@@ -222,24 +228,24 @@ VCONTROL_Define($$)
      
   }
   else {
+     ###TCP Connection
      $ret = DevIo_OpenDev($hash, 0, "VCONTROL_DoInit");
   }
 
  
   #set Internal Timer on Polling Interval
-   my $timer = gettimeofday()+1;
-   Log3($name, 5, "VCONTROL set InternalTimer +1 to $timer");
+  my $timer = gettimeofday()+1;
+  Log3($name, 5, "VCONTROL set InternalTimer +1 to $timer");
 
+  RemoveInternalTimer($hash);
   InternalTimer(gettimeofday()+1, "VCONTROL_Poll", $hash, 0);
   return $ret;
-  
 }
 
 #####################################
 # Input is hexstring
 ## This function will not be used until now!
-#sub
-#VCONTROL_Write($$)
+#sub VCONTROL_Write($$)
 #{
 #  my ($hash,$fn,$msg) = @_;
 #  my $name = $hash->{NAME};
@@ -255,8 +261,7 @@ VCONTROL_Define($$)
 
 
 #####################################
-sub
-VCONTROL_Undef($$)
+sub VCONTROL_Undef($$)
 {
   my ($hash, $arg) = @_;
   my $name = $hash->{NAME};
@@ -272,13 +277,13 @@ VCONTROL_Undef($$)
       }
   }
 
+  RemoveInternalTimer($hash);
   DevIo_CloseDev($hash);
   return undef;
 }
 
 #####################################
-sub
-VCONTROL_Poll($)
+sub VCONTROL_Poll($)
 {
   my $hash = shift;
   my $name = $hash->{NAME};
@@ -289,7 +294,7 @@ VCONTROL_Poll($)
       Log3 $name, 5, "VCONTROL: Poll disabled!";
   }
   else
-  {   $poll_now=POLL_ACTIVE;
+  {   $poll_now = POLL_ACTIVE;
       if( AttrVal($name, "init_every_poll", 0 ) == 1 )
       {
           VCONTROL_ReInit($hash);
@@ -303,23 +308,21 @@ VCONTROL_Poll($)
 }
 
 #####################################
-sub
-VCONTROL_Shutdown($)
+sub VCONTROL_Shutdown($)
 {
   my ($hash) = @_;
   return undef;
 }
 
 #####################################
-sub
-VCONTROL_SetState($$$$)
+sub VCONTROL_SetState($$$$)
 {
   my ($hash, $tim, $vt, $val) = @_;
   return undef;
 }
 
-sub
-VCONTROL_Clear($)
+#####################################
+sub VCONTROL_Clear($)
 {
   my $hash = shift;
   my $buf;
@@ -337,8 +340,7 @@ VCONTROL_Clear($)
 }
 
 #####################################
-sub
-VCONTROL_DoInit($$)
+sub VCONTROL_DoInit($$)
 {
   #Initialisation -> Send one 0x04 so the heating started to send 0x05 Synchronity-Bytes
   my ($hash,$po) = @_;
@@ -368,8 +370,7 @@ VCONTROL_DoInit($$)
 
 #####################################
 # called from the global loop, when the select for hash->{FD} reports data
-sub
-VCONTROL_Read($)
+sub VCONTROL_Read($)
 {
   my ($hash) = @_;
   my $name = $hash->{NAME};
@@ -380,33 +381,33 @@ VCONTROL_Read($)
   #Read on Device
   my $mybuf = DevIo_SimpleRead($hash);
 
-  if ($LAN_HW == 0) {
-  #USB device is disconnected try to connect again
   if(!defined($mybuf) || length($mybuf) == 0) {
-    my $dev = $hash->{DeviceName};
-    Log3 $name, 3,"VCONTROL: USB device $dev disconnected, waiting to reappear";
-    #$hash->{USBDev}->close();
-    DoTrigger($name, "DISCONNECTED");
-    DevIo_Disconnected($hash);
-    delete($hash->{USBDev});
-    delete($selectlist{"$name.$dev"});
-    $readyfnlist{"$name.$dev"} = $hash; # Start polling
-    $hash->{STATE} = "disconnected";
+    #Lost connection to the device
+    if ($TCP_CONNECTION == 0) {
+       #USB device
+       my $dev = $hash->{DeviceName};
+       Log3 $name, 3,"VCONTROL: USB device $dev disconnected, waiting to reappear";
+       #$hash->{USBDev}->close();
+       DoTrigger($name, "DISCONNECTED");
+       DevIo_Disconnected($hash);
+       delete($hash->{USBDev});
+       delete($selectlist{"$name.$dev"});
+       $readyfnlist{"$name.$dev"} = $hash; # Start polling
+       $hash->{STATE} = "disconnected";
 
-    # Without the following sleep the open of the device causes a SIGSEGV,
-    # and following opens block infinitely. Only a reboot helps.
-    sleep(5);
-    return "";
-  }
-  }
-  else {
-    if(!defined($mybuf) || length($mybuf) == 0) {
-    my $dev = $hash->{DeviceName};
-    Log3 $name, 3,"VCONTROL: LAN device $dev disconnected, waiting to reappear";
-    DevIo_Disconnected($hash);
-    $hash->{STATE} = "disconnected";
-    return "";
-  }
+       # Without the following sleep the open of the device causes a SIGSEGV,
+       # and following opens block infinitely. Only a reboot helps.
+       sleep(5);
+       return "";
+    }
+    else {
+       #TCP Connection
+       my $dev = $hash->{DeviceName};
+       Log3 $name, 3,"VCONTROL: LAN device $dev disconnected, waiting to reappear";
+       DevIo_Disconnected($hash);
+       $hash->{STATE} = "disconnected";
+       return "";
+    }
   }
 
   #msg read on device
@@ -420,7 +421,13 @@ VCONTROL_Read($)
 #   if ( $read_now == READ_ANSWER && $poll_now == POLL_ACTIVE && $hexline ne "05"){
      $hexline = $hash->{PARTIAL}.$hexline;
      #if not received all bytes exit an read next
-     my $receive_len = hex(substr($cmd_list[$last_cmd][1],8,2))*2;
+     
+     my $receive_len = 0;
+     if ($viess_protocol == PROTOCOL_KW ) {
+        $receive_len = hex(substr($cmd_list[$last_cmd][1],8,2))*2;
+     } elsif ($viess_protocol == PROTOCOL_GWG ) {
+        $receive_len = hex(substr($cmd_list[$last_cmd][1],6,2))*2;
+     }
      if ( length($hexline) < $receive_len ){
         Log3 $name, 5,"VCONTROL: VCONTROL_Read receive_len < $receive_len, $hexline";
         $hash->{PARTIAL} = $hexline;
@@ -437,7 +444,8 @@ VCONTROL_Read($)
   #exit if no poll period 
   #exit if no set command send
   if ($poll_now == POLL_PAUSED && $send_now == NO_SEND ){
-     return ""; }
+     return ""; 
+  }
   
   my $sendbuf="";
   #End of Poll Interval
@@ -471,10 +479,18 @@ VCONTROL_Read($)
   my $closeAfterPoll = AttrVal($name, "closedev", "0");   
   ###if Attribut to close after poll -> close
   if ($closeAfterPoll == 1) {
-     delete $hash->{USBDev};
-     delete $hash->{FD};
-     Log3 $name, 3, "VCONTROL: USB device closed";
-  }
+     if ($TCP_CONNECTION == 0) {
+        ###USB
+        delete $hash->{USBDev};
+        delete $hash->{FD};
+        Log3 $name, 3, "VCONTROL: USB device closed";
+     }
+     else {
+        ###TCP Connection
+        DevIo_CloseDev($hash);
+        Log3 $name, 3, "VCONTROL: TCP connection closed";
+      }
+    }     
         
      return "";
   };
@@ -483,11 +499,18 @@ VCONTROL_Read($)
   my $bufflen = length($hexline);
   my $buffhalflen = $bufflen/2;
   
-  if ( $bufflen > 2 && $hexline =~ /(05){$buffhalflen,}/ && $cmd_list[$last_cmd][2] ne "mode"){
+  if ( $bufflen > 2 && $hexline =~ /(05){$buffhalflen,}/ 
+     && $cmd_list[$last_cmd][2] ne "mode"
+     && $cmd_list[$last_cmd][2] ne "1ByteU"
+     && $cmd_list[$last_cmd][2] ne "1ByteU2"
+     && $cmd_list[$last_cmd][2] ne "1ByteS"
+     && $cmd_list[$last_cmd][2] ne "1ByteH"
+     ){
      Log3 $name, 5, "VCONTROL: exit if buffer just filled with 0x05";
      $hash->{PARTIAL} = "";
      $read_now = READ_UNDEF;
-     return ""; }
+     return ""; 
+  }
   
   #if one 05 received we can send command
   if ( length($hexline) == 2 && $hexline eq "05" && $read_now == READ_UNDEF)
@@ -533,7 +556,15 @@ VCONTROL_Read($)
       }
       #if the mode is requestet and 0x05 is received 
       #try again to be sure that 0x05 is not the sync byte
-      elsif ($poll_now == POLL_ACTIVE && $cmd_list[$last_cmd][2] eq "mode" && substr("$hexline",0,2) eq "05" ){
+      elsif (  $poll_now == POLL_ACTIVE 
+            && substr("$hexline",0,2) eq "05"
+            && (  $cmd_list[$last_cmd][2] eq "mode" 
+               || $cmd_list[$last_cmd][2] eq "1ByteU"
+               || $cmd_list[$last_cmd][2] eq "1ByteU2"
+               || $cmd_list[$last_cmd][2] eq "1ByteS"
+               || $cmd_list[$last_cmd][2] eq "1ByteH"
+               ) 
+             ){
           Log3 $name, 5, "VCONTROL: check temp_mode";
           if ($temp_mode < 5){
              $temp_mode++;
@@ -557,8 +588,7 @@ VCONTROL_Read($)
 }
 
 #####################################
-sub
-VCONTROL_Parse($$$$)
+sub VCONTROL_Parse($$$$)
 {             
   my ($hash, $cmd, $hexline,$answer) = @_;
 
@@ -709,8 +739,7 @@ VCONTROL_Parse($$$$)
 
 
 #####################################
-sub
-VCONTROL_Ready($)
+sub VCONTROL_Ready($)
 {
   my ($hash) = @_;
   my $dev = $hash->{DeviceName};
@@ -718,13 +747,14 @@ VCONTROL_Ready($)
 
   my $po;
 
-  ###USB
-  if (index($dev, ':') == -1) {
+  if ($TCP_CONNECTION==0) {
+     ###USB     
      $po=$hash->{USBDev};
      if(!$po) {    # Looking for the device
         if ($^O=~/Win/) {
            $po = new Win32::SerialPort ($dev);
-        } else  {
+        } 
+        else {
            $po = new Device::SerialPort ($dev);
         }
         return undef if(!$po);
@@ -735,39 +765,29 @@ VCONTROL_Ready($)
            $hash->{FD} = $po->FILENO;
            delete($readyfnlist{"$name.$dev"});
            $selectlist{"$name.$dev"} = $hash;
-        } else {
+        } 
+        else {
            $readyfnlist{"$name.$dev"} = $hash;
         }
         $hash->{PARTIAL} = "";
         VCONTROL_DoInit($hash, $po);
         DoTrigger($name, "CONNECTED");
         $hash->{STATE} = "connected";
-        return undef;
-     }
-  } else {
-      $hash->{PARTIAL} = "";
-      return DevIo_OpenDev($hash, 1, "VCONTROL_DoInit")
-                if($hash->{STATE} eq "disconnected");
-      #  This is relevant for windows/USB only
-      my $po = $hash->{USBDev};
-      my ($BlockingFlags, $InBytes, $OutBytes, $ErrorFlags);
-      if($po) {
-          ($BlockingFlags, $InBytes, $OutBytes, $ErrorFlags) = $po->status;
-      }
-      return ($InBytes && $InBytes>0);
-  }
-   
-
-  # This is relevant for windows only
-  if (index($dev, ':') == -1) {
-     return undef if !$po;
-     my ($BlockingFlags, $InBytes, $OutBytes, $ErrorFlags)=$po->status;
-     return ($InBytes>0);
-  }
+    }
+    return undef if !$po;
+    my ($BlockingFlags, $InBytes, $OutBytes, $ErrorFlags)=$po->status;
+    return ($InBytes>0);
+   } 
+   else {
+    ###TCP Connection
+    $hash->{PARTIAL} = "";
+    return DevIo_OpenDev($hash, 1, "VCONTROL_DoInit") if($hash->{STATE} eq "disconnected");
+   }
 }
 
-sub
-VCONTROL_Set($@)
+
+#####################################
+sub VCONTROL_Set($@)
 {
   my ($hash, @a) = @_;
   my $pn = $hash->{NAME};
@@ -839,7 +859,6 @@ VCONTROL_Set($@)
         readingsBulkUpdate   ($hash, $arg, $value);
         readingsEndUpdate    ($hash, 1);
      }
- 	
   }	
 
   #else {
@@ -848,6 +867,7 @@ VCONTROL_Set($@)
   return "";      
 }
 
+#####################################
 sub VCONTROL_Get($@) {
   my ($hash, @a) = @_;
   return "no get value specified" if(@a < 2);
@@ -868,7 +888,9 @@ sub VCONTROL_Get($@) {
         VCONTROL_CmdConfig($command_config_file);
         @cmd_list = @poll_cmd_list;
      }
-     else { $get_config_now = GET_CONFIG_ACTIVE; }
+     else { 
+        $get_config_now = GET_CONFIG_ACTIVE; 
+     }
      return "";   
   }
 
@@ -878,15 +900,16 @@ sub VCONTROL_Get($@) {
      RemoveInternalTimer($hash);
      VCONTROL_Poll($hash);
   }
-  else { $get_timer_now = GET_TIMER_ACTIVE; }
-  
-  
+  else { 
+     $get_timer_now = GET_TIMER_ACTIVE; 
+  }
+ 
   return "";
 }
 
 
-sub
-VCONTROL_ReInit($)
+#####################################
+sub VCONTROL_ReInit($)
 {
   my $hash = shift;
   my $name = $hash->{NAME};
@@ -900,40 +923,45 @@ VCONTROL_ReInit($)
   #Opening USB Device
   Log3($name, 3, "VCONTROL ReInit VCONTROL device $dev");
   
-  my $ret = undef;
-  my $po;
-  ###USB
-  if ($^O=~/Win/) {
-     require Win32::SerialPort;
-     $po = new Win32::SerialPort ($dev);
-  } else  {
-     require Device::SerialPort;
-     $po = new Device::SerialPort ($dev);
-  }
-  if(!$po) {
-      my $msg = "Can't open $dev: $!";
-      Log3($name, 3, $msg) if($hash->{MOBILE});
-      return $msg if(!$hash->{MOBILE});
-      $readyfnlist{"$name.$dev"} = $hash;
-      return "";
-  }
-  Log3($name, 3, "VCONTROL opened VCONTROL device $dev");
+  if ($TCP_CONNECTION==0) {
+     ###USB
+     my $po;
+     if ($^O=~/Win/) {
+        require Win32::SerialPort;
+        $po = new Win32::SerialPort ($dev);
+     } 
+     else  {
+        require Device::SerialPort;
+        $po = new Device::SerialPort ($dev);
+     }
+     if(!$po) {
+        my $msg = "Can't open $dev: $!";
+        Log3($name, 3, $msg) if($hash->{MOBILE});
+        return $msg if(!$hash->{MOBILE});
+        $readyfnlist{"$name.$dev"} = $hash;
+        return undef;
+     }
+     Log3($name, 3, "VCONTROL opened VCONTROL device $dev");
 
-  $hash->{USBDev} = $po;
-  if( $^O =~ /Win/ ) {
-     $readyfnlist{"$name.$dev"} = $hash;
-  } else {
-     $hash->{FD} = $po->FILENO;
-     delete($readyfnlist{"$name.$dev"});
-     $selectlist{"$name.$dev"} = $hash;
-  }
+     $hash->{USBDev} = $po;
+     if( $^O =~ /Win/ ) {
+        $readyfnlist{"$name.$dev"} = $hash;
+     } 
+     else {
+        $hash->{FD} = $po->FILENO;
+        delete($readyfnlist{"$name.$dev"});
+        $selectlist{"$name.$dev"} = $hash;
+     }
      
-  #Initialize to be able to receive data
-  VCONTROL_DoInit($hash, $po);
-
-  return $ret;
-
+     #Initialize to be able to receive data
+     VCONTROL_DoInit($hash, $po);
+   }
+   else {
+   ###TCP COnnection
+   DevIo_OpenDev($hash, 0, "VCONTROL_DoInit");
+   }
 }
+
 #####################################
 #####################################
 ## Load Config
@@ -954,6 +982,8 @@ sub VCONTROL_CmdConfig($)
   undef @timer_cmd_list;
 #  undef @timer_ww_cmd_list;
   
+  $viess_protocol = PROTOCOL_KW;
+  
   while(<CMDDATEI>){
         my $zeile=trim($_);
         Log3 undef, 5, "VCONTROL: CmdConfig-Zeile $zeile";
@@ -965,8 +995,17 @@ sub VCONTROL_CmdConfig($)
               $_ = trim($_);
            } 
 
+           if ($cfgarray[0] eq "PROTOCOL"){
+              if (  $cfgarray[1] eq "GWG" ){
+                 $viess_protocol = PROTOCOL_GWG;
+              }
+              elsif ( $cfgarray[1] eq "300" ){
+                 $viess_protocol = PROTOCOL_300;
+              }
+           }
+
            #TODO: CHECK IF CONFIG PARAMS are allowed!!!  
-           if ($cfgarray[0] eq "POLL"){
+           elsif ($cfgarray[0] eq "POLL"){
               if (  $cfgarray[2] ne "1ByteU"
                  && $cfgarray[2] ne "1ByteU2"
                  && $cfgarray[2] ne "1ByteS" 
@@ -982,7 +1021,10 @@ sub VCONTROL_CmdConfig($)
                  ){
                  Log3 undef, 3, "VCONTROL: unknown parse method '$cfgarray[2]' in '$cmd_config_file'";
               }
-              elsif( index($cfgarray[1],"01F7") == -1 || length($cfgarray[1]) < 10 ){
+              elsif(  (($viess_protocol == PROTOCOL_KW)  && (index($cfgarray[1],"01F7") == -1 || length($cfgarray[1]) < 10 ))
+                   || (($viess_protocol == PROTOCOL_GWG) && (index($cfgarray[1],"01CB") == -1 || length($cfgarray[1]) < 10 ))
+                   )
+              {
                  Log3 undef, 3, "VCONTROL: wrong Address '$cfgarray[1]' in '$cmd_config_file'";
               }
               else {
@@ -1025,7 +1067,7 @@ sub VCONTROL_CmdConfig($)
                  $write_idx++;
               } 
            }
-           else{
+           else {
               Log3 undef, 3, "VCONTROL: unknown command '$cfgarray[0]' in '$cmd_config_file'";
            }
         }
@@ -1313,7 +1355,7 @@ sub VCONTROL_TimerConv($$){
            {return "";}
         }
               
-        if ( $timerhour < "00" || $timerhour > "23" ){
+        if ( $timerhour < "00" || $timerhour > "24" ){
            {return "";}
         }    
 
@@ -1322,7 +1364,7 @@ sub VCONTROL_TimerConv($$){
         } 
                            
         my $helpvalue = (($timerhour <<3) + ($timermin/10)) & 0xff;
-        push(@hextimerdata, (sprintf "%X", $helpvalue));
+        push(@hextimerdata, (sprintf "%02X", $helpvalue));
      } 
    }
         
@@ -1424,7 +1466,7 @@ sub VCONTROL_RegisterConv($)
 
        <li>lines beginning with "#" are comments!<br></li>
        <li>Polling Commands (POLL) to read values.<br></li>
-       <li>Set Commandos (SET) to set values.<br></li>
+       <li>Set Commands (SET) to set values.<br></li>
        <br>
        <b>Polling Commands have the following structure:<br><br></b>
 

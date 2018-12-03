@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_voltage4current4.gplot 9622 2015-10-24 06:34:52Z klaus-schauer $
 # Display the battery voltage und current
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device

@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 16_STACKABLE_CC.pm 12973 2017-01-06 10:01:25Z rudolfkoenig $
 package main;
 use strict;
 use warnings;
@@ -26,6 +26,10 @@ STACKABLE_CC_Initialize($)
   $hash->{DelPrefix} = "STACKABLE_CC_DelPrefix"; 
   $hash->{noRawInform} = 1;     # Our message was already sent as raw.
   $hash->{noAutocreatedFilelog} = 1;
+
+  $hash->{IOOpenFn}  = "STACKABLE_IOOpenFn";
+  $hash->{IOReadFn}  = "STACKABLE_IOReadFn";
+  $hash->{IOWriteFn} = "STACKABLE_IOWriteFn";
 }
 
 #####################################
@@ -35,12 +39,14 @@ STACKABLE_CC_Define($$)
   my ($hash, $def) = @_;
   my @a = split("[ \t][ \t]*", $def);
 
-  return "wrong syntax: define <name> STACKABLE_CC [CUL|SCC]"
+  $hash->{TCM} = pop @a if(int(@a) == 4 && $a[3] eq "TCM");
+
+  return "wrong syntax: define <name> STACKABLE_CC [CUL|SCC] [TCM]"
     if(int(@a) != 3);
 
   my $io = $defs{$a[2]};
   return "$a[2] is not a CUL/STACKABLE_CC"
-    if(!$io || !($io->{TYPE} eq "CUL" || $io->{TYPE} eq "STACKABLE_CC"));
+    if(!$io || $io->{TYPE} !~ m/^(CUL|TSCUL|STACKABLE_CC|TSSTACKED)$/);
 
   return "$io->{NAME} has alread a stacked device: $io->{STACKED}"
     if($io->{STACKED});
@@ -48,15 +54,19 @@ STACKABLE_CC_Define($$)
   $io->{STACKED} = $hash->{NAME};
   $hash->{IODev} = $io;
   delete($io->{".clientArray"}); # Force a recompute
-  $hash->{initString} = $io->{initString};
-  $hash->{CMDS} = "";
-  $hash->{Clients} = $io->{Clients};
-  $hash->{MatchList} = $io->{MatchList};
+
+  if(!$hash->{TCM}) {
+    $hash->{initString} = $io->{initString};
+    $hash->{CMDS} = "";
+    $hash->{Clients} = $io->{Clients};
+    $hash->{MatchList} = $io->{MatchList};
+    CUL_DoInit($hash);
+  }
+
   $hash->{StackLevel} = $io->{StackLevel} ? $io->{StackLevel}+1 : 1;
   $hash->{STATE} = "Defined";
 
   notifyRegexpChanged($hash, $a[2]);
-  CUL_DoInit($hash);
 
   return undef;
 }
@@ -100,7 +110,7 @@ STACKABLE_CC_Write($$)
 
   ($fn, $msg) = CUL_WriteTranslate($hash, $fn, $msg);
   return if(!defined($fn));
-  IOWrite($hash, "", "*$fn$msg"); # No more translations
+  IOWrite($hash, "", ($hash->{TCM} ? "%":"*")."$fn$msg"); # No more translations
 }
 
 #####################################
@@ -118,15 +128,29 @@ STACKABLE_CC_Parse($$)
 
   return "" if(IsIgnored($name));
 
-  CUL_Parse($defs{$name}, $iohash, $name, $msg);
+  my $sh = $defs{$name};
+  if($sh && $sh->{TCM}) {
+    my $th = $sh->{TCMHash};
+    if($th) {
+      delete $th->{IOReadFn};
+      $th->{IODevRxBuffer} = pack("H*", $msg);
+      CallFn($th->{NAME}, "ReadFn", $th);
+      $th->{IOReadFn} = "STACKABLE_IOReadFn";
+    } else {
+      Log 1, "$name: no TCM device assigned";
+    }
+    
+  } else {
+    CUL_Parse($defs{$name}, $iohash, $name, $msg);
+  }
   return "";
 }
 
 sub
-STACKABLE_CC_DelPrefix($)
+STACKABLE_CC_DelPrefix($$)
 {
   my ($hash, $msg) = @_;
-  $msg =~ s/^.//;
+  $msg =~ s/^[^A-Z0-9]//i;
   return $msg;
 }
 
@@ -146,10 +170,43 @@ STACKABLE_CC_Undef($$)
   return undef;
 }
 
+sub
+STACKABLE_IOOpenFn($)
+{
+  my ($hash) = @_;
+  $hash->{FD} = $hash->{IODev}{IODev}{FD};     # Lets fool the TCM
+  $hash->{IODev}{TCMHash} = $hash;
+  $hash->{IOReadFn} = "STACKABLE_IOReadFn";
+  return 1;
+}
+
+sub
+STACKABLE_IOReadFn($)
+{
+  my ($hash) = @_;
+  my $me = $hash->{IODev};
+  my $buf = "";
+  while($buf !~ m/\n/) {
+    $buf .= DevIo_SimpleRead($me->{IODev}); # may block
+  }
+  $buf =~ s/[\r\n]//g;
+  $buf = STACKABLE_CC_DelPrefix($me, $buf);
+  return pack("H*",$buf);
+}
+
+sub
+STACKABLE_IOWriteFn($$)
+{
+  my ($hash, $msg) = @_;
+  return IOWrite($hash, "", unpack("H*",$msg));
+}
+
 1;
 
 
 =pod
+=item summary    Busware Stackable CC (SCC) base module
+=item summary_DE Busware Stackabble CC (SCC) basis Modul
 =begin html
 
 <a name="STACKABLE_CC"></a>

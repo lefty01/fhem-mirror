@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 36_PCA301.pm 12056 2016-08-22 19:30:31Z justme1968 $
 #
 # TODO:
 
@@ -75,7 +75,7 @@ PCA301_Define($$)
 
   $attr{$name}{devStateIcon} = 'on:on:toggle off:off:toggle set.*:light_exclamation:off' if( !defined( $attr{$name}{devStateIcon} ) );
   $attr{$name}{webCmd} = 'on:off:toggle:statusRequest' if( !defined( $attr{$name}{webCmd} ) );
-  CommandAttr( undef, "$name userReadings consumptionTotal:consumption monotonic {ReadingsVal(\$name,'consumption',0)}" ) if( !defined( $attr{$name}{userReadings} ) );
+  CommandAttr( undef, "$name userReadings consumptionTotal:consumption.* monotonic {ReadingsVal(\$name,'consumption',0)}" ) if( !defined( $attr{$name}{userReadings} ) );
 
   #PCA301_Send($hash, $addr, "00" );
 
@@ -213,7 +213,7 @@ PCA301_Parse($$)
      return "UNDEFINED PCA301_$rname PCA301 $raddr $channel";
    }
 
-  #CommandAttr( undef, "$rname userReadings consumptionTotal:consumption monotonic {ReadingsVal($rname,'consumption',0)}" ) if( !defined( $attr{$rname}{userReadings} ) );
+  #CommandAttr( undef, "$rname userReadings consumptionTotal:consumption.* monotonic {ReadingsVal($rname,'consumption',0)}" ) if( !defined( $attr{$rname}{userReadings} ) );
 
   my @list;
   push(@list, $rname);
@@ -283,6 +283,8 @@ PCA301_Attr(@)
 1;
 
 =pod
+=item summary    PCA301 devices
+=item summary_DE PCA301 Ger&auml;te
 =begin html
 
 <a name="PCA301"></a>
@@ -340,7 +342,7 @@ PCA301_Attr(@)
     <li>forceOn<br>
       try to switch on the device whenever an off status is received.</li>
     <li>offLevel<br>
-      a power level less or equal <code>offLevel</code> is considered to be off.</li>
+      a power level less or equal <code>offLevel</code> is considered to be off. used only in conjunction with readonly.</li>
     <li>readonly<br>
       if set to a value != 0 all switching commands (on, off, toggle, ...) will be disabled.</li>
     <li>ignore<br>

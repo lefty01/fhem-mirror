@@ -1,11 +1,26 @@
 
+FW_version["fhemweb_readingsGroup.js"] = "$Id: fhemweb_readingsGroup.js 15189 2017-10-03 17:53:27Z justme1968 $";
+
 //$(document).ready(FW_readingsGroupReadyFn);
 $(FW_readingsGroupReadyFn);
 
 function
 FW_readingsGroupReadyFn() {
+
   // replace all informIds of the form devName-readingName with rgName-devName.readingName
   $(".readingsGroup").each(function() {
+    if( this.className.search(/\bsortable\b/) ) {
+      loadScript( 'pgm2/sorttable.js', function() {
+        setTimeout( function() {
+          $(".readingsGroup").each(function() {
+            var sort = parseInt($(this).attr('sortColumn'));
+            if( sort )
+              sorttable.doSort(this, Math.abs(sort)-1, sort<0?true:false );
+          } );
+        }, 100 );
+      } );
+    }
+
     var name = $(this).attr('id').split("-")[1];
     $(this).find("[informId]").each(function() {
       var informId = $(this).attr('informId');
@@ -112,7 +127,12 @@ FW_readingsGroupUpdateLine(d){
   if(dd.length != 2)
     return;
 
-  if( dd[1] != "visibility" )
+  if( dd[1] === 'sort' ) {
+    var rg = document.getElementById( 'readingsGroup-'+dd[0] );
+    if( sorttable )
+      sorttable.doSort( rg );
+
+  } else if( dd[1] != "visibility" )
     return
 
   if( d[1] == 'toggle' ) FW_readingsGroupToggle( dd[0] );
@@ -123,7 +143,18 @@ FW_readingsGroupUpdateLine(d){
   //console.log("xxx: "+d[1]);
 }
 
+function FW_readingsGroupCreate(elName, devName, vArr, currVal, set, params, cmd)
+{
+}
+
+
 FW_widgets['readingsGroup'] = {
+  createFn:FW_readingsGroupCreate,
   updateLine:FW_readingsGroupUpdateLine
 };
 
+
+/*
+=pod
+=cut
+*/

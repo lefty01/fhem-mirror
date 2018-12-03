@@ -1,4 +1,6 @@
 "use strict";
+var FW_version={};
+FW_version["fhemweb.js"] = "$Id: fhemweb.js 17826 2018-11-23 10:40:33Z rudolfkoenig $";
 
 var FW_serverGenerated;
 var FW_serverFirstMsg = (new Date()).getTime()/1000;
@@ -6,21 +8,35 @@ var FW_serverLastMsg = FW_serverFirstMsg;
 var FW_isIE = (navigator.appVersion.indexOf("MSIE") > 0);
 var FW_isiOS = navigator.userAgent.match(/(iPad|iPhone|iPod)/);
 var FW_scripts = {}, FW_links = {};
-var FW_docReady = false;
+var FW_docReady = false, FW_longpollType, FW_csrfToken, FW_csrfOk=true;
 var FW_root = "/fhem";  // root
+var FW_availableJs={};
+var FW_urlParams={};
+var embedLoadRetry = 100;
+var FW_os = "unknown";
+
+if(FW_isiOS) { FW_os = "iOS";
+} else if(navigator.userAgent.indexOf("Android") >= 0) { FW_os = "android";
+} else if(navigator.userAgent.indexOf("OS X")    >= 0) { FW_os = "osx";
+} else if(navigator.userAgent.indexOf("Windows") >= 0) { FW_os = "windows";
+} else if(navigator.userAgent.indexOf("Linux")   >= 0) { FW_os = "linux";
+}
 
 // createFn returns an HTML Element, which may contain 
 // - setValueFn, which is called when data via longpoll arrives
 // - activateFn, which is called after the HTML element is part of the DOM.
 var FW_widgets = {
   select:            { createFn:FW_createSelect    },
+  selectnumbers:     { createFn:FW_createSelectNumbers, },
   slider:            { createFn:FW_createSlider    },
   time:              { createFn:FW_createTime      },
   noArg:             { createFn:FW_createNoArg     },
   multiple:          { createFn:FW_createMultiple  },
-  "multiple-strict": { createFn:FW_createMultiple  },
-  textfield:         { createFn:FW_createTextField },
-  "textfield-long":  { createFn:FW_createTextField }
+  "multiple-strict": { createFn:FW_createMultiple, second:true  },
+  textField:         { createFn:FW_createTextField },
+  textFieldNL:       { createFn:FW_createTextField, second:true },
+  "textField-long":  { createFn:FW_createTextField, second:true },
+  "textFieldNL-long":{ createFn:FW_createTextField, second:true }
 };
 
 window.onbeforeunload = function(e)
@@ -28,6 +44,14 @@ window.onbeforeunload = function(e)
   FW_leaving = 1;
   return undefined;
 }
+
+window.onerror = function(errMsg, url, lineno)
+{
+  url = url.replace(/.*\//,'');
+  if($("body").attr("data-confirmJSError") != 0)
+    FW_okDialog(url+" line "+lineno+":<br>"+errMsg);
+}
+
 
 function
 FW_replaceWidgets(parent)
@@ -38,7 +62,8 @@ FW_replaceWidgets(parent)
     var rd=$(this).attr("reading");
     var params = cmd.split(" ");
     var type=$(this).attr("type");
-    if( type == undefined ) type = "set";
+    if(type == undefined)
+      type = "set";
     FW_replaceWidget(this, dev, $(this).attr("arg").split(","),
       $(this).attr("current"), rd, params[0], params.slice(1),
       function(arg) {
@@ -51,10 +76,22 @@ FW_replaceWidgets(parent)
 function
 FW_jqueryReadyFn()
 {
+  if(FW_docReady)       // loading fhemweb.js twice is hard to debug
+    return;
   FW_docReady = true;
   FW_serverGenerated = $("body").attr("generated");
-  if($("body").attr("longpoll"))
+
+  FW_longpollType = $("body").attr("longpoll");
+  var ajs = $("body").attr("data-availableJs");
+  if(ajs) {
+    ajs = ajs.split(",");
+    for(var i1=0; i1<ajs.length; i1++)
+      FW_availableJs[ajs[i1]] = 1;
+  }
+
+  if(FW_longpollType != "0")
     setTimeout("FW_longpoll()", 100);
+  FW_csrfToken = $("body").attr('fwcsrf');
 
   $("a").each(function() { FW_replaceLink(this); })
   $("head script").each(function() {
@@ -88,43 +125,39 @@ FW_jqueryReadyFn()
     FW_root = r;
 
   FW_replaceWidgets($("html"));
+  FW_confirmDelete();
 
   // Fix the td count by setting colspan on the last column
   $("table.block.wide").each(function(){        // table
     var id = $(this).attr("id");
     if(!id || id.indexOf("TYPE") != 0)
       return;
-    var maxTd=0, tdCount=[];
-    $(this).find("tr").each(function(){         // count the td's
-      var cnt=0;
-      $(this).find("td").each(function(){ cnt++; });
-      if(maxTd < cnt) maxTd = cnt;
+    var maxTd=0, tdCount=[], tbl = $(this);
+    $(tbl).find("> tbody > tr").each(function(){         // count the td's
+      var cnt = 0, row=this;
+      $(row).find("> td").each(function(){ 
+        var cs = $(this).attr("colspan");
+        cnt += parseInt(cs ? cs : 1);
+      });
+      if(maxTd < cnt)
+        maxTd = cnt;
       tdCount.push(cnt);
     });
-    $(this).find("tr").each(function(){         // set the colspan
-      $(this).find("td").last().attr("colspan", maxTd-tdCount.shift()+1);
+    $(tbl).find("> tbody> tr").each(function(){         // set the colspan
+      var tdc = tdCount.shift();
+      $(this).find("> td:last").each(function(){
+        var cs = $(this).attr("colspan");
+        $(this).attr("colspan", maxTd-tdc+(cs ? parseInt(cs) : 1));
+      });
     });
   });
-
-  // Replace the FORM-POST in detail-view by XHR
-  /* Inactive, as Internals and Attributes arent auto updated.
-  $("form input[type=submit]").click(function(e) {
-    var cmd = "";
-    $(this).parent().find("[name]").each(function() {
-      cmd += (cmd?"&":"")+$(this).attr("name")+"="+$(this).val();
-    });
-    if(cmd.indexOf("detail=") < 0)
-      return;
-    e.preventDefault();
-    FW_cmd(FW_root+"?"+cmd+"&XHR=1");
-  });
-  */
 
   $("form input.get[type=submit]").click(function(e) { //"get" via XHR to dialog
     e.preventDefault();
     var cmd = "", el=this;
     $(el).parent().find("input,[name]").each(function() {
-      cmd += (cmd?"&":"")+$(this).attr("name")+"="+$(this).val();
+      cmd += (cmd?"&":"")+encodeURIComponent($(this).attr("name"))+
+                      "="+encodeURIComponent($(this).val());
     });
     FW_cmd(FW_root+"?"+cmd+"&XHR=1&addLinks=1", function(data) {
       if(!data.match(/^[\r\n]*$/)) // ignore empty answers
@@ -142,21 +175,32 @@ FW_jqueryReadyFn()
       });
     });
 
-  $("form").each(function(){                             // shutdown handling
+  $("form").each(function(){   // main input special cases
     var input = $(this).find("input.maininput");
     if(!input.length)
       return;
     $(this).on("submit", function(e) {
       var val = $(input).val();
-      if(val.match(/^\s*shutdown/)) {
+      if(val.match(/^\s*ver.*/)) {              // version
+        e.preventDefault();
+        $(input).val("");
+        return FW_showVersion(val);
+        
+      } else if(val.match(/^\s*shutdown/)) {    // shutdown
         FW_cmd(FW_root+"?XHR=1&cmd="+val);
         $(input).val("");
         return false;
 
-      } else if(val.match(/^\s*get\s+/)) {
+      } else if(val.match(/^\s*l\s/)) {        // l dev
+        var m = val.match(/^\s*l\s+(.*)/);
+        location.href = FW_root+"?detail="+m[1];
+        e.preventDefault();
+        return false;
+
+      } else if(val.match(/^\s*get\s+/)) {      // get
         // make get use xhr instead of reload
         //return true;
-        FW_cmd(FW_root+"?cmd="+val+"&XHR=1", function(data) {
+        FW_cmd(FW_root+"?cmd="+encodeURIComponent(val)+"&XHR=1", function(data){
           if( !data.match( /^<html>.*<\/html>/ ) ) {
             data = data.replace( '<', '&lt;' );
             data = '<pre>'+data+'</pre>';
@@ -187,8 +231,8 @@ FW_jqueryReadyFn()
         $("#devSpecHelp").remove();
         return;
       }
-      $("#content").append('<div id="devSpecHelp"></div>');
-      FW_cmd(FW_root+"?cmd=help "+dev+"&XHR=1", function(data) {
+      FW_getHelp(dev, function(data){
+        $("#content").append('<div id="devSpecHelp"></div>');
         $("#devSpecHelp").html(data);
         var off = $("#devSpecHelp").position().top-20;
         $('body, html').animate({scrollTop:off}, 500);
@@ -196,7 +240,223 @@ FW_jqueryReadyFn()
     });
   });
 
+  $("table.attributes tr div.dname")    // Click on attribute fills input value
+    .each(function(){
+      $(this)
+        .html('<a>'+$(this).html()+'</a>')
+        .css({cursor:"pointer"})
+        .click(function(){
+          var attrName = $(this).text();
+          var sel = "#sel_attr"+$(this).attr("data-name").replace(/\./g,'_');
+          if($(sel+" option[value='"+attrName+"']").length == 0)
+            $(sel).append('<option value="'+attrName+'">'+attrName+'</option>');
+          $(sel).val(attrName);
+          FW_detailSelect(sel, true);
+        });
+    });
 
+  $("[name=icon-filter]").on("change keyup paste", function() {
+    clearTimeout($.data(this, 'delayTimer'));
+    var wait = setTimeout(FW_filterIcons, 300);
+    $(this).data('delayTimer', wait);
+  });
+
+  $("pre.motd").each(function(){ // add links for passwort setting
+    var txt = $(this).text();
+    txt = txt.replace(/(configuring|define|attr) .*/g, function(x) {
+      return "<a href='#'>"+x+"</a>";
+    });
+    $(this).html(txt);
+    $(this).find("a").click(function(){
+      var txt = $(this).text();
+      var ma = txt.match(/configuring.*device (.*)/);   // ??
+      if(ma)
+        location.href = FW_root+"?detail="+ma[1];
+      FW_cmd(FW_root+"?cmd="+encodeURIComponent(txt)+"&XHR=1",
+        function(data){
+          if(txt.indexOf("attr") == 0) $("pre.motd").html("");
+          if(txt.indexOf("define") == 0)
+            location.href = FW_root+"?detail=allowed";
+        });
+    });
+  });
+
+  var sa = location.search.substring(1).split("&");
+  for(var i = 0; i < sa.length; i++) {
+    var kv = sa[i].split("=");
+    FW_urlParams[kv[0]] = kv[1];
+  }
+
+  $("select[id^=sel_attr],select[id^=sel_set],select[id^=sel_get]")
+  .change(function(){ // online help
+    var val =$(this).val().replace(/[.\/(){}\[\]]/g,function(a){return "\\"+a});
+    var m = $(this).attr("name").match(/arg.(set|get|attr)(.*)/);
+    if(!m)
+      return;
+    $("#devSpecHelp").remove();
+    var sel = this;
+    FW_getHelp(m[2], function(data) { // show either the next or the outer li
+      $("#content")
+        .append("<div id='workbench' style='display:none'></div>");
+      $("#content > #workbench").html(data);
+      var aTag = $("#content > #workbench").find("a[name="+val+"]");
+      if($(aTag).length) {
+        var liTag = $(aTag).next("li");
+        if(!$(liTag).length)
+          liTag = $(aTag).parent("li");
+        if($(liTag).length) {
+          $(sel).closest("div[cmd='"+m[1]+"']")
+             .after('<div class="makeTable" id="devSpecHelp"></div>')
+          $("#devSpecHelp").html($(liTag).html());
+        }
+      }
+      $("#content > #workbench").remove();
+    });
+  });
+
+  FW_smallScreenCommands();
+  FW_inlineModify();
+  FW_rawDef();
+  FW_treeMenu();
+
+  $("body").attr("data-os", FW_os);
+  // automatic reload for style change
+  if(location.search.indexOf("cmd=style%20select") > 0) {
+    $('a[href*="style set"],a[onclick*="style set"]').each(function(){
+      var href = $(this).attr("href");
+      if(!href && (href = $(this).attr("onclick")))
+        href = href.substr(15,href.length-16);
+      $(this).click(function(e){
+        e.preventDefault();
+        FW_cmd(href+"&XHR=1", function(data) { location.reload(true); });
+      });
+    });
+  }
+}
+
+var FW_helpData;
+function
+FW_getHelp(dev, fn)
+{
+  if(FW_helpData)
+    return fn(FW_helpData);
+  FW_cmd(FW_root+"?cmd=help "+dev+"&XHR=1", function(data) {
+    FW_helpData = data;
+    return fn(FW_helpData);
+  });
+}
+
+function
+FW_showVersion(val)
+{
+  FW_cmd(FW_root+"?cmd="+encodeURIComponent(val)+"&XHR=1", function(data){
+    var list = Object.keys(FW_version);
+    list.sort();
+    for(var i1=0; i1<list.length; i1++) {
+      var ma = /\$Id: ([^ ]*) (.*) \$/.exec(FW_version[list[i1]]);
+      if(ma) {
+        if(ma[1].length < 26)
+          ma[1] = (ma[1]+"                            ").substr(0,26);
+        data += "\n"+ma[1]+" "+ma[2];
+      }
+    }
+    FW_okDialog('<pre>'+data+'</pre>');
+  });
+  return false;
+}
+
+function
+FW_filterIcons()
+{
+  var icons = $('.dist[title]');
+  icons.show();
+
+  var filterText = $('[name=icon-filter]').val();
+  if (filterText != '') {
+    var re = RegExp(filterText,"i");
+    icons.filter(function() {
+      return !re.test(this.title);
+    }).hide();
+  }
+}
+
+function
+FW_confirmDelete()
+{
+  var b = $("body");
+  var cd = $(b).attr("data-confirmDelete");
+  if(!cd || cd == 0)
+    return;
+  var wn = $(b).attr("data-webName");
+  $("div#content").find("a").each(function(){
+    var href = $(this).attr("href");
+    if(!href)
+      return;
+    var ma = $(this).attr("href").match(/.*cmd[^=]*=(delete[^&]*).*$/);
+    if(!ma || ma.length != 2)
+      return;
+    $(this).attr("href", "#");
+    $(this).unbind("click");
+    $(this).click(function(e){
+      e.preventDefault();
+
+      var div = $("<div id='FW_okDialog'>");
+      $(div).html("Do you really want to "+ma[1]+"?<br><br>"+
+        "<input type='checkbox' name='noconf'> Skip this dialog in the future");
+      $("body").append(div);
+
+      function
+      doClose()
+      {
+          if($(div).find("input:checked").length)
+            FW_cmd(FW_root+"?cmd=attr "+wn+" confirmDelete 0&XHR=1");
+          $(this).dialog("close"); $(div).remove();
+      }
+
+      $(div).dialog({
+        dialogClass:"no-close", modal:true, width:"auto", closeOnEscape:true, 
+        maxWidth:$(window).width()*0.9, maxHeight:$(window).height()*0.9,
+        buttons: [
+          {text:"Yes", click:function(){ location.href = ma[0]; doClose(); }},
+          {text:"No",  click:function(){ doClose(); }}]
+      });
+    });
+  });
+}
+
+// Show the webCmd list in a dialog if: smallScreen & hiddenroom=detail & room
+function
+FW_smallScreenCommands()
+{
+  if($("div#menu select").length == 0 ||           // not SmallScreen
+     $("div#content").attr("room") == undefined || // not room Overview
+     $("div#content div.col1 a").length > 0)       // no hiddenroom=detail
+    return;
+
+  $("div#content div.col1").each(function(){
+    var tr = $(this).closest("tr");
+    if($(tr).find("> td").length <= 2)
+      return;
+    $(this).html("<a href='#'>"+$(this).html()+"</a>");
+    $(this).find("a").click(function(){
+      var t = $("<table></table>"), row=0;
+      $(tr).find("> td").each(function(){
+        $(t).append("<tr></tr>");
+        if(row++ == 0) {
+          $(t).find("tr:last").append($(this).find("a").html());
+        } else {
+          $(this).attr("data-orig", 1);
+          this.orig=$(this).parent();
+          $(t).find("tr:last").append($(this).detach());
+        }
+      });
+      FW_okDialog(t, this, function(){
+        $("#FW_okDialog [data-orig]").each(function(){
+          $(this).detach().appendTo(this.orig);
+        });
+      });
+    });
+  });
 }
 
 
@@ -235,29 +495,54 @@ log(txt)
 function
 addcsrf(arg)
 {
-  var csrf = $("body").attr('fwcsrf');
-  if(csrf && arg.indexOf('fwcsrf') < 0)
-    arg += '&fwcsrf='+csrf;
+  if(typeof FW_csrfToken != "undefined") {
+    arg = arg.replace(/&fwcsrf=[^&]*/,'');
+    arg += '&fwcsrf='+encodeURIComponent(FW_csrfToken);
+  }
   return arg;
+}
+
+function
+FW_csrfRefresh(callback)
+{
+  log("FW_csrfRefresh, last was "+(FW_csrfOk ? "ok":"bad"));
+  if(!FW_csrfOk)        // avoid endless loop
+    return;
+  $.ajax({
+    url:location.pathname+"?XHR=1",
+    success: function(data, textStatus, request){
+      FW_csrfToken = request.getResponseHeader('x-fhem-csrftoken');
+      FW_csrfOk = false;
+      if(callback)
+        callback();
+    }
+  });
 }
 
 function
 FW_cmd(arg, callback)
 {
-  log("FW_cmd:"+arg);
-  arg = addcsrf(arg);
-  arg += '&fw_id='+$("body").attr('fw_id');
-  var req = new XMLHttpRequest();
-  req.open("POST", arg, true);
-  req.send(null);
-  req.onreadystatechange = function(){
-    if(req.readyState == 4 && req.responseText) {
+  if(arg.length < 120)
+    log("FW_cmd:"+arg);
+  else
+    log("FW_cmd:"+arg.substr(0,120)+"...");
+  $.ajax({
+    url:addcsrf(arg)+'&fw_id='+$("body").attr('fw_id'),
+    method:'POST',
+    success: function(data, textStatus, req){
+      FW_csrfOk = true;
       if(callback)
         callback(req.responseText);
-      else
+      else if(req.responseText)
         FW_errmsg(req.responseText, 5000);
+    },
+    error:function(xhr, status, err) {
+      if(xhr.status == 400 && typeof FW_csrfToken != "undefined") {
+        FW_csrfToken = "";
+        FW_csrfRefresh(function(){FW_cmd(arg, callback)});
+      }
     }
-  }
+  });
 }
 
 function
@@ -282,16 +567,19 @@ FW_errmsg(txt, timeout)
 }
 
 function
-FW_okDialog(txt, parent)
+FW_okDialog(txt, parent, removeFn)
 {
   var div = $("<div id='FW_okDialog'>");
   $(div).html(txt);
   $("body").append(div);
+  var oldPos = $("body").scrollTop();
   $(div).dialog({
     dialogClass:"no-close", modal:true, width:"auto", closeOnEscape:true, 
     maxWidth:$(window).width()*0.9, maxHeight:$(window).height()*0.9,
     buttons: [{text:"OK", click:function(){
       $(this).dialog("close");
+      if(removeFn)
+        removeFn();
       $(div).remove();
     }}]
   });
@@ -304,6 +592,7 @@ FW_okDialog(txt, parent)
       my: "left top", at: "right bottom",
       of: parent, collision: "flipfit"
     });
+  setTimeout(function(){$("body").scrollTop(oldPos);}, 1); // Not ideal.
 }
 
 function
@@ -408,7 +697,7 @@ FW_replaceLink(el)
       if(!txt)
         return;
       if(ma[2].match(/=set/)) // Forum #38875
-        FW_okDialog(txt, el);
+        FW_okDialog('<pre>'+txt+'<pre>', el);
       else
         FW_errmsg(txt, 5000);
     });
@@ -416,27 +705,359 @@ FW_replaceLink(el)
   $(el).css("cursor", "pointer");
 }
 
+function
+FW_htmlQuote(text)
+{
+  return text.replace(/&/g, '&amp;')    // Same as in 01_FHEMWEB
+             .replace(/</g, '&lt;')
+             .replace(/>/g, '&gt;');
+}
+
+function
+FW_inlineModify()       // Do not generate a new HTML page upon pressing modify
+{
+  var cm;
+
+  if( typeof AddCodeMirror == 'function' ) {
+    // init codemirror for FW_style edit textarea
+    AddCodeMirror($('textarea[name="data"]'));
+  }
+
+  $('#DEFa').click(function(){
+    var old = $('#edit').css('display');
+    $('#edit').css('display', old=='none' ? 'block' : 'none');
+    $('#disp').css('display', old=='none' ? 'none' : 'block');
+    if( typeof AddCodeMirror == 'function' ) {
+      var s=document.getElementById("edit").getElementsByTagName("textarea");
+      AddCodeMirror(s[0], function(pcm) {cm = pcm;});
+    }
+    });
+    
+  $("div input.psc[type=submit]:not(.get)").click(function(e){
+    e.preventDefault();
+    var newDef = typeof cm !== 'undefined' ?
+                 cm.getValue() : $(this).closest("form").find("textarea").val();
+    var cmd = $(this).attr("name")+"="+$(this).attr("value")+" "+newDef;
+    var isDef = true, reloadIfOk = false;
+
+    if(newDef == undefined || $(this).attr("value").indexOf("modify") != 0) {
+      isDef = false;
+      var div = $(this).closest("div.makeSelect");
+      var devName = $(div).attr("dev"),
+          cmd = $(div).attr("cmd");
+      var sel = $(this).closest("form").find("select");
+      var arg = $(sel).val();
+      var ifid = (devName+"-"+arg).replace(/([^_a-z0-9])/gi,
+                                   function(m){ return "\\"+m });
+      if($(".dval[informid="+ifid+"]").length == 0) {
+        if(cmd == "attr" || (cmd == "set" && arg == "attrTemplate")) {
+          reloadIfOk = true;
+        } else {
+          $(this).unbind('click').click();// No element found to replace, reload
+          return;
+        }
+      }
+      newDef = $(this).closest("form").find("input:text").val();
+      if(newDef == undefined)
+        newDef = $(this).closest("form").find("[name^=val]").val();
+      cmd = $(this).attr("name")+"="+cmd+" "+devName+" "+arg+" "+newDef;
+    }
+    FW_cmd(FW_root+"?"+encodeURIComponent(cmd)+"&XHR=1", function(resp){
+      if(!resp && reloadIfOk)
+        location.reload();
+      if(resp) {
+        if(!resp.match(/^<html>[\s\S]*<\/html>/ ) ) {
+          resp = FW_htmlQuote(resp);
+          if(resp.indexOf("\n") >= 0)
+            resp = '<pre>'+resp+'</pre>';
+        }
+        return FW_okDialog(resp);
+      }
+      if(isDef) {
+        if(newDef.indexOf("\n") >= 0)
+          newDef = '<pre>'+newDef+'</pre>';
+        else
+          newDef = FW_htmlQuote(newDef);
+        $("div#disp").html(newDef).css("display", "");
+        $("div#edit").css("display", "none");
+      }
+    });
+  });
+}
+
+function
+FW_rawDef()
+{
+  $("div.rawDef a").each(function(){       // Help on detail window
+    var dev = FW_getLink(this).split(" ").pop().split("&")[0];
+    $(this).unbind("click");
+    $(this).attr("href", "#"); // Desktop: show underlined Text
+    $(this).removeAttr("onclick");
+
+    $(this).click(function(evt){
+      if($("#rawDef").length) {
+        $("#rawDef").remove();
+        return;
+      }
+      var textAreaStyle = typeof AddCodeMirror == 'function'?'opacity:0':'';
+
+      $("#content").append('<div id="rawDef">'+
+          '<textarea id="td_rawDef" rows="25" cols="60" style="width:99%; '+
+                textAreaStyle+'"/>'+
+          '<button>Execute commands</button>'+
+          ' Dump "Probably associated with" too <input type="checkbox">'+
+        '<br><br></div>');
+
+      var cmVar;
+
+      function
+      fillData(opt)
+      {
+        var s = $('#rawDef textarea');
+
+        FW_cmd(FW_root+"?cmd=list "+opt+" "+dev+"&XHR=1", function(data) {
+          var re = new RegExp("^define", "gm");
+          data = data.replace(re, "defmod");
+          s.val(data);
+
+          var off = $("#rawDef").position().top-20;
+          $('body, html').animate({scrollTop:off}, 500);
+          $("#rawDef button").hide();
+
+          var propertychange = function() {
+            var nData = $("#rawDef textarea").val();
+            if(nData != data)
+              $("#rawDef button").show();
+            else
+              $("#rawDef button").hide();
+          };
+
+          s.bind('input propertychange', propertychange);
+
+          if(cmVar) {
+            cmVar.setValue(data);
+
+          } else if(typeof AddCodeMirror == 'function') {
+            AddCodeMirror(s, function(cm) {
+              cmVar = cm;
+              cm.on("change", function() {
+                s.val(cm.getValue());
+                propertychange();
+              })
+            });
+          }
+
+        });
+      }
+      fillData("-r");
+
+      $("#rawDef input").click(function(){fillData(this.checked ?"-R":"-r")});
+
+      $("#rawDef button").click(function(){
+        var data = $("#rawDef textarea").val();
+        var arr = data.split("\n"), str="", i1=-1;
+        function
+        doNext()
+        {
+          if(++i1 >= arr.length) {
+            return FW_okDialog("Executed everything, no errors found.");
+          }
+          str += arr[i1];
+          if(arr[i1].charAt(arr[i1].length-1) === "\\") {
+            str += "\n";
+            return doNext();
+          }
+          if(str != "") {
+            str = str.replace(/\\\n/g, "\n")
+                     .replace(/;;/g, ";");
+            FW_cmd(FW_root+"?cmd."+dev+"="+encodeURIComponent(str)+"&XHR=1",
+            function(r){
+              if(r)
+                return FW_okDialog('<pre>'+r+'</pre>');
+              str = "";
+              doNext();
+            });
+          } else {
+            doNext();
+          }
+        }
+        doNext();
+      });
+    });
+
+  });
+}
+
+var FW_arrowDown="", FW_arrowRight="";
+function
+FW_treeMenu()
+{
+  var a = $("a").get(0);
+  var col = 'rgb(39, 135, 38)';
+  if(window.getComputedStyle && a)
+    col = getComputedStyle(a,null).getPropertyValue('color'); 
+  FW_arrowRight = 'data:image/svg+xml;utf8,<svg viewBox="0 0 1792 1792" xmlns="http://www.w3.org/2000/svg"><path fill="gray" d="M1171 960q0 13-10 23l-466 466q-10 10-23 10t-23-10l-50-50q-10-10-10-23t10-23l393-393-393-393q-10-10-10-23t10-23l50-50q10-10 23-10t23 10l466 466q10 10 10 23z"/></svg>'
+      .replace('gray', col);
+  FW_arrowDown =FW_arrowRight.replace('/>',' transform="rotate(90,896,896)"/>');
+
+  var fnd;
+
+  $("div#menu table.room").each(function(){     // one loop per Block
+    var t = this, ma = {};
+    $(t).find("td > div > a > span").each(function(e){
+      var span = this, spanTxt = $(span).text().replace(/,/g,'');
+      var ta = spanTxt.split("->");
+      if(ta.length <= 1)
+        return;
+      fnd = true;
+      var nxt="", lst="", tr=$(span).closest("tr");
+      for(var i1=0; i1<ta.length-1; i1++) {
+        nxt += "->"+ta[i1];
+        if(!ma[nxt]) {
+          $(tr).before("<tr class='menuTree closed level"+i1+"' "+
+              "data-mTree='"+lst+"' data-nxt='"+nxt+"'>"+
+              "<td><div><a href='#'>"+ta[i1]+"</a><div></div></div></td></tr>");
+        }
+        ma[nxt] = true;
+        lst = nxt;
+      }
+      $(span).html(ta[ta.length-1]);
+      $(tr).attr("data-mTree", nxt)
+           .addClass("menuTree level"+(ta.length-1));
+    });
+  });
+
+  if(fnd) {
+    $("head").append(
+      "<style>"+
+        "tr.menuTree { cursor:pointer; }"+
+        "tr.menuTree.level1 > td > div { margin-left:10px; }"+
+        "tr.menuTree.level2 > td > div { margin-left:20px; }"+
+        "tr.menuTree.level3 > td > div { margin-left:30px; }"+
+        "tr.menuTree.open { font-weight: bold; }"+
+        "tr.menuTree > td > div > div { "+
+          "display:inline-block; width:1em; height:1em; float:right;"+
+          "background-size: contain; background-repeat: no-repeat;"+
+        "}"+
+      "</style>");
+    var t = $("div#menu table.room");
+    $(t).find("tr[data-mTree]").not(".level0").hide();
+    $(t).find("tr.menuTree").click(function(){treeClick(this)});
+    $(t).find("tr.menuTree > td > div > div")
+        .css("background-image", "url('"+FW_arrowRight+"')");
+    var selRoom = $("div#content").attr("room");
+    if(selRoom) {
+      var ta = selRoom.split("->"), nxt="";
+      for(var i1=0; i1<ta.length-1; i1++) {
+        nxt += FW_escapeSelector("->"+ta[i1]);
+        treeClick($(t).find("tr.menuTree[data-nxt="+nxt+"]"));
+      }
+    }
+  }
+
+  function
+  treeClick(el)
+  {
+    var tgt = FW_escapeSelector($(el).attr("data-nxt"));
+    if($(el).hasClass("closed")) {
+      $(el).closest("table").find("tr[data-mTree="+tgt+"]").show();
+      $(el).find("div>div").css("background-image", "url('"+FW_arrowDown+"')");
+    } else {
+      $(el).closest("table").find("tr[data-mTree^="+tgt+"]")
+        .hide().addClass("closed");
+      $(el).find("div>div").css("background-image", "url('"+FW_arrowRight+"')");
+    }
+    $(el).toggleClass("closed");
+    $(el).toggleClass("open");
+  };
+}
+
+function
+FW_escapeSelector(s)
+{
+  if(typeof s != 'string')
+    return s;
+  return s.replace(/[ .#\[\]>]/g, function(r) { return '\\'+r });
+}
 
 /*************** LONGPOLL START **************/
 var FW_pollConn;
 var FW_longpollOffset = 0;
 var FW_leaving;
+var FW_lastDataTime=0;
 
 function
-FW_doUpdate()
+FW_doUpdate(evt)
 {
-  if(FW_pollConn.readyState == 4 && !FW_leaving) {
-    FW_errmsg("Connection lost, trying a reconnect every 5 seconds.", 4900);
-    setTimeout(FW_longpoll, 5000);
-    return; // some problem connecting
+  var errstr = "Connection lost, trying a reconnect every 5 seconds.";
+  var input="";
+  var retryTime = 5000;
+  var now = new Date()/1000;
+
+  function
+  setValue(d) // is Callable from eval below
+  {
+    $("[informId='"+d[0]+"']").each(function(){
+      if(this.setValueFn) {     // change the select/etc value
+        this.setValueFn(d[1].replace(/\n/g, '\u2424'));
+
+      } else {
+        if(d[2].match(/\n/) && !d[2].match(/<.*>/)) // format multiline
+          d[2] = '<html><pre>'+d[2]+'</pre></html>';
+
+        var ma = /^<html>([\s\S]*)<\/html>$/.exec(d[2]);
+        if(!d[0].match("-")) // not a reading
+          $(this).html(d[2]);
+        else if(ma)
+          $(this).html(ma[1]);
+        else
+          $(this).text(d[2]);
+
+        if(d[0].match(/-ts$/))  // timestamps
+          $(this).addClass('changed');
+        $(this).find("a").each(function() { FW_replaceLink(this) });
+      }
+    });
   }
 
-  if(FW_pollConn.readyState != 3)
-    return;
+  // iOS closes HTTP after 60s idle, websocket after 240s idle
+  if(now-FW_lastDataTime > 59) {
+    errstr="";
+    retryTime = 100;
+  }
+  FW_lastDataTime = now;
 
-  var input = FW_pollConn.responseText;
+  // Websocket starts with Android 4.4, and IE10
+  if(typeof WebSocket == "function" && evt && evt.target instanceof WebSocket) {
+    if(evt.type == 'close' && !FW_leaving) {
+      FW_errmsg(errstr, retryTime-100);
+      FW_pollConn.close();
+      FW_pollConn = undefined;
+      setTimeout(FW_longpoll, retryTime);
+      return;
+    }
+    input = evt.data;
+    FW_longpollOffset = 0;
+
+  } else if(FW_pollConn != undefined) {
+    if(FW_pollConn.readyState == 4 && !FW_leaving) {
+      if(FW_pollConn.status == "400") {
+        location.reload();
+        return;
+      }
+      FW_errmsg(errstr, retryTime-100);
+      setTimeout(FW_longpoll, retryTime);
+      return;
+    }
+
+    if(FW_pollConn.readyState != 3)
+      return;
+
+    input = FW_pollConn.responseText;
+  }
+
   var devs = new Array();
-  if(input.length <= FW_longpollOffset)
+  if(!input || input.length <= FW_longpollOffset)
     return;
 
   FW_serverLastMsg = (new Date()).getTime()/1000;
@@ -450,6 +1071,12 @@ FW_doUpdate()
     log("Rcvd: "+(l.length>132 ? l.substring(0,132)+"...("+l.length+")":l));
     if(!l.length)
       continue;
+    if(l.indexOf("<")== 0) {  // HTML returned by proxy, if FHEM behind is dead
+      FW_closeConn();
+      FW_errmsg(errstr, retryTime-100);
+      setTimeout(FW_longpoll, retryTime);
+      return;
+    }
     var d = JSON.parse(l);
     if(d.length != 3)
       continue;
@@ -458,28 +1085,20 @@ FW_doUpdate()
       eval(d[1]);
 
     } else {
-      $("[informId='"+d[0]+"']").each(function(){
-        if(this.setValueFn) {     // change the select/etc value
-          this.setValueFn(d[1]);
-
-        } else {
-          $(this).html(d[2]);     // Readings-Value
-          if(d[0].match(/-ts$/))  // timestamps
-            $(this).addClass('changed');
-          $(this).find("a").each(function() { FW_replaceLink(this) });
-        }
-      });
+      setValue(d);
     }
 
+    // updateLine is deprecated, use setValueFn
     for(var w in FW_widgets)
-      if(FW_widgets[w].updateLine) // updateLine is deprecated, use setValueFn
+      if(FW_widgets[w].updateLine && !FW_widgets[w].second)
         FW_widgets[w].updateLine(d);
 
     devs.push(d);
   }
 
+  // used for SVG to avoid double-reloads
   for(var w in FW_widgets)
-    if(FW_widgets[w].updateDevs) // used for SVG to avoid double-reloads
+    if(FW_widgets[w].updateDevs && !FW_widgets[w].second)
       FW_widgets[w].updateDevs(devs);
 
   // reset the connection to avoid memory problems
@@ -488,36 +1107,51 @@ FW_doUpdate()
 }
 
 function
+FW_closeConn()
+{
+  FW_leaving = 1;
+  if(!FW_pollConn)
+    return;
+  if(typeof FW_pollConn.close ==  "function")
+    FW_pollConn.close();
+  else if(typeof FW_pollConn.abort ==  "function")
+    FW_pollConn.abort();
+  FW_pollConn = undefined;
+}
+
+function
 FW_longpoll()
 {
-  FW_longpollOffset = 0;
-  if(FW_pollConn) {
-    FW_leaving = 1;
-    FW_pollConn.abort();
-  }
+  FW_closeConn();
 
-  FW_pollConn = new XMLHttpRequest();
   FW_leaving = 0;
+  FW_longpollOffset = 0;
 
   // Build the notify filter for the backend
   var filter = $("body").attr("longpollfilter");
   if(filter == null)
     filter = "";
+  var retry;
   if(filter == "") {
-    $("embed").each(function() {
-      if($(this.getSVGDocument()).find("svg[flog]").attr("flog"))
+    $("embed").each(function() {        // wait for all embeds to be there
+      if(retry)
+        return;
+      var ed = FW_getSVG(this);
+      if(!retry && ed == undefined && filter != ".*" && --embedLoadRetry > 0) {
+        retry = 1;
+        setTimeout(FW_longpoll, 100);
+        return;
+      }
+      if(ed && $(ed).find("svg[flog]").attr("flog"))
         filter=".*";
     });
+    if(retry)
+      return;
   }
 
   if(filter == "") {
-    var sa = location.search.substring(1).split("&");
-    for(var i = 0; i < sa.length; i++) {
-      if(sa[i].substring(0,5) == "room=")
-        filter=sa[i];
-      if(sa[i].substring(0,7) == "detail=")
-        filter=sa[i].substring(7);
-    }
+    if(FW_urlParams.room)   filter="room="+FW_urlParams.room;
+    if(FW_urlParams.detail) filter=FW_urlParams.detail;
   }
 
   if($("#floorplan").length>0) //floorplan special
@@ -539,16 +1173,42 @@ FW_longpoll()
   if(FW_serverGenerated)
     since = FW_serverLastMsg + (FW_serverGenerated-FW_serverFirstMsg);
 
-  var query = location.pathname+"?XHR=1"+
+  var query = "?XHR=1"+
               "&inform=type=status;filter="+filter+";since="+since+";fmt=JSON"+
               '&fw_id='+$("body").attr('fw_id')+
               "&timestamp="+new Date().getTime();
-  query = addcsrf(query);
-  FW_pollConn.open("GET", query, true);
-  FW_pollConn.onreadystatechange = FW_doUpdate;
-  FW_pollConn.send(null);
 
-  log("Longpoll with filter "+filter);
+  var loc = (""+location).replace(/\?.*/,"");
+  if(typeof WebSocket == "function" && FW_longpollType == "websocket") {
+    FW_pollConn = new WebSocket(loc.replace(/[#&?].*/,'')
+                                   .replace(/^http/i, "ws")+query);
+    FW_pollConn.onclose = 
+    FW_pollConn.onerror = 
+    FW_pollConn.onmessage = FW_doUpdate;
+    FW_pollConn.onopen = function(){FW_wsPing(FW_pollConn);};
+
+  } else {
+    FW_pollConn = new XMLHttpRequest();
+    FW_pollConn.open("GET", location.pathname+query, true);
+    if(FW_pollConn.overrideMimeType)    // Win 8.1, #66004
+      FW_pollConn.overrideMimeType("application/json");
+    FW_pollConn.onreadystatechange = FW_doUpdate;
+    FW_pollConn.send(null);
+
+  }
+
+  log("Inform-channel opened ("+(FW_longpollType==1 ? "HTTP":FW_longpollType)+
+                ") with filter "+filter);
+}
+
+
+function
+FW_wsPing(conn) // idle websockets are closed by the browser after 55sec
+{
+  if(!conn || conn.readyState != conn.OPEN)
+    return;
+  conn.send("\n");
+//  setTimeout(function(){FW_wsPing(conn);}, 30000);
 }
 
 /*************** LONGPOLL END **************/
@@ -557,98 +1217,140 @@ FW_longpoll()
 /*************** WIDGETS START **************/
 /*************** "Double" select in detail window ****/
 function
-FW_detailSelect(selEl)
+FW_detailSelect(selEl, mayMissing)
 {
   if(selEl.target)
     selEl = selEl.target;
   var selVal = $(selEl).val();
 
   var div = $(selEl).closest("div.makeSelect");
+  if(!div.attr("list"))      // hiddenRoom=input
+    return;
   var arg,
       listArr = $(div).attr("list").split(" "),
       devName = $(div).attr("dev"),
       cmd = $(div).attr("cmd");
 
-  for(var i1=0; i1<listArr.length; i1++) {
+  var i1;
+  for(i1=0; i1<listArr.length; i1++) {
     arg = listArr[i1];
     if(arg.indexOf(selVal) == 0 &&
        (arg.length == selVal.length || arg[selVal.length] == ':'))
       break;
   }
-  if(!arg)
-    return;
 
   var vArr = [];
-  if(arg.length > selVal.length)
-    vArr = arg.substr(selVal.length+1).split(","); 
+  if(i1==listArr.length && !mayMissing)
+    return;
+  if(i1<listArr.length) {
+    if(arg.length > selVal.length)
+      vArr = arg.substr(selVal.length+1).split(","); 
+  }
 
-  var newEl = FW_replaceWidget($(selEl).next(), devName, vArr,undefined,selVal);
-  if(cmd == "attr")
-    FW_queryValue('{AttrVal("'+devName+'","'+selVal+'","")}', newEl);
-
-  if(cmd == "set")
-    FW_queryValue('{ReadingsVal("'+devName+'","'+selVal+'","")}', newEl);
+  FW_replaceWidget($(selEl).next(), devName, vArr,undefined,selVal,
+    undefined, undefined, undefined,
+    function(newEl) {
+      if(cmd == "attr")
+        FW_queryValue('{AttrVal("'+devName+'","'+selVal+'","")}', newEl);
+      if(cmd == "set")
+        FW_queryValue('{ReadingsVal("'+devName+'","'+selVal+'","")}', newEl);
+    });
 }
 
 function
-FW_replaceWidget(oldEl, devName, vArr, currVal, reading, set, params, cmd)
+FW_callCreateFn(elName, devName, vArr, currVal, set, params, cmd, finishFn)
 {
-  var newEl, wn;
+  for(var wn in FW_widgets) {
+    if(FW_widgets[wn].createFn && !FW_widgets[wn].second) {
+      var newEl = FW_widgets[wn].createFn(elName, devName, vArr,
+                                          currVal, set, params, cmd);
+      if(newEl)
+        return finishFn(wn, newEl);
+    }
+  }
+
+  var v0 = vArr[0].split("-")[0];
+  if(v0.indexOf("uzsu") == 0)
+    v0 = "uzsu";
+  if(FW_availableJs[v0]) {
+    loadScript("pgm2/fhemweb_"+v0+".js", function() {
+      if(!FW_widgets[vArr[0]]) {
+        log("ERROR: fhemweb_"+vArr[v0]+".js does not fill FW_widgets");
+        return;
+      }
+      if(FW_widgets[vArr[0]].createFn)
+        var newEl = FW_widgets[vArr[0]].createFn(elName, devName, vArr,
+                                                 currVal, set, params, cmd);
+      finishFn(vArr[0], newEl);
+    });
+  } else {
+    finishFn();
+  }
+}
+
+function
+FW_replaceWidget(oldEl,devName,vArr,currVal,reading,set,params,cmd,readyFn)
+{
   var elName = $(oldEl).attr("name");
   if(!elName)
     elName = $(oldEl).find("[name]").attr("name");
 
   if(vArr.length == 0) { //  No parameters, input field
-    newEl = FW_createTextField(elName, devName, ["textField"], currVal,
+    var newEl = FW_createTextField(elName, devName, ["textField"], currVal,
                                set, params, cmd);
-    wn = "textField";
+    finishFn("textField", newEl);
 
   } else {
-    for(wn in FW_widgets) {
-      if(FW_widgets[wn].createFn) {
-        newEl = FW_widgets[wn].createFn(elName, devName, vArr, currVal,
-                                        set, params, cmd);
-        if(newEl)
-          break;
-      }
-    }
+    
+    return FW_callCreateFn(elName, devName, vArr, currVal, set,
+                           params, cmd, finishFn);
 
-    if(!newEl) { // Select as fallback
+  }
+
+  function
+  finishFn(wn, newEl)
+  {
+    if(!newEl) {
       vArr.unshift("select");
-      newEl = FW_createSelect(elName, devName, vArr, currVal, set, params, cmd);
+      newEl = FW_createSelect(elName,devName,vArr,currVal,set,params,cmd);
       wn = "select";
     }
-  }
 
-  if(!newEl) { // Simple link
-    newEl = $('<div class="col3"><a style="cursor: pointer;">'+
-                set+' '+params.join(' ')+ '</a></div>');
-    $(newEl).click(function(arg) { cmd(params[0]) });
+    if(!newEl) { // Simple link
+      newEl = $('<div class="col3"><a style="cursor: pointer;">'+
+                  set+' '+params.join(' ')+ '</a></div>');
+      $(newEl).click(function(arg) { cmd(params[0]) });
+      $(oldEl).replaceWith(newEl);
+      if(readyFn)
+        return readyFn(newEl);
+      return;
+    }
+
+    $(newEl).addClass(wn+"_widget");
+
+    if( $(newEl).find("[informId]").length==0 && !$(newEl).attr("informId") ) {
+      if(reading) {
+        var a = $(oldEl).closest("form").find("input[type=submit][value=attr]");
+        $(newEl).attr("informId", devName+(a.length?"-a-":"-")+reading);
+      }
+      var addTitle = $("body").attr("data-addHtmlTitle");
+      if(reading != "state" && addTitle==1)
+        $(newEl).attr("title", reading);
+    }
     $(oldEl).replaceWith(newEl);
-    return newEl;
+
+    if(newEl.activateFn) // CSS is not applied if newEl is not in the document
+      newEl.activateFn();
+    if(readyFn)
+      readyFn(newEl);
   }
-
-  $(newEl).addClass(wn+"_widget");
-
-  if( $(newEl).find("[informId]").length == 0 && !$(newEl).attr("informId") ) {
-    if(reading && reading == "state")
-      $(newEl).attr("informId", devName);
-    else if(reading)
-      $(newEl).attr("informId", devName+"-"+reading);
-  }
-
-  $(oldEl).replaceWith(newEl);
-
-  if(newEl.activateFn) // CSS is not applied if newEl is not in the document
-    newEl.activateFn();
-  return newEl;
 }
 
 function
 FW_queryValue(cmd, el)
 {
   log("FW_queryValue:"+cmd);
-  var query = location.pathname+"?cmd="+cmd+"&XHR=1";
+  var query = location.pathname+"?cmd="+encodeURIComponent(cmd)+"&XHR=1";
   query = addcsrf(query);
   var qConn = new XMLHttpRequest();
   qConn.onreadystatechange = function() {
@@ -664,26 +1366,22 @@ FW_queryValue(cmd, el)
   qConn.send(null);
 }
 
-function
-FW_querySetSelected(el, val)    // called by the attribute links
-{
-  $("#"+el).val(val);
-  FW_detailSelect("#"+el);
-}
-
 /*************** TEXTFIELD **************/
 function
 FW_createTextField(elName, devName, vArr, currVal, set, params, cmd)
 {
   if(vArr.length != 1 ||
-     (vArr[0] != "textField" && vArr[0] != "textField-long") ||
+     (vArr[0] != "textField" && 
+      vArr[0] != "textFieldNL" &&
+      vArr[0] != "textField-long" &&
+      vArr[0] != "textFieldNL-long") ||
      (params && params.length))
     return undefined;
   
-  var is_long = (vArr[0] == "textField-long");
+  var is_long = (vArr[0].indexOf("long") > 0);
 
   var newEl = $("<div style='display:inline-block'>").get(0);
-  if(set && set != "state")
+  if(set && set != "state" && vArr[0].indexOf("NL") < 0)
     $(newEl).append(set+":");
   $(newEl).append('<input type="text" size="30">');
   var inp = $(newEl).find("input").get(0);
@@ -710,12 +1408,13 @@ FW_createTextField(elName, devName, vArr, currVal, set, params, cmd)
     $("#td_longText").val(txt);
 
     var cm;
-    if( typeof AddCodeMirror == 'function' ) 
-      AddCodeMirror($("#td_longText").get(0), function(pcm) {cm = pcm;});
+    if(typeof AddCodeMirror == 'function') {
+      AddCodeMirror($("#td_longText"), function(pcm) {cm = pcm;});
+    }
 
     $('#editdlg').dialog(
       { modal:true, closeOnEscape:true, width:$(window).width()*3/4,
-        maxHeight:$(window).height()*3/4,
+        height:$(window).height()*3/4,
         close:function(){ $('#editdlg').remove(); },
         buttons:[
         { text:"Cancel", click:function(){
@@ -734,7 +1433,7 @@ FW_createTextField(elName, devName, vArr, currVal, set, params, cmd)
       });
   };
 
-  if( is_long )
+  if(is_long)
     $(newEl).click(myFunc);
 
   return newEl;
@@ -756,6 +1455,73 @@ FW_createSelect(elName, devName, vArr, currVal, set, params, cmd)
   }
   if(currVal)
     $(newEl).val(currVal);
+  if(elName)
+    $(newEl).attr('name', elName);
+  if(cmd)
+    $(newEl).change(function(arg) { cmd($(newEl).val()) });
+  newEl.setValueFn = function(arg) { if(vHash[arg]) $(newEl).val(arg); };
+  return newEl;
+}
+
+/*************** selectNumbers **************/
+// Syntax: selectnumbers,<min value>,<step|step of exponent>,<max value>,<number of digits after decimal point>,lin|log10
+
+function
+FW_createSelectNumbers(elName, devName, vArr, currVal, set, params, cmd)
+{
+  if(vArr.length < 6 || vArr[0] != "selectnumbers" || (params && params.length))
+    return undefined;
+
+  var min = parseFloat(vArr[1]);
+  var stp = parseFloat(vArr[2]);
+  var max = parseFloat(vArr[3]);
+  var dp  = parseFloat(vArr[4]); // decimal points
+  var fun = vArr[5]; // function
+
+  if(currVal != undefined)
+    currVal = currVal.replace(/[^\d.\-]/g, "");
+    currVal = (currVal==undefined || currVal=="") ?  min : parseFloat(currVal);
+  if(max==min)
+    return undefined;
+  if(!(fun == "lin" || fun == "log10"))
+    return undefined;
+      
+  if(currVal < min) 
+    currVal = min;
+  if(currVal > max) 
+    currVal = max;
+
+  var newEl = document.createElement('select');
+  var vHash = {};
+  var k = 0;
+  var v = 0;
+  if (fun == "lin") {
+    for(var j=min; j <= max; j+=stp) {
+      var o = document.createElement('option');
+      o.text = o.value = j.toFixed(dp);
+      vHash[j.toString()] = 1;
+      newEl.options[k] = o;
+      k++;
+    }
+  } else if (fun == "log10") {
+    if(min <= 0 || max <= 0)
+      return undefined;
+    for(var j=Math.log10(min); j <= Math.log10(max)+stp; j+=stp) {
+      var o = document.createElement('option');
+      var w = Math.pow(10, j)
+      if (w > max)
+        w = max;
+      if (v == w.toFixed(dp))
+        continue;
+      v = w.toFixed(dp);
+      o.text = o.value = v;
+      vHash[v] = 1;
+      newEl.options[k] = o;
+      k++;
+    }
+  }
+  if(currVal)
+    $(newEl).val(currVal.toFixed(dp));
   if(elName)
     $(newEl).attr('name', elName);
   if(cmd)
@@ -813,23 +1579,27 @@ FW_createSlider(elName, devName, vArr, currVal, set, params, cmd)
     $(newEl).append('<input type="hidden" name="'+elName+
                         '" value="'+currVal+'">');
 
-  var lastX=-1, offX=0, maxX=0, val;
+  var lastX=-1, offX=0, maxX=0, val=currVal;
 
   newEl.activateFn = function() {
     if(currVal < min || currVal > max)
       return;
+    if(!slider.offsetWidth)
+      return setTimeout(newEl.activateFn, 1);
     maxX = slider.offsetWidth-sh.offsetWidth;
     offX = (currVal-min)*maxX/(max-min);
     var strVal = (flt ? currVal.toFixed(dp) : ""+parseInt(currVal));
-    sh.innerHTML = strVal
+    sh.innerHTML = strVal;
     sh.setAttribute('style', 'left:'+offX+'px;');
     if(elName)
       slider.nextSibling.setAttribute('value', strVal);
   }
 
   $(newEl).keydown(function(e){
-    if(e.keyCode == 37) currVal -= stp;
-    if(e.keyCode == 39) currVal += stp;
+         if(e.keyCode == 37) currVal -= stp;
+    else if(e.keyCode == 39) currVal += stp;
+    else return;
+
     if(currVal < min) currVal = min;
     if(currVal > max) currVal = max;
     offX = (currVal-min)*maxX/(max-min);
@@ -1008,10 +1778,10 @@ FW_createMultiple(elName, devName, vArr, currVal, set, params, cmd)
     for(var i1=1; i1<vArr.length; i1++) {
       var v = vArr[i1];
       table += '<tr>'+ // funny stuff for ios6 style, forum #23561
-        '<td><div class="checkbox"><input name="'+v+'" type="checkbox"'+
-              (selObj[v] ? " checked" : "")+'/>'+
-                      '<label for="'+v+'"><span></span></label></div></td>'+
-        '<td><label for="' +v+'">'+v+'</label></td></tr>';
+        '<td><div class="checkbox">'+
+           '<input name="'+v+'" id="multiple_'+v+'" type="checkbox"'+
+              (selObj[v] ? " checked" : "")+'/>'+'</div></td>'+
+        '<td><label for="multiple_'+v+'">'+v+'</label></td></tr>';
       delete(selObj[v]);
     }
 
@@ -1100,15 +1870,10 @@ loadScript(sname, callback, force)
     }
 
   } else {
-    if(FW_isiOS) {
-      FW_leaving = 1;
-      if(FW_pollConn)
-        FW_pollConn.abort();
-    }
+    if(FW_isiOS)
+     FW_closeConn();
     script.onload = function(){
       scriptLoaded();
-      if(FW_isiOS)
-        FW_longpoll();
     }
   }
   h.appendChild(script);
@@ -1152,3 +1917,92 @@ scriptAttribute(sname)
   return ua;
 }
 /*************** SCRIPT LOAD FUNCTIONS END **************/
+
+function
+print_call_stack() {
+  var stack = new Error().stack;
+  console.log("PRINTING CALL STACK");
+  console.log( stack );
+}
+
+function
+FW_getSVG(emb)
+{
+  if(emb.contentDocument)
+    return emb.contentDocument;
+  if(typeof emb.getSVGDocument == "function") {
+    try {
+      return emb.getSVGDocument();
+    } catch(err) {
+      // dom not loaded -> fall through -> retry;
+    }
+  }
+  return undefined;
+}
+
+/*
+=pod
+
+=begin html
+
+  <li>noArg - show no input field.</li>
+  <li>time - show a JavaScript driven timepicker.<br>
+      Example: attr FS20dev widgetOverride on-till:time</li>
+  <li>textField - show an input field.<br>
+      Example: attr WEB widgetOverride room:textField</li>
+  <li>textFieldNL - show the input field and hide the label.</li>
+  <li>textField-long - show an input-field, but upon
+      clicking on the input field open a textArea (60x25).</li>
+  <li>textFieldNL-long - the behaviour is the same
+      as :textField-long, but no label is displayed.</li>
+  <li>slider,&lt;min&gt;,&lt;step&gt;,&lt;max&gt;[,1] - show
+      a JavaScript driven slider. The optional ,1 at the end
+      avoids the rounding of floating-point numbers.</li>
+  <li>multiple,&lt;val1&gt;,&lt;val2&gt;,..." - present a
+      multiple-value-selector with an additional textfield. The result is
+      comman separated.</li>
+  <li>multiple-strict,&lt;val1&gt;,&lt;val2&gt;,... - like :multiple, but
+      without the textfield.</li>
+  <li>selectnumbers,&lt;min&gt;,&lt;step&gt;,&lt;max&gt;,&lt;number of
+      digits after decimal point&gt;,lin|log10" - display a select widget
+      generated with values from min to max with step.<br>
+      lin generates a constantly increasing series.  log10 generates an
+      exponentially increasing series to base 10, step is related to the
+      exponent, e.g. 0.0625.</li>
+  <li>select,&lt;val1&gt;,&lt;val2&gt;,... - show a dropdown with all values.
+      <b>NOTE</b>: this is also the fallback, if no modifier is found.</li>
+
+=end html
+
+=begin html_DE
+
+  <li>noArg - es wird kein weiteres Eingabefeld angezeigt.</li>
+  <li>time - zeigt ein Zeitauswahlmen&uuml;.
+      Beispiel: attr FS20dev widgetOverride on-till:time</li>
+  <li>textField - zeigt ein Eingabefeld.<br>
+      Beispiel: attr WEB widgetOverride room:textField</li>
+  <li>textField-long - ist wie textField, aber beim Click im Eingabefeld wird
+      ein Dialog mit einer HTML textarea (60x25) wird ge&ouml;ffnet.</li>
+  <li>slider,&lt;min&gt;,&lt;step&gt;,&lt;max&gt;[,1] - zeigt einen
+      Schieberegler. Das optionale 1 (isFloat) vermeidet eine Rundung der
+      Fliesskommazahlen.</li>
+  <li>multiple,&lt;val1&gt;,&lt;val2&gt;,... - zeigt eine Mehrfachauswahl mit
+      einem zus&auml;tzlichen Eingabefeld. Das Ergebnis ist Komma
+      separiert.</li>
+  <li>multiple-strict,&lt;val1&gt;,&lt;val2&gt;,... - ist wie :multiple,
+      blo&szlig; ohne Eingabefeld.</li>
+  <li>selectnumbers,&lt;min&gt;,&lt;step&gt;,&lt;max&gt;,&lt;number of
+      digits after decimal point&gt;,lin|log10" zeigt ein HTML-select mit einer
+      Zahlenreihe vom Wert min bis Wert max mit Schritten von step
+      angezeigt.<br>
+      Die Angabe lin erzeugt eine konstant ansteigende Reihe.  Die Angabe
+      log10 erzeugt eine exponentiell ansteigende Reihe zur Basis 10,
+      step bezieht sich auf den Exponenten, z.B. 0.0625.</li>
+  <li>select,&lt;val1&gt;,&lt;val2&gt;,... - zeigt ein HTML select mit allen
+      Werten. <b>Achtung</b>: so ein Widget wird auch dann angezeigt, falls
+      kein passender Modifier gefunden wurde.</li>
+
+=end html_DE
+
+=cut
+*/

@@ -1,4 +1,4 @@
-/* $Id$ */
+/* $Id: fhem.js.unoptimized 11288 2016-04-20 08:25:19Z rapster $ */
 
 // CodeMirror2 mode/perl/perl.js (text/x-perl) beta 0.10 (2011-11-08)
 // This is a part of CodeMirror from https://github.com/sabaca/CodeMirror_mode_perl (mail@sabaca.com)
@@ -465,6 +465,7 @@ CodeMirror.defineMode("fhem",function(){
                 write                           :1,     // - print a picture record
                 // FHEM Keywords ////////////////////////
                 define                          :2,
+                defmod                          :2,
                 attr                            :2,
                 at                              :2,
                 notify                          :2,
@@ -844,7 +845,7 @@ CodeMirror.commands.autocomplete = function(cm) {
 	CodeMirror.showHint(cm, CodeMirror.hint.fhem, {async:true});
 }
 
-var keywords = ["at","attr","define","delete","deleteattr","deletereading","IF","DOIF","DOELSEIF","DOELSE","displayattr","fhem","get","getstate",
+var keywords = ["at","attr","define","defmod","delete","deleteattr","deletereading","IF","DOIF","DOELSEIF","DOELSE","displayattr","fhem","get","getstate",
   "list","modify","notify","set","setdefaultattr","setreading","setstate","trigger",
   "AttrVal","OldTimestamp","OldValue","ReadingsVal","ReadingsTimestamp","Value"];
 var variables = ["$defs","$hms","$hour","$isdst","$mday","$min","$month","$sec","$wday","$we","$yday","$year"];
@@ -877,12 +878,16 @@ CodeMirror.registerHelper("hint", "fhem", function hintfhem(cm, callback, option
 		word = ""; start = end = cur.ch;
     }
 	var line = cm.getLine(cur.line).substr(0,end);
+        if( /([\w_\.]+)$/.test(line) ) {
+          word = RegExp.$1;
+          start = end - word.length;
+	}
 	// only device names
-	if( /^[ \t]*(attr|set|get|delete|deleteattr|deletereading|displayattr|getstate|list|modify|setdefaultattr|setreading|setstate|trigger)[ \t]+([\w]*)$/.test(line) ) {
+	if( /^[ \t]*(attr|set|get|defmod|delete|deleteattr|deletereading|displayattr|getstate|list|modify|setdefaultattr|setreading|setstate|trigger)[ \t]+([\w_\.]+)$/.test(line) ) {
 		_key = _var = [];
 	}
 	// only device attribute names
-	else if( /^[ \t]*(attr|deleteattr|displayattr)[ \t]+(\w+)[ \t]+([\w-]*)$/.test(line) ) {
+	else if( /^[ \t]*(attr|deleteattr|displayattr)[ \t]+([\w_\.]+)[ \t]+([\w-]*)$/.test(line) ) {
 		_key = _dev = _var = [];
 	    var device = RegExp.$2;
 		word = RegExp.$3;
@@ -890,7 +895,7 @@ CodeMirror.registerHelper("hint", "fhem", function hintfhem(cm, callback, option
 		_var = getDeviceAttributes(d);
 	}
 	// only device reading names
-	else if( /^[ \t]*(DOIF|DOELSE|DOELSEIF).*\[+\??(\w+):\??([\w-]*)$/.test(line) ) {
+	else if( /^[ \t]*(DOIF|DOELSE|DOELSEIF).*\[+\??([\w_\.]+):\??([\w-]*)$/.test(line) ) {
 		_key = _dev = _var = [];
 	    var device = RegExp.$2;
 		word = RegExp.$3;
@@ -898,7 +903,7 @@ CodeMirror.registerHelper("hint", "fhem", function hintfhem(cm, callback, option
 		_var = getDeviceReadings(d);
 	}
 	// only device reading names
-	else if( /^[ \t]*(deletereading|setreading)[ \t]+(\w+)[ \t]+([\w-]*)$/.test(line) ) {
+	else if( /^[ \t]*(deletereading|setreading)[ \t]+([\w_\.]+)[ \t]+([\w-]*)$/.test(line) ) {
 		_key = _dev = _var = [];
 	    var device = RegExp.$2;
 		word = RegExp.$3;
@@ -906,7 +911,7 @@ CodeMirror.registerHelper("hint", "fhem", function hintfhem(cm, callback, option
 		_var = getDeviceReadings(d);
 	}
 	// only device sets names
-	else if( /^[ \t]*(set|get)[ \t]+(\w+)[ \t]+([\w-]*)$/.test(line) ) {
+	else if( /^[ \t]*(set|get)[ \t]+([\w_\.]+)[ \t]+([\w-]*)$/.test(line) ) {
 		_key = _dev = _var = [];
 	    var device = RegExp.$2;
 		word = RegExp.$3;
@@ -914,7 +919,7 @@ CodeMirror.registerHelper("hint", "fhem", function hintfhem(cm, callback, option
 		_var = getDeviceSets(d);
 	}
 	// only device attribute names
-	else if( /.*(AttrVal)[ \t]*\([ \t]*\"(\w+)\"[ \t]*,[ \t]*\"([\w-]*)$/.test(line) ) {
+	else if( /.*(AttrVal)[ \t]*\([ \t]*\"([\w_\.]+)\"[ \t]*,[ \t]*\"([\w-]*)$/.test(line) ) {
 		_key = _dev = _var = [];
 	    var device = RegExp.$2;
 		word = RegExp.$3;
@@ -923,7 +928,7 @@ CodeMirror.registerHelper("hint", "fhem", function hintfhem(cm, callback, option
 		_var = getDeviceAttributes(d);
 	}
 	// only device readings names
-	else if( /.*(ReadingsVal|ReadingsTimestamp)[ \t]*\([ \t]*\"(\w+)\"[ \t]*,[ \t]*\"([\w-]*)$/.test(line) ) {
+	else if( /.*(ReadingsVal|ReadingsTimestamp)[ \t]*\([ \t]*\"([\w_\.]+)\"[ \t]*,[ \t]*\"([\w-]*)$/.test(line) ) {
 		_key = _dev = _var = [];
 	    var device = RegExp.$2;
 		word = RegExp.$3;
@@ -932,7 +937,7 @@ CodeMirror.registerHelper("hint", "fhem", function hintfhem(cm, callback, option
 		_var = getDeviceReadings(d);
 	}
 	// only device names
-	else if( /.*(OldTimestamp|OldValue|Value|ReadingsVal|ReadingsTimestamp|AttrVal)[ \t]*\([ \t]*\"(\w*)$/.test(line) ) {
+	else if( /.*(OldTimestamp|OldValue|Value|ReadingsVal|ReadingsTimestamp|AttrVal)[ \t]*\([ \t]*\"([\w_\.]+)$/.test(line) ) {
 		_key = _var = [];
 		word = RegExp.$2;
 		start = end - word.length;

@@ -1,4 +1,6 @@
 
+FW_version["fhemweb_readingsHistory.js"] = "$Id: fhemweb_readingsHistory.js 15189 2017-10-03 17:53:27Z justme1968 $";
+
 function
 FW_readingsHistoryUpdateLine(d){
 
@@ -34,7 +36,17 @@ FW_readingsHistoryUpdateLine(d){
 
 }
 
+function FW_readingsHistoryCreate(elName, devName, vArr, currVal, set, params, cmd)
+{
+}
 
 FW_widgets['readingsHistory'] = {
+  createFn:FW_readingsHistoryCreate,
   updateLine:FW_readingsHistoryUpdateLine
 };
+
+
+/*
+=pod
+=cut
+*/

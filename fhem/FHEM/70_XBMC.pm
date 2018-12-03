@@ -9,7 +9,7 @@
 #
 ##############################################
 
-# $Id$
+# $Id: 70_XBMC.pm 12906 2016-12-29 22:55:17Z vbs $
 
 package main;
 
@@ -31,7 +31,7 @@ sub XBMC_Initialize($$)
   $hash->{ReadyFn}  = "XBMC_Ready";
   $hash->{UndefFn}  = "XBMC_Undefine";
   $hash->{AttrFn}   = "XBMC_Attr";
-  $hash->{AttrList} = "fork:enable,disable compatibilityMode:xbmc,plex offMode:quit,hibernate,shutdown,standby updateInterval disable:1,0 " . $readingFnAttributes;
+  $hash->{AttrList} = "fork:enable,disable compatibilityMode:xbmc,plex offMode:quit,hibernate,shutdown,suspend updateInterval disable:1,0 " . $readingFnAttributes;
   
   $data{RC_makenotify}{XBMC} = "XBMC_RCmakenotify";
   $data{RC_layout}{XBMC_RClayout}  = "XBMC_RClayout";
@@ -243,6 +243,7 @@ sub XBMC_QueueIntervalUpdate($;$) {
   if (!defined($time)) {
     $time = AttrVal($hash->{NAME},'updateInterval',60);
   }
+  RemoveInternalTimer($hash);
   InternalTimer(time() + $time, "XBMC_Check", $hash, 0);
 }
 
@@ -596,7 +597,7 @@ sub XBMC_ProcessNotification($$)
 	#HACK: We want to fetch GUI.Properties here to update for example stereoscopicmode.
 	# When doing this here we still get the in-movie stereo mode. So we define a timer
 	# to invoke the update in some (tm) seconds
-	InternalTimer(time() + 2, "XBMC_Check", $hash, 0);
+    XBMC_QueueIntervalUpdate($hash, 2);
   }
   elsif($obj->{method} eq "Player.OnPause") {
     readingsSingleUpdate($hash,"playStatus",'paused',1);
@@ -878,6 +879,9 @@ sub XBMC_Set($@)
   elsif($cmd eq 'repeat') {
     return XBMC_Set_Repeat($hash, @args);
   }
+  elsif($cmd eq 'seek') {
+    return XBMC_Set_Seek($hash, $args[0], @args);
+  }
   
   #RPC referring to the Input http://wiki.xbmc.org/index.php?title=JSON-RPC_API/v6#Input
   elsif($cmd eq 'back') {
@@ -993,7 +997,7 @@ sub XBMC_Set($@)
     "off play:all,audio,video,picture playpause:all,audio,video,picture pause:all,audio,video,picture " . 
     "prev:all,audio,video,picture next:all,audio,video,picture goto stop:all,audio,video,picture " . 
     "open opendir openmovieid openepisodeid openchannelid addon shuffle:toggle,on,off repeat:one,all,off volumeUp:noArg volumeDown:noArg " . 
-    "back:noArg contextmenu:noArg down:noArg home:noArg info:noArg left:noArg " . 
+    "seek back:noArg contextmenu:noArg down:noArg home:noArg info:noArg left:noArg " . 
     "right:noArg select:noArg send exec:left,right," . 
     "up,down,pageup,pagedown,select,highlight,parentdir,parentfolder,back," . 
     "previousmenu,info,pause,stop,skipnext,skipprevious,fullscreen,aspectratio," . 
@@ -1148,6 +1152,24 @@ sub XBMC_Set_Stop($@)
   my $obj = {
     'method'  => 'Player.Stop',
     'params' => { 
+      'playerid' => 0 #will be replaced with the active player
+    }
+  };
+  return XBMC_PlayerCommand($hash,$obj,$player);
+}
+
+sub XBMC_Set_Seek($@)
+{
+  my ($hash,$position,$player) = @_;
+  my ($hours, $minutes, $seconds) = split(/:/, $position);
+  my $obj = {
+    'method'  => 'Player.Seek',
+    'params' => { 
+	  'value' => {
+	  'seconds' => $seconds + 0,
+	  'minutes' => $minutes + 0 ,
+	  'hours' => $hours + 0
+	  },
       'playerid' => 0 #will be replaced with the active player
     }
   };
@@ -1467,6 +1489,8 @@ sub XBMC_HTTP_Request($$@)
 1;
 
 =pod
+=item summary    control and receive events from Kodi/XBMC
+=item summary_DE Steuern und &uuml;berwachen von Kodi/XBMC
 =begin html
 
 <a name="XBMC"></a>
@@ -1552,6 +1576,7 @@ sub XBMC_HTTP_Request($$@)
     <li><b>openepisodeid &lt;path&gt;</b> -  Plays an episode by id</li>
     <li><b>openchannelid &lt;path&gt;</b> -  Switches to channel by id</li>
     <li><b>addon &lt;addonid&gt; &lt;parametername&gt; &lt;parametervalue&gt;</b> -  Executes addon with one Parameter, for example set xbmc addon script.json-cec command activate</li>
+    <li><b>seek &lt;hh:mm:ss&gt;</b> - seek to the specified time</li>
   </ul>
   <br>Input related commands:<br>
   <ul> 

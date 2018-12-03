@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 98_XmlList.pm 13128 2017-01-17 21:40:09Z rudolfkoenig $
 package main;
 use strict;
 use warnings;
@@ -46,6 +46,8 @@ CommandXmlList($$)
   my $str = "<FHZINFO>\n";
   my $lt = "";
   my %filter;
+
+  $cl->{contenttype} = "application/xml; charset=utf-8" if($cl);
 
   my @arr = devspec2array($param ? $param : ".*", $cl); # for Authorize
   map { $filter{$_} = 1 } @arr;
@@ -108,6 +110,8 @@ CommandXmlList($$)
 
 =pod
 =item command
+=item summary    show device data in XML format
+=item summary_DE zeigt Ger&auml;tedaten in XML Format an
 =begin html
 
 <a name="XmlList"></a>

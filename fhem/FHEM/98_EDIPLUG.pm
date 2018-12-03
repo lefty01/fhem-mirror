@@ -1,6 +1,6 @@
 ################################################################
 #
-#  $Id$
+#  $Id: 98_EDIPLUG.pm 12458 2016-10-28 18:00:25Z wzut $
 #
 #  (c) 2014 Copyright: Wzut based on 98_EDIPLUG.pm tre (ternst)
 #  All rights reserved
@@ -30,19 +30,19 @@
 #	2015-03-07	V1.02 fix schedule
 #       2015-09-12	V1.03 fix errorcount and interval
 #       2016-01-20      V1.04 add Reading onoff for SP2101W
+#       2016-10-28      V1.05 fix wrong user on first start
 #
 ################################################################
 
 package main;
-
 
 use strict;
 use warnings;
 
 use Time::HiRes qw(gettimeofday);    
 use HttpUtils;
-use XML::Simple;
 use SetExtensions;
+use XML::Simple qw(:strict);
 
 sub EDIPLUG_Initialize($);
 sub EDIPLUG_Define($$);
@@ -137,13 +137,15 @@ sub EDIPLUG_Define($$) {
     $hash->{httpheader} = "";
     $hash->{conn}       = "";
     $hash->{data}       = "";
+    $hash->{".firststart"}    = 1;
+
     readingsSingleUpdate($hash, "state", "defined",0);
 
     for (my $i=0; $i<8; $i++) { $hash->{helper}{"list"}[$i] = ""; } # einer mehr als Tage :)
 
     RemoveInternalTimer($hash);
-    InternalTimer(gettimeofday()+$hash->{INTERVAL}, "EDIPLUG_GetUpdate", $hash, 0);
-    EDIPLUG_Get($hash,$hash->{NAME},"info");
+    InternalTimer(gettimeofday()+5, "EDIPLUG_GetUpdate", $hash, 0);
+    #EDIPLUG_Get($hash,$hash->{NAME},"info");
     return undef;
 }
 
@@ -161,10 +163,27 @@ sub EDIPLUG_GetUpdate($) {
     my ($hash) = @_;
     my $name = $hash->{NAME};
 
+    if (!$init_done)
+    {
+     RemoveInternalTimer($hash);
+     InternalTimer(gettimeofday()+5,"EDIPLUG_GetUpdate", $hash, 0);
+     return;
+    }
+
     $hash->{INTERVAL}  = AttrVal($name, "interval", $hash->{INTERVAL}) if ($hash->{INTERVAL} != 3600);
 
+   if (($hash->{".firststart"}) && !IsDisabled($name))
+   {
+    Log3 $name, 5, $name.", GetUpdate (firststart)";
+    $hash->{".firststart"}  = 0;
+    EDIPLUG_Get($hash,$name,"info");
+    InternalTimer(gettimeofday()+$hash->{timeout}+2, "EDIPLUG_GetUpdate", $hash, 1) if ($hash->{INTERVAL});
+    return;
+   }
+
     InternalTimer(gettimeofday()+$hash->{INTERVAL}, "EDIPLUG_GetUpdate", $hash, 1) if ($hash->{INTERVAL});
-    Log3 $name, 5, "EDIPLUG: GetUpdate";
+    return if(IsDisabled($name));
+    Log3 $name, 5, $name.", GetUpdate";
     EDIPLUG_Get($hash,$name,"status") if ($hash->{INTERVAL}); 
     return ;
 }
@@ -176,7 +195,7 @@ sub EDIPLUG_Read($$$)
     my $name = $hash->{NAME};
     my $state;
 
-    Log3 $name, 5, "$name , Read : $hash , $buffer\r\n";
+    Log3 $name, 5, $name.", Read : $hash , $buffer\r\n";
     
     if ($err) 
     {
@@ -185,10 +204,10 @@ sub EDIPLUG_Read($$$)
         $hash->{ERROR}     = $err;
         $hash->{ERRORTIME} = TimeNow();
         $hash->{ERRORCOUNT}++;
-        Log3 $name, 3, "$name: return ".$error."[".$hash->{ERRORCOUNT}."] -> ".$err;
+        Log3 $name, 3, "$name, return ".$error."[".$hash->{ERRORCOUNT}."] -> ".$err;
         if ($hash->{ERRORCOUNT} > 5)
         {
-           Log3 $name, 3, "$name: too many errors, setting interval from ".$hash->{INTERVAL}." to 3600 seconds" if($hash->{INTERVAL} != 3600);
+           Log3 $name, 3, "$name, too many errors, setting interval from ".$hash->{INTERVAL}." to 3600 seconds" if($hash->{INTERVAL} != 3600);
            $hash->{INTERVAL} = 3600;
         }
         readingsSingleUpdate($hash, "state", $error, 0);
@@ -198,7 +217,7 @@ sub EDIPLUG_Read($$$)
     if ($hash->{INTERVAL} == 3600) 
     { 
       my $interval = AttrVal($name, "interval", 60);
-      Log3 $name, 3, "$name: set interval back to $interval seconds";
+      Log3 $name, 3, "$name, set interval back to $interval seconds";
       $hash->{INTERVAL} = $interval;
     }
 
@@ -207,7 +226,7 @@ sub EDIPLUG_Read($$$)
     {
       # sollte eigentlich gar nicht vorkommen bzw. nur bei fehlerhaften uebergebenen XML String  
       $hash->{ERRORCOUNT}++;
-      Log3 $name, 3, "$name: empty return buffer [".$hash->{ERRORCOUNT}."]";
+      Log3 $name, 3, "$name, empty return buffer [".$hash->{ERRORCOUNT}."]";
       $hash->{ERROR}     = "empty return buffer";
       $hash->{ERRORTIME} = TimeNow();
       return;
@@ -220,7 +239,8 @@ sub EDIPLUG_Read($$$)
     # EDIPLUGs geben ein nicht gueltigen Zeichensatz zurueck ( UTF8 instead utf-8 )
     $buffer =~s/UTF8/utf-8/g;
 
-    my $xmlres = XMLin($buffer);
+    my $xml = XML::Simple->new(ForceArray => ['entry', 'link'], KeyAttr => []);
+    my $xmlres = $xml->XMLin($buffer);
 
     # Device.System.Power.State (Status der Steckdose)
     if (exists $xmlres->{CMD}->{'Device.System.Power.State'}) 
@@ -382,8 +402,10 @@ sub EDIPLUG_Set($@) {
    my ($hash, $name , @a) = @_;
    my $cmd = $a[0];
    
+
   return "set $name needs at least one argument" if(int(@a) < 1);
   return  ($cmd eq "?") ? undef : "no set commands are allowed on a read-only device !" if ($attr{$name}{'read-only'} eq "1");
+  return  ($cmd eq "?") ? undef : "no set commands are allowed on a disabled device!" if(IsDisabled($name));
 
    my $list = "on off list addlist delete:0,1,2,3,4,5,6 dellist day clear_error";
 
@@ -518,7 +540,7 @@ sub EDIPLUG_Get($@) {
    my $name= $hash->{NAME};
 
    return "get $name needs at least one argument" if(int(@a) < 2);
-
+   return "no get commands are allowed on a disabled device !" if(IsDisabled($name));
    my $cmd = $a[1];
 
    return "$name get power is not supported by this model !" if (($cmd eq "power") && ($hash->{MODEL} ne "SP2101W"));
@@ -616,7 +638,9 @@ sub encode_list(@)
 1;
 
 =pod
-
+=item device
+=item summary  controls EDIPLUG SP2101W / SP1101W WLAN switches
+=item summary_DE steuert EDIPLUG SP2101W / SP1101W WLAN Schaltsteckdosen
 =begin html
 
 <a name="EDIPLUG"></a>

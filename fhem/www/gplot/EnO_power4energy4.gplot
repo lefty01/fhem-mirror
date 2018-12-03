@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_power4energy4.gplot 9624 2015-10-24 07:09:45Z klaus-schauer $
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device
 #

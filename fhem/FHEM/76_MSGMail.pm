@@ -1,5 +1,5 @@
 ########################################################
-# $Id$
+# $Id: 76_MSGMail.pm 12723 2016-12-07 16:55:33Z gandy92 $
 ########################################################
 #
 # History:
@@ -68,7 +68,8 @@ sub MSGMail_Initialize($)
 
     # check version of libnet - if < 3.00, try to load Net::SMTP::SSL
     $MSGMail_SMTP = $Net::SMTP::VERSION;
-    if ($Net::SMTP::VERSION >= 3)
+    $MSGMail_SMTP =~ s/[^0-9.].*$//;
+    if ($MSGMail_SMTP >= 3.00)
     {
         $MSGMail_SSL = 1;
     }
@@ -407,6 +408,8 @@ sub MSGMail_conn($)
 1;
 
 =pod
+=item device
+=item summary sends mail through a SMTP server, optionally with SSL encryption
 =begin html
 
 <a name="MSGMail"></a>

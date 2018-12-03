@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 91_eventTypes.pm 14888 2017-08-13 12:07:12Z rudolfkoenig $
 package main;
 use IO::File;
 
@@ -218,6 +218,8 @@ eventTypes_Get($@)
 
 =pod
 =item helper
+=item summary    collects FHEM Events to be used in frontends
+=item summary_DE Sammelt FHEM Events f&uuml; die Frontends.
 =begin html
 
 <a name="eventTypes"></a>

@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 98_WOL.pm 10595 2016-01-22 17:05:38Z dietmar63 $
 #  erweitert um die Funktion nas_control        Dietmar Ortmann $
 #
 #     This file is part of fhem.

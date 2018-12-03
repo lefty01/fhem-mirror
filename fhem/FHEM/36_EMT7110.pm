@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 36_EMT7110.pm 12157 2016-09-13 11:23:02Z hcs-svn $
 #
 # TODO:
 
@@ -224,6 +224,8 @@ EMT7110_Attr(@)
 1;
 
 =pod
+=item summary    EMT7110 is a plug with integrated power meter functionality.
+=item summary_DE EMT7110 ist ein Zwischenstecker für die Energiemessung.
 =begin html
 
 <a name="EMT7110"></a>

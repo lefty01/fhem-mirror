@@ -1,15 +1,17 @@
-# $Id$
+# $Id: 98_configdb.pm 16477 2018-03-24 17:58:10Z betateilchen $
 #
 
 package main;
 use strict;
 use warnings;
 use feature qw/say switch/;
+use POSIX;
 use configDB;
 
 no if $] >= 5.017011, warnings => 'experimental';
 
 sub CommandConfigdb($$);
+sub _cfgDB_readConfig();
 
 my @pathname;
 
@@ -22,12 +24,11 @@ sub configdb_Initialize($$) {
 sub CommandConfigdb($$) {
 	my ($cl, $param) = @_;
 
-#	my @a = split(/ /,$param);
 	my @a = split("[ \t][ \t]*", $param);
 	my ($cmd, $param1, $param2) = @a;
-	$cmd    = $cmd    ? $cmd    : "";
-	$param1 = $param1 ? $param1 : "";
-	$param2 = $param2 ? $param2 : "";
+	$cmd    //= "";
+	$param1 //= "";
+	$param2 //= "";
 
 	my $configfile = $attr{global}{configfile};
 	return "\n error: configDB not used!" unless($configfile eq 'configDB' || $cmd eq 'migrate');
@@ -48,7 +49,7 @@ sub CommandConfigdb($$) {
 				}
 			} elsif($param2 eq "") {
 			# delete attribute
-				undef($configDB{attr}{$param1});
+				delete $configDB{attr}{$param1};
 				$ret = " attribute $param1 deleted";
 			} else {
 			# set attribute
@@ -57,6 +58,11 @@ sub CommandConfigdb($$) {
 			}
 		}
 
+		when ('dump') {
+			return _cfgDB_dump($param1);
+		}
+
+
 		when ('diff') {
 			return "\n Syntax: configdb diff <device> <version>" if @a != 3;
 			Log3('configdb', 4, "configdb: diff requested for device: $param1 in version $param2.");
@@ -64,7 +70,7 @@ sub CommandConfigdb($$) {
 		}
 
 		when ('filedelete') {
-			return "\n Syntax: configdb fileexport <pathToFile>" if @a != 2;
+			return "\n Syntax: configdb filedelete <pathToFile>" if @a != 2;
 			my $filename;
 			if($param1 =~ m,^[./],) {
 				$filename = $param1;
@@ -72,19 +78,35 @@ sub CommandConfigdb($$) {
 				$filename  = $attr{global}{modpath};
 				$filename .= "/$param1";
 			}
-			$ret = _cfgDB_Filedelete $filename;
+			$ret  = "File $filename ";
+			$ret .= defined(_cfgDB_Filedelete($filename)) ? "deleted from" : "not found in";
+			$ret .= " database.";
 		}
 
 		when ('fileexport') {
 			return "\n Syntax: configdb fileexport <pathToFile>" if @a != 2;
-			my $filename;
-			if($param1 =~ m,^[./],) {
-				$filename = $param1;
-			} else {
-				$filename  = $attr{global}{modpath};
-				$filename .= "/$param1";
-			}
-			$ret = _cfgDB_Fileexport $filename;
+			if ($param1 ne 'all') {
+				my $filename;
+				if($param1 =~ m,^[./],) {
+					$filename = $param1;
+				} else {
+					$filename  = $attr{global}{modpath};
+					$filename .= "/$param1";
+				}
+				$ret = _cfgDB_Fileexport $filename;
+			} else { # start export all
+				my $flist    = _cfgDB_Filelist(1);
+				my @filelist = split(/\n/,$flist);
+				undef $flist;
+				foreach my $f (@filelist) {
+					Log3 (4,undef,"configDB: exporting $f");
+					my ($path,$file) = $f =~ m|^(.*[/\\])([^/\\]+?)$|;
+					$path = "/tmp/$path";
+					eval qx(mkdir -p $path) unless (-e "$path");
+					$ret .= _cfgDB_Fileexport $f; 
+					$ret .= "\n";
+				}
+			} # end export all
 		}
 
 		when ('fileimport') {
@@ -131,6 +153,7 @@ sub CommandConfigdb($$) {
 		}
 
 		when ('fileshow') {
+			return "\n Syntax: configdb fileshow <pathToFile>" if @a != 2;
 			my @rets = cfgDB_FileRead($param1);
 			my $r = (int(@rets)) ? join "\n",@rets : "File $param1 not found in database.";
 			return $r;
@@ -138,12 +161,14 @@ sub CommandConfigdb($$) {
 
 		when ('info') {
 			Log3('configdb', 4, "info requested.");
-			$ret = _cfgDB_Info;
+			$ret = _cfgDB_Info('$Id: 98_configdb.pm 16477 2018-03-24 17:58:10Z betateilchen $');
 		}
 
 		when ('list') {
 			$param1 = $param1 ? $param1 : '%';
 			$param2 = $param2 ? $param2 : 0;
+			$ret = "list not allowed for configDB itself.";
+			break if($param1 =~ m/configdb/i);
 			Log3('configdb', 4, "configdb: list requested for device: $param1 in version $param2.");
 			$ret = _cfgDB_Search($param1,$param2,1);
 		}
@@ -161,7 +186,8 @@ sub CommandConfigdb($$) {
 		}
 
 		when ('reorg') {
-			$param1 = $param1 ? $param1 : 3;
+#			$param1 = $param1 ? $param1 : 3;
+			$param1 //= 3;
 			Log3('configdb', 4, "configdb: reorg requested with keep: $param1.");
 			$ret = _cfgDB_Reorg($a[1]);
 		}
@@ -184,6 +210,7 @@ sub CommandConfigdb($$) {
 			$ret =	"\n Syntax:\n".
 					"         configdb attr [attribute] [value]\n".
 					"         configdb diff <device> <version>\n".
+					"         configdb dump\n".
 					"         configDB filedelete <pathToFilename>\n".
 					"         configDB fileimport <pathToFilename>\n".
 					"         configDB fileexport <pathToFilename>\n".
@@ -206,15 +233,52 @@ sub CommandConfigdb($$) {
 	
 }
 
+sub _cfgDB_readConfig() {
+	if(!open(CONFIG, 'configDB.conf')) {
+		Log3('configDB', 1, 'Cannot open database configuration file configDB.conf');
+		return 0;
+	}
+	my @config=<CONFIG>;
+	close(CONFIG);
+
+	use vars qw(%configDB);
+
+	my %dbconfig;
+	eval join("", @config);
+
+	my $cfgDB_dbconn	= $dbconfig{connection};
+	my $cfgDB_dbuser	= $dbconfig{user};
+	my $cfgDB_dbpass	= $dbconfig{password};
+	my $cfgDB_dbtype;
+
+	%dbconfig = ();
+	@config   = ();
+
+	if($cfgDB_dbconn =~ m/pg:/i) {
+			$cfgDB_dbtype ="POSTGRESQL";
+		} elsif ($cfgDB_dbconn =~ m/mysql:/i) {
+			$cfgDB_dbtype = "MYSQL";
+		} elsif ($cfgDB_dbconn =~ m/sqlite:/i) {
+			$cfgDB_dbtype = "SQLITE";
+		} else {
+			$cfgDB_dbtype = "unknown";
+	}
+
+	return($cfgDB_dbconn,$cfgDB_dbuser,$cfgDB_dbpass,$cfgDB_dbtype);
+}
+
 1;
 
 =pod
 =item command
+=item summary    frontend command for configDB configuration
+=item summary_DE Befehl zur Konfiguration der configDB
 =begin html
 
 <a name="configdb"></a>
 <h3>configdb</h3>
 	<ul>
+		<a href="https://forum.fhem.de/index.php?board=46.0">Link to FHEM forum</a><br/><br/>
 		Starting with version 5079, fhem can be used with a configuration database instead of a plain text file (e.g. fhem.cfg).<br/>
 		This offers the possibility to completely waive all cfg-files, "include"-problems and so on.<br/>
 		Furthermore, configDB offers a versioning of several configuration together with the possibility to restore a former configuration.<br/>
@@ -361,9 +425,13 @@ sub CommandConfigdb($$) {
 			<br/>
 			<code> configdb attr</code> - show all defined attributes.<br/>
 			<br/>
-			Currently, only one attribute is supported. If 'private' is set to 1 the user and password info<br/>
-			will not be shown in 'configdb info' output.<br/>
-<br/>
+			<ul>Supported attributes:</ul>
+			<br/>
+			<ul><b>deleteimported</b> if set to 1 files will always be deleted from filesystem after import to database.<br/></ul><br/>
+			<ul><b>maxversions</b> set the maximum number of configurations stored in database. <br/>
+			    The oldest version will be dropped in a "save config" if it would exceed this number.</ul><br/>
+			<ul><b>private</b> if set to 0 the database user and password info will be shown in 'configdb info' output.</ul><br/>
+			<br/>
 
 		<li><code>configdb diff &lt;device&gt; &lt;version&gt;</code></li><br/>
 			Compare configuration dataset for device &lt;device&gt; 
@@ -385,13 +453,19 @@ compare device: telnetPort in current version 0 (left) to version: 1 (right)
 			and UNSAVED version from memory (currently running installation).<br/>
 <br/>
 
+		<li><code>configdb dump [unzipped]</code></li><br/>
+			Create a gzipped dump file from from database.<br/>
+			If optional parameter 'unzipped' provided, dump file will be written unzipped.<br/>
+			<br/>
+<br/>
+
 		<li><code>configdb filedelete &lt;Filename&gt;</code></li><br/>
 			Delete file from database.<br/>
 			<br/>
 <br/>
 
-		<li><code>configdb fileexport &lt;targetFilename&gt;</code></li><br/>
-			Exports specified fhem file from database into filesystem.<br/>
+		<li><code>configdb fileexport &lt;targetFilename&gt;|all</code></li><br/>
+			Exports specified file (or all files) from database into filesystem.<br/>
 			Example:<br/>
 			<br/>
 			<code>configdb fileexport FHEM/99_myUtils.pm</code><br/>

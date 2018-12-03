@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 98_logProxy.pm 17587 2018-10-22 07:18:30Z justme1968 $
 ##############################################################################
 #
 #     This file is part of fhem.
@@ -71,6 +71,7 @@ sub logProxy_Undefine($$)
   return undef;
 }
 
+my $logProxy_columns = "ConstX,ConstY,Func,Polar,FileLog,DbLog";
 sub
 logProxy_sampleDataFn($$$$$)
 {
@@ -78,14 +79,12 @@ logProxy_sampleDataFn($$$$$)
 
   my $desc = "Type,Spec";
 
-  my $columns = "ConstX,ConstY,Func,Polar,FileLog,DbLog";
-
   my @htmlArr;
   $max = 16 if($max > 16);
   for(my $r=0; $r < $max; $r++) {
     my @f = split(":", ($flog->[$r] ? $flog->[$r] : ":"), 6);
     my $ret = "";
-    $ret .= SVG_sel("par_${r}_0", $columns, $f[0]);
+    $ret .= SVG_sel("par_${r}_0", $logProxy_columns, $f[0]);
     $ret .= SVG_txt("par_${r}_1", "", join(":", @f[1..@f-1]), 30);
     push @htmlArr, $ret;
   }
@@ -371,7 +370,7 @@ sub logProxy_isDay($) {
   my ($s,$m,$h) = localtime($sec);
   my $cur = logProxy_hms2sec( "$h:$m:$s" );
 
-  return $cur > $sr && $cur < $ss;
+  return ($cur > $sr && $cur < $ss)?1:0;
 }
 
 sub logProxy_hms2dec($){
@@ -464,7 +463,7 @@ logProxy_shiftTime($$)
 
   $time =~ s/ /_/;
 
-  if( $offset =~ m/((-)?\d)*m/ ) {
+  if( $offset =~ m/((-)?\d+)m/ ) {
     my @t = split("[-_:]", $time);
     $time = mktime($t[5],$t[4],$t[3],$t[2],$t[1]-1+$1,$t[0]-1900,0,0,-1);;
   } else {
@@ -597,6 +596,13 @@ logProxy_clipData($$$$;$)
   if( defined($predict) && !defined($next_value) ) {
     $next_value = $prev_value;
 
+    my $sec = SVG_time_to_sec($prev_timestamp);
+    if( !$ret && $sec < $from && defined($prev_value) ) {
+      my @t = localtime($from);
+      my $timestamp = sprintf("%04d-%02d-%02d_%02d:%02d:%02d", $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1], $t[0]);
+      $ret .= "$timestamp $prev_value\n";
+    }
+
     #if $predict = 0 -> predict to end of plot
     my $time = $to;
     #else predict by $predict
@@ -699,14 +705,48 @@ logProxy_xy2Plot($)
   my $min = 999999;
   my $max = -999999;
   my $last;
+  my $xmin = 999999;
+  my $xmax = -999999;
 
   return ($ret,$min,$max,$last) if( !ref($array) eq "ARRAY" );
 
   foreach my $point ( @{$array} ) {
-    $ret .= ";p $point->[0] $point->[1]\n";
+    my $x = $point->[0];
+    my $value = $point->[1];
+
+    $min = $value if( $value < $min );
+    $max = $value if( $value > $max );
+    $last = $value;
+    $xmin = $x if( $x < $xmin );
+    $xmax = $x if( $x > $xmax );
+
+    $ret .= ";p $x $value\n";
   }
 
-  return ($ret,$min,$max,$last);
+  return ($ret,$min,$max,$last,$xmin,$xmax);
+}
+#create plot data from xy-file
+#assume colums separated by whitespace and x,y pairs separated by comma
+sub
+logProxy_xyFile2Plot($$$)
+{
+  my ($filename, $column, $regex)= @_;
+  my @array;
+
+  $filename =~ s/%L/$attr{global}{logdir}/g
+    if($filename =~ m/%L/ && $attr{global}{logdir});
+  if (open(F, "<$filename")) {
+    while(<F>) {
+          chomp;
+          if(/$regex/) {
+            my @a= split(/\s/,$_);
+            my @pp= split(";", $a[$column-1]);
+            map { my @p= split(",", $_); push @array, \@p; } @pp;
+          }
+    }
+    close(F);
+  }
+  return logProxy_xy2Plot(\@array);
 }
 #create plot data from date-y-array
 sub
@@ -760,6 +800,8 @@ logProxy_Get($@)
     $data{"currdate$j"} = undef;
     $data{"mindate$j"} = undef;
     $data{"maxdate$j"} = undef;
+    $data{"xmin$j"} = undef;
+    $data{"xmax$j"} = undef;
 
     my @fld = split(":", $a[$i]);
 
@@ -787,7 +829,7 @@ logProxy_Get($@)
 
       while (@options) {
         my $option = shift(@options);
-        while ($option && $option =~ m/={/ && $option !~ m/>}/ ) {
+        while ($option && $option =~ m/=\{/ && $option !~ m/>}/ ) {
           my $next = shift(@options);
           last if( !defined($next) );
           $option .= ",". $next;
@@ -925,7 +967,7 @@ logProxy_Get($@)
         ($internal_data,$main::data{"min1"},$main::data{"max1"},$main::data{"currval1"}) = logProxy_array2Data($data,$comment);
       }
 
-      if( $$internal_data ) {
+      if( ref($internal_data) eq "SCALAR" && $$internal_data ) {
         $ret .= $$internal_data;
 
         $data{"min$j"} = $main::data{"min1"};
@@ -1018,7 +1060,7 @@ logProxy_Get($@)
       $fld[1] = join( ':', @fld[1..@fld-1]);
       #my $fromsec = SVG_time_to_sec($from);
       #my $tosec   = SVG_time_to_sec($to);
-      my ($r,$min,$max,$last) = eval $fld[1];
+      my ($r,$min,$max,$last,$xmin,$xmax) = eval $fld[1];
       if( $@ ) {
         Log3 $hash->{NAME}, 1, "$hash->{NAME}: $fld[1]: $@";
         next;
@@ -1027,6 +1069,8 @@ logProxy_Get($@)
       $data{"min$j"} = $min;
       $data{"max$j"} = $max;
       $data{"currval$j"} = $last;
+      $data{"xmin$j"} = $xmin;
+      $data{"xmax$j"} = $xmax;
 
       $ret .= $r;
       $ret .= "#$a[$i]\n";
@@ -1167,6 +1211,10 @@ logProxy_Get($@)
       }
 
       $ret .= "#$a[0]\n";
+
+    } else {
+      Log3 $name, 2, "$name: unknown keyword $fld[0] in column_spec, must be one of $logProxy_columns";
+
     }
   }
 
@@ -1181,6 +1229,8 @@ logProxy_Get($@)
     $main::data{"currdate$j"} = $data{"currdate$j"};
     $main::data{"mindate$j"} = $data{"mindate$j"};
     $main::data{"maxdate$j"} = $data{"maxdate$j"};
+    $main::data{"xmin$j"} = $data{"xmin$j"};
+    $main::data{"xmax$j"} = $data{"xmax$j"};
   }
 
 #Log 3, Dumper $ret;
@@ -1197,6 +1247,8 @@ logProxy_Get($@)
 
 =pod
 =item helper
+=item summary    manipulate the date to be plotted in an SVG device
+=item summary_DE manipulation von mit SVG zu plottenden SVG Daten
 =begin html
 
 <a name="logProxy"></a>
@@ -1283,7 +1335,7 @@ logProxy_Get($@)
         </ul>
 
     <li>ConstX:&lt;time&gt;,&lt;y&gt;[,&lt;y2&gt;]<br>
-      Will draw a vertical line (or point) at &lttime&gt; between &lt;y&gt; to &lt;y2&gt;.<br>
+      Will draw a vertical line (or point) at &lt;time&gt; between &lt;y&gt; to &lt;y2&gt;.<br>
       Everything after the : is evaluated as a perl expression that hast to return one time string and one or two y values.<br>
       Examples:
       <ul>
@@ -1293,8 +1345,8 @@ logProxy_Get($@)
         <code>#logProxy ConstX:logProxy_shiftTime($from,60*60*2),$data{min1},$data{max1}</code><br>
       </ul></li><br>
 
-    <li>ConstY:&ltvalue&gt;[,&lt;from&gt;[,&lt;to&gt;]]<br>
-      Will draw a horizontal line at &ltvalue&gt;, optional only between the from and to times.<br>
+    <li>ConstY:&lt;value&gt;[,&lt;from&gt;[,&lt;to&gt;]]<br>
+      Will draw a horizontal line at &lt;value&gt;, optional only between the from and to times.<br>
       Everything after the : is evaluated as a perl expression that hast to return one value and optionaly one or two time strings.<br>
       Examples:
       <ul>
@@ -1305,12 +1357,12 @@ logProxy_Get($@)
         <code>#logProxy ConstY:$data{avg2},logProxy_shiftTime($from,60*60*12),logProxy_shiftTime($from,-60*60*12)</code>
       </ul></li><br>
 
-    <li>Polar:[&ltoptions&gt;]:&lt;values&gt;<br>
+    <li>Polar:[&lt;options&gt;]:&lt;values&gt;<br>
       Will draw a polar/spiderweb diagram with the given values. &lt;values&gt; has to evaluate to a perl array.<br>
       If &lt;values&gt; contains numbers these values are plottet and the last value will be connected to the first.<br>
       If &lt;values&gt; contains strings these strings are used as labels for the segments.<br>
       The axis are drawn automaticaly if the values are strings or if no values are given but the segments option is set.<br>
-      The corrosponding SVG device should have the plotsize attribute set (eg: attr <mySvg> plotsize 340,300) and the used gplot file has to contain xrange and yrange entries and the x- and y-axis labes should be switched off with xtics, ytics  and y2tics entries.<br>
+      The corrosponding SVG device should have the plotsize attribute set (eg: attr &lt;mySvg&gt; plotsize 340,300) and the used gplot file has to contain xrange and yrange entries and the x- and y-axis labes should be switched off with xtics, ytics  and y2tics entries.<br>
       The following example will plot the temperature and desiredTemperature values of all devices named MAX.*:
       <ul>
         <code>set xtics ()</code><br>
@@ -1323,12 +1375,12 @@ logProxy_Get($@)
         <code>#logProxy Polar::{[map{ReadingsVal($_,"temperature",0)}devspec2array("MAX.*")]}</code><br>
         <code>#logProxy Polar::{[map{ReadingsVal($_,"desiredTemperature",0)}devspec2array("MAX.*")]}</code><br>
         <code>#logProxy Polar::{[map{ReadingsVal($_,"temperature",0)}devspec2array("MAX.*")]}</code><br>
-        <code>#logProxy Polar::{[devspec2array("tc.*")]}</code><br><br>
+        <code>#logProxy Polar::{[devspec2array("MAX.*")]}</code><br><br>
 
-        <code>plot "<IN>" using 1:2 axes x1y1 title 'Ist' ls l0 lw 1 with lines,\</code><br>
-        <code>plot "<IN>" using 1:2 axes x1y1 title 'Soll' ls l1fill lw 1 with lines,\</code><br>
-        <code>plot "<IN>" using 1:2 axes x1y1 notitle ls l0 lw 1 with points,\</code><br>
-        <code>plot "<IN>" using 1:2 axes x1y1 notitle  ls l2 lw 1 with lines,\</code><br>
+        <code>plot "&lt;IN&gt;" using 1:2 axes x1y1 title 'Ist' ls l0 lw 1 with lines,\</code><br>
+        <code>plot "&lt;IN&gt;" using 1:2 axes x1y1 title 'Soll' ls l1fill lw 1 with lines,\</code><br>
+        <code>plot "&lt;IN&gt;" using 1:2 axes x1y1 notitle ls l0 lw 1 with points,\</code><br>
+        <code>plot "&lt;IN&gt;" using 1:2 axes x1y1 notitle  ls l2 lw 1 with lines,\</code><br>
       </ul><br>
       options is a comma separated list of zero or more of:<br>
         <ul>
@@ -1345,7 +1397,7 @@ logProxy_Get($@)
         </ul>
       </li><br>
 
-    <li>Func:&ltperl expression&gt;<br>
+    <li>Func:&lt;perl expression&gt;<br>
       Specifies a perl expression that returns the data to be plotted and its min, max and last value. It can not contain
       space or : characters. The data has to be
       one string of newline separated entries of the form: <code>yyyy-mm-dd_hh:mm:ss value</code><br>Example:
@@ -1364,6 +1416,9 @@ logProxy_Get($@)
           the following list: hour,qday,day,week,month,year and the values representing the step with for the zoom level.</li>
         <li>logProxy_xy2Plot(\@xyArray) is a sample implementation of a function that will accept a ref to an array
           of xy-cordinate pairs as the data to be plotted.</li>
+        <li>logProxy_xyFile2Plot($filename,$column,$regex) is a sample implementation of a function that will accept a filename,
+            a column number and a regular expression. The requested column in all lines in the file that match the regular expression
+            needs to be in the format x,y to indicate the xy-cordinate pairs as the data to be plotted.</li>
         <li>logProxy_values2Plot(\@xyArray) is a sample implementation of a function that will accept a ref to an array
           of date-y-cordinate pairs as the data to be plotted.</li>
         <li>The perl expressions have access to $from and $to for the begining and end of the plot range and also to the
@@ -1391,8 +1446,8 @@ logProxy_Get($@)
     <code>#FileLog 4:&lt;SPEC1&gt;:consumption\x3a::</code><br><br>
     will become:<br><br>
     <code>#logProxy DbLog:&lt;myDb&gt;:&lt;myDevice&gt;:&lt;myReading&gt;</code></br>
-    <code>#logProxy FileLog:FileLog_&lt;SPEC1&gt;:4:<SPEC1>.power\x3a::</code><br>
-    <code>#logProxy FileLog:FileLog_&lt;SPEC1&gt;:4:<SPEC1>.consumption\x3a::</code><br>
+    <code>#logProxy FileLog:FileLog_&lt;SPEC1&gt;:4:&lt;SPEC1&gt;.power\x3a::</code><br>
+    <code>#logProxy FileLog:FileLog_&lt;SPEC1&gt;:4:&lt;SPEC1&gt;.consumption\x3a::</code><br>
   </ul>
 
 </ul>

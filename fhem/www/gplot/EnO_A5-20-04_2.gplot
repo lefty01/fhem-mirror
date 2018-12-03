@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_A5-20-04_2.gplot 9979 2015-11-23 05:32:53Z klaus-schauer $
 
 # Display the setpointTemp and the setpoint (valve position).
 # FileLog definition: 

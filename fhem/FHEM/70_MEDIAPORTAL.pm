@@ -3,9 +3,9 @@
 # 70_MEDIAPORTAL.pm
 # Connects to a running MediaPortal instance via the WifiRemote plugin
 #
-# $Id$
+# $Id: 70_MEDIAPORTAL.pm 16619 2018-04-15 10:29:01Z Reinerlein $
 #
-# Changed, adopted and new copyrighted by Reiner Leins (Reinerlein), (c) in February 2016
+# Changed, adopted and new copyrighted by Reiner Leins (Reinerlein), (c) in February 2018
 # Original Copyright by Andreas Kwasnik (gemx)
 #
 # Fhem is free software: you can redistribute it and/or modify
@@ -23,6 +23,23 @@
 #
 ########################################################################################
 # Changelog
+# 15.04.2018
+#	Beim Stoppen der Wiedergabe werden nun noch einige Readings geleert, damit diese sauber neu belegt werden können.
+# 26.02.2018
+#	Es gab einen Fehler bei der prozentualen Positionsberechnung. Nun wird ein Dezimalbruch zwischen 0.0 und 100.0 ausgegeben, den man mit dem Attribut "PositionPercentFormat" z.B. auch auf mehrere Nachkommastellen formatieren kann.
+#	Heartbeat und 3facher Verbindungsversuch wurden wieder abgeschafft, da es keinen Vorteil gebracht hat.
+#	Der Verbindungsaufbau über die Fhem-Schnittstelle DevIO wird nun sauber durchgeführt und gehalten, sodass das Wiederverbinden sauber klappt
+#	Einige neue Readings, um bei den verschiedenen Quellen auch die echten Quell-Infos zu erhalten (und nicht nur einen zusammengesetzten Titel)
+# 18.04.2017
+#	Es gibt ein neues Reading "PositionPercent", welches die aktuelle Postion als Prozentangabe enthält
+#	Bei einem Disconnect wird nun 3x versucht eine neue Verbindung aufzubauen
+#	Es wurde ein Fehlerhandling eingebaut, wenn keine Plugins geladen werden konnten.
+# 12.03.2017
+#	Es gibt einen neuen Getter "plugins", der das Reading "Plugins" mit den aktuell verfügbaren Plugins und deren WindowIds belegt
+#	Es gibt einen neuen Setter "window" der als Parameter eine WindowId oder einen Pluginnamen (URL-Encoded mit %20 für Leerzeichen!) erhält
+# 14.03.2016
+#	Es gibt nun ein Attribut "HeartbeatInterval", mit dem das Intervall für die Verbindungsprüfung festgelegt werden kann. Ein Wert von "0" deaktiviert die Prüfung.
+#	Es gibt nun das Attribut "disable", mit dem das Modul deaktiviert werden kann.
 # 08.02.2016
 #	Neuer MediaType "recording" hinzugefügt
 # 07.02.2016
@@ -51,6 +68,7 @@ use Time::HiRes qw(gettimeofday);
 use DevIo;
 use JSON;
 use HttpUtils;
+use Scalar::Util qw(looks_like_number);
 
 use Data::Dumper;
 
@@ -58,7 +76,8 @@ use Data::Dumper;
 sub MEDIAPORTAL_Set($@);
 sub MEDIAPORTAL_Log($$$);
 
-my $MEDIAPORTAL_Interval = 15;
+my $MEDIAPORTAL_HeartbeatInterval = 15;
+my $MEDIAPORTAL_MaxGraceRetries = 3;
 
 ########################################################################################
 #
@@ -76,8 +95,8 @@ sub MEDIAPORTAL_Initialize($) {
 	$hash->{SetFn} = 'MEDIAPORTAL_Set';
 	$hash->{DefFn} = 'MEDIAPORTAL_Define';
 	$hash->{UndefFn} = 'MEDIAPORTAL_Undef';
-	#$hash->{AttrFn} = 'MEDIAPORTAL_Attr';
-	$hash->{AttrList} = 'authmethod:none,userpassword,passcode,both username password generateNowPlayingUpdateEvents:1,0 macaddress '.$readingFnAttributes;
+	$hash->{AttrFn} = 'MEDIAPORTAL_Attribute';
+	$hash->{AttrList} = 'authmethod:none,userpassword,passcode,both username password HeartbeatInterval generateNowPlayingUpdateEvents:1,0 PositionPercentFormat macaddress '.$readingFnAttributes;
 	
 	$hash->{STATE} = 'Initialized';
 }
@@ -103,9 +122,10 @@ sub MEDIAPORTAL_Define($$) {
 	$dev .= ":8017" if ($dev !~ m/:/ && $dev ne "none" && $dev !~ m/\@/);
 	
 	$hash->{DeviceName} = $dev;
-	$hash->{STATE} = 'Disconnected';
+	$hash->{STATE} = 'disconnected';
 	
-	my $ret = DevIo_OpenDev($hash, 0, 'MEDIAPORTAL_DoInit');
+	my $ret = undef;
+	$ret = DevIo_OpenDev($hash, 0, 'MEDIAPORTAL_DoInit') if (!AttrVal($hash->{NAME}, 'disable', 0));
 	
 	return $ret;
 }
@@ -126,6 +146,96 @@ sub MEDIAPORTAL_Undef($$) {
 
 ########################################################################################
 #
+#  MEDIAPORTAL_Attribute
+#
+########################################################################################
+sub MEDIAPORTAL_Attribute($@) {
+	my ($mode, $devName, $attrName, $attrValue) = @_;
+	my $hash = $defs{$devName};
+	
+	my $disableChange = 0;
+	if($mode eq 'set') {
+		if ($attrName eq 'disable') {
+			if ($attrValue && AttrVal($devName, $attrName, 0) != 1) {
+				MEDIAPORTAL_Log($devName, 5, 'Neu-Disabled');
+				$disableChange = 1;
+			}
+			
+			if (!$attrValue && AttrVal($devName, $attrName, 0) != 0) {
+				MEDIAPORTAL_Log($devName, 5, 'Neu-Enabled');
+				$disableChange = 1;
+			}
+		}
+	} elsif ($mode eq 'del') {
+		if ($attrName eq 'disable') {
+			if (AttrVal($devName, $attrName, 0) != 0) {
+				MEDIAPORTAL_Log($devName, 5, 'Deleted-Disabled');
+				$disableChange = 1;
+				$attrValue = 0;
+			}
+		}
+	}
+	
+	if ($disableChange) {
+		# Wenn die Verbindung beendet werden muss...
+		if ($attrValue) {
+			MEDIAPORTAL_Log $devName, 5, 'Call AttributeFn: Stop Connection...';
+			DevIo_CloseDev($hash);
+		}
+		
+		# Wenn die Verbindung gestartet werden muss...
+		if (!$attrValue) {
+			MEDIAPORTAL_Log $devName, 5, 'Call AttributeFn: Start Connection...';
+			DevIo_OpenDev($hash, 1, 'MEDIAPORTAL_DoInit');
+		}
+	}
+	
+	return undef;
+}
+
+########################################################################################
+#
+#  MEDIAPORTAL_DoInit
+#
+########################################################################################
+sub MEDIAPORTAL_DoInit($) {
+	my ($hash) = @_;
+	
+	readingsSingleUpdate($hash, 'state', 'Connecting...', 1);
+	$hash->{helper}{buffer} = '';
+	$hash->{helper}{LastStatusTimestamp} = time();
+	$hash->{GraceRetries} = 0;
+	
+	# Versuch, die MAC-Adresse des Ziels selber herauszufinden...
+	if (AttrVal($hash->{NAME}, 'macaddress', '') eq '') {
+		my $newmac = MEDIAPORTAL_GetMAC($hash);
+		
+		if (defined($newmac)) {
+			CommandAttr(undef, $hash->{NAME}.' macaddress '.$newmac);
+		}
+	}
+	
+	#RemoveInternalTimer($hash);
+	#InternalTimer(gettimeofday() + AttrVal($hash->{NAME}, 'HeartbeatInterval', $MEDIAPORTAL_HeartbeatInterval), 'MEDIAPORTAL_GetIntervalStatus', $hash, 0) if AttrVal($hash->{NAME}, 'HeartbeatInterval', $MEDIAPORTAL_HeartbeatInterval);
+	
+	return undef;
+}
+
+########################################################################################
+#
+#  MEDIAPORTAL_Ready
+#
+########################################################################################
+sub MEDIAPORTAL_Ready($) {
+	my ($hash) = @_;
+	
+	MEDIAPORTAL_Log $hash->{NAME}, 4, "Ready-Call";
+	
+	return DevIo_OpenDev($hash, 1, 'MEDIAPORTAL_DoInit');
+}
+
+########################################################################################
+#
 #  MEDIAPORTAL_Get
 #
 ########################################################################################
@@ -135,14 +245,18 @@ sub MEDIAPORTAL_Get($@) {
 	my $cname = $a[1];
 	my $cmd = '';
 	
+	return 'Module disabled!' if AttrVal($hash->{NAME}, 'disable', 0);
+	
 	if ($cname eq "status") {
 		$cmd = "{\"Type\":\"requeststatus\"}\r\n";
 	} elsif ($cname eq "nowplaying") {
 		$cmd = "{\"Type\":\"requestnowplaying\"}\r\n";
 	} elsif ($cname eq "notify") {
 		$cmd = '{"Type":"properties","Properties":["#Play.Current.Title","#TV.View.title"]}'."\r\n";
+	} elsif ($cname eq "plugins") {
+		$cmd = "{\"Type\":\"plugins\",\"SendIcons\":false}\r\n";
 	} else {
-		return "Unknown command '$cname', choose one of status:noArg nowplaying:noArg";
+		return "Unknown command '$cname', choose one of status:noArg nowplaying:noArg plugins:noArg";
 	}
 	
 	DevIo_SimpleWrite($hash, $cmd, 0);
@@ -168,21 +282,32 @@ sub MEDIAPORTAL_GetStatus($) {
 sub MEDIAPORTAL_GetIntervalStatus($) {
 	my ($hash) = @_;
 	
-	return undef if (ReadingsVal($hash->{NAME}, 'state', 'disconnected') eq 'disconnected');
+	# Heartbeat-Prüfung nur machen, wenn es auch gewünscht wurde...
+	return undef if (!AttrVal($hash->{NAME}, 'HeartbeatInterval', $MEDIAPORTAL_HeartbeatInterval));
+	
+	# Ein "Disconnected" wird erst nach einigen Fehlversuchen hingenommen...
+	if (ReadingsVal($hash->{NAME}, 'state', 'disconnected') eq 'disconnected') {
+		$hash->{GraceRetries}++;
+		return undef if ($hash->{GraceRetries} > $MEDIAPORTAL_MaxGraceRetries);
+		
+		# Reconnect veranlassen...
+		MEDIAPORTAL_Set($hash, ($hash->{NAME}, 'reconnect'));
+		InternalTimer(gettimeofday() + AttrVal($hash->{NAME}, 'HeartbeatInterval', $MEDIAPORTAL_HeartbeatInterval), 'MEDIAPORTAL_GetIntervalStatus', $hash, 0);
+	}
 	
 	# Prüfen, wann der letzte Status zugestellt wurde...
-	if (time() - $hash->{helper}{LastStatusTimestamp} > (2 * $MEDIAPORTAL_Interval + 5)) {
+	if (time() - $hash->{helper}{LastStatusTimestamp} > (2 * $MEDIAPORTAL_HeartbeatInterval + 5)) {
 		MEDIAPORTAL_Log $hash->{NAME}, 3, 'GetIntervalStatus hat festgestellt, dass Mediaportal sich seit '.(time() - $hash->{helper}{LastStatusTimestamp}).'s nicht zurückgemeldet hat. Die Verbindung wird neu aufgebaut!';
 		
 		MEDIAPORTAL_Set($hash, ($hash->{NAME}, 'reconnect'));
-		InternalTimer(gettimeofday() + $MEDIAPORTAL_Interval, 'MEDIAPORTAL_GetIntervalStatus', $hash, 0);
+		InternalTimer(gettimeofday() + AttrVal($hash->{NAME}, 'HeartbeatInterval', $MEDIAPORTAL_HeartbeatInterval), 'MEDIAPORTAL_GetIntervalStatus', $hash, 0);
 		
 		return undef;
 	}
 	
 	# Status anfordern...
 	MEDIAPORTAL_Get($hash, ($hash->{NAME}, 'status'));
-	InternalTimer(gettimeofday() + $MEDIAPORTAL_Interval, 'MEDIAPORTAL_GetIntervalStatus', $hash, 0);
+	InternalTimer(gettimeofday() + AttrVal($hash->{NAME}, 'HeartbeatInterval', $MEDIAPORTAL_HeartbeatInterval), 'MEDIAPORTAL_GetIntervalStatus', $hash, 0);
 }
 
 ########################################################################################
@@ -194,6 +319,17 @@ sub MEDIAPORTAL_GetNowPlaying($) {
 	my ($hash) = @_;
 	
 	MEDIAPORTAL_Get($hash, ($hash->{NAME}, 'nowplaying'));
+}
+
+########################################################################################
+#
+#  MEDIAPORTAL_GetPlugins
+#
+########################################################################################
+sub MEDIAPORTAL_GetPlugins($) {
+	my ($hash) = @_;
+	
+	MEDIAPORTAL_Get($hash, ($hash->{NAME}, 'plugins'));
 }
 
 ########################################################################################
@@ -213,6 +349,8 @@ sub MEDIAPORTAL_Set($@) {
 	# Legacy Volume writing...
 	$cname = 'Volume' if (lc($cname) eq 'volume');
 	
+	return 'Module disabled!' if AttrVal($hash->{NAME}, 'disable', 0);
+	
 	if ($cname eq "command") {
 		if (!MEDIAPORTAL_isInList($a[2], split(/ /, $mpcommands))) { 
 			return "Unknown command '$a[2]'. Supported commands are: $mpcommands";
@@ -224,6 +362,11 @@ sub MEDIAPORTAL_Set($@) {
 		
 		if ($macaddress ne '') {
 			MEDIAPORTAL_Wakeup($macaddress);
+			
+			$hash->{GraceRetries} = 0;
+			#MEDIAPORTAL_Set($hash, ($hash->{NAME}, 'reconnect'));
+			#InternalTimer(gettimeofday() + AttrVal($hash->{NAME}, 'HeartbeatInterval', $MEDIAPORTAL_HeartbeatInterval), 'MEDIAPORTAL_GetIntervalStatus', $hash, 0);
+			
 			return 'WakeUp-Signal sent!';
 		} else {
 			return 'No MacAddress set! No WakeUp-Signal sent!';
@@ -285,11 +428,23 @@ sub MEDIAPORTAL_Set($@) {
 	} elsif ($cname eq "reconnect") {
 		DevIo_CloseDev($hash);
 		select(undef, undef, undef, 0.2);
-		DevIo_OpenDev($hash, 0, 'MEDIAPORTAL_DoInit');
+		DevIo_OpenDev($hash, 1, 'MEDIAPORTAL_DoInit');
 		
 		return undef;
+	} elsif ($cname eq "window") {
+		my $param = $a[2];
+		if (!looks_like_number($param)) {
+			my %plugins = %{eval(ReadingsVal($hash->{NAME}, 'Plugins', '()'))};
+			$param =~ s/\%20/ /g;
+			$param = $plugins{$param};
+		}
+		$cmd = "{\"Type\":\"window\",\"Window\":$param}\r\n";
 	} else {
-		return "Unknown command '$cname', choose one of wakeup:noArg sleep:noArg connect:noArg reconnect:noArg command:".join(',', split(/ /, $mpcommands))." key Volume:slider,0,1,100 powermode:".join(',', split(/ /, $powermodes))." playfile playchannel playradiochannel playlist";
+		my %plugins = ();
+		eval {
+			%plugins = %{eval(ReadingsVal($hash->{NAME}, 'Plugins', '()'))};
+		};
+		return "Unknown command '$cname', choose one of wakeup:noArg sleep:noArg connect:noArg reconnect:noArg command:".join(',', split(/ /, $mpcommands))." key Volume:slider,0,1,100 powermode:".join(',', split(/ /, $powermodes))." playfile playchannel playradiochannel playlist window".((scalar(keys(%plugins)) != 0) ? ':'.join(',', map { s/ /%20/g; $_; } sort(keys(%plugins))) : '');
 	}
 	
 	DevIo_SimpleWrite($hash, $cmd, 0);
@@ -307,11 +462,14 @@ sub MEDIAPORTAL_Read($) {
 	
 	my $buf = DevIo_SimpleRead($hash);
 	if(!defined($buf)) {
-		MEDIAPORTAL_Log $hash->{NAME}, 3, 'DevIo_SimpleRead hat keine Daten geliefert, obwohl Read aufgerufen wurde! Setze Buffer zurück. Aktueller Buffer: '.$hash->{helper}{buffer};
+		MEDIAPORTAL_Log $hash->{NAME}, 3, 'DevIo_SimpleRead hat keine Daten geliefert, obwohl Read aufgerufen wurde! Setze Buffer und einige Readings zurück. Aktueller Buffer: '.$hash->{helper}{buffer};
 		$hash->{helper}{buffer} = '';
 		return undef;
 	}
-	   
+	
+	return undef if AttrVal($hash->{NAME}, 'disable', 0);
+	
+	$hash->{GraceRetries} = 0;
 	MEDIAPORTAL_Log $hash->{NAME}, 5, "RAW MSG: $buf";
 	
 	# Zum Buffer hinzufügen
@@ -363,7 +521,9 @@ sub MEDIAPORTAL_ProcessMessage($$) {
 		} elsif ($json->{Type} eq "authenticationresponse") {
 			MEDIAPORTAL_Log $hash->{NAME}, 4, "AUTHRESPONSE received. SUCCESS=$json->{Success}";
 			
-			$hash->{STATE} = "Authenticated. Processing messages.";
+			#readingsSingleUpdate($hash, 'state', 'Authenticated. Processing messages.', 1);
+			readingsSingleUpdate($hash, 'state', 'opened', 1);
+			InternalTimer(gettimeofday() + 1, 'MEDIAPORTAL_GetPlugins', $hash, 0);
 		} elsif ($json->{Type} eq "status") {
 			MEDIAPORTAL_Log $hash->{NAME}, 4, 'STATUS received.';
 			
@@ -389,6 +549,32 @@ sub MEDIAPORTAL_ProcessMessage($$) {
 			readingsBulkUpdate($hash, 'playStatus', $playStatus);
 			readingsBulkUpdate($hash, 'CurrentModule', $json->{CurrentModule});
 			readingsBulkUpdate($hash, 'Title', $title);
+			
+			# Wenn der Abspielstatus auf Stopped gewechselt hat, dann einige Readings löschen...
+			if ($json->{IsPlaying} eq 'false' && $json->{IsPaused} eq 'false') {
+				readingsBulkUpdate($hash, 'Title', '');
+				readingsBulkUpdate($hash, 'Description', '');
+				readingsBulkUpdate($hash, 'nextTitle', '');
+				readingsBulkUpdate($hash, 'nextDescription', '');
+				
+				readingsBulkUpdate($hash, 'mediaType', '');
+				readingsBulkUpdate($hash, 'tvChannel', '');
+				readingsBulkUpdate($hash, 'tvCurrentProgramName', '');
+				readingsBulkUpdate($hash, 'tvNextProgramName', '');
+				readingsBulkUpdate($hash, 'movieTitle', '');
+				readingsBulkUpdate($hash, 'seriesName', '');
+				readingsBulkUpdate($hash, 'seriesSeason', '');
+				readingsBulkUpdate($hash, 'seriesEpisode', '');
+				readingsBulkUpdate($hash, 'seriesTitle', '');
+				readingsBulkUpdate($hash, 'recordingChannel', '');
+				readingsBulkUpdate($hash, 'recordingProgramName', '');
+				
+				readingsBulkUpdate($hash, 'Position', '0:00:00');
+				readingsBulkUpdate($hash, 'PositionPercent', 0);
+				readingsBulkUpdate($hash, 'File', '');
+				readingsBulkUpdate($hash, 'Duration', '0:00:00');
+			}
+			
 			readingsEndUpdate($hash, 1);
 			
 			$hash->{helper}{LastStatusTitle} = $title;
@@ -407,6 +593,11 @@ sub MEDIAPORTAL_ProcessMessage($$) {
 			
 			readingsBulkUpdate($hash, 'Duration', MEDIAPORTAL_ConvertSecondsToTime($json->{Duration}));
 			readingsBulkUpdate($hash, 'Position', MEDIAPORTAL_ConvertSecondsToTime($json->{Position}));
+			if ($json->{Duration}) {
+				readingsBulkUpdate($hash, 'PositionPercent', sprintf(AttrVal($hash->{NAME}, 'PositionPercentFormat', '%.1f'), 100 * $json->{Position} / $json->{Duration}));
+			} else {
+				readingsBulkUpdate($hash, 'PositionPercent', 0);
+			}
 			readingsBulkUpdate($hash, 'File', $json->{File});
 			
 			readingsBulkUpdate($hash, 'Title', '');
@@ -414,24 +605,53 @@ sub MEDIAPORTAL_ProcessMessage($$) {
 			readingsBulkUpdate($hash, 'nextTitle', '');
 			readingsBulkUpdate($hash, 'nextDescription', '');
 			
+			# Special MediaInformations...
+			if ($json->{IsTv}) {
+				readingsBulkUpdate($hash, 'mediaType', 'tv');
+			} else {
+				readingsBulkUpdate($hash, 'mediaType', '');
+			}
+			readingsBulkUpdate($hash, 'tvChannel', '');
+			readingsBulkUpdate($hash, 'tvCurrentProgramName', '');
+			readingsBulkUpdate($hash, 'tvNextProgramName', '');
+			readingsBulkUpdate($hash, 'movieTitle', '');
+			readingsBulkUpdate($hash, 'seriesName', '');
+			readingsBulkUpdate($hash, 'seriesSeason', '');
+			readingsBulkUpdate($hash, 'seriesEpisode', '');
+			readingsBulkUpdate($hash, 'seriesTitle', '');
+			readingsBulkUpdate($hash, 'recordingChannel', '');
+			readingsBulkUpdate($hash, 'recordingProgramName', '');
+			
 			if (defined($json->{MediaInfo})) {
+				readingsBulkUpdate($hash, 'mediaType', $json->{MediaInfo}{MediaType}) if ($json->{MediaInfo}{MediaType});
+				
 				if ($json->{MediaInfo}{MediaType} eq 'tv') {
 					readingsBulkUpdate($hash, 'Title', $json->{MediaInfo}{ChannelName}.' - '.$json->{MediaInfo}{CurrentProgramName});
 					readingsBulkUpdate($hash, 'Description', $json->{MediaInfo}{CurrentProgramDescription});
+					readingsBulkUpdate($hash, 'tvChannel', $json->{MediaInfo}{ChannelName});
+					readingsBulkUpdate($hash, 'tvCurrentProgramName', $json->{MediaInfo}{CurrentProgramName});
 					
 					if (defined($json->{MediaInfo}{NextProgramName})) {
 						readingsBulkUpdate($hash, 'nextTitle', $json->{MediaInfo}{ChannelName}.' - '.$json->{MediaInfo}{NextProgramName});
 						readingsBulkUpdate($hash, 'nextDescription', $json->{MediaInfo}{NextProgramDescription});
+						readingsBulkUpdate($hash, 'tvNextProgramName', $json->{MediaInfo}{NextProgramName});
 					}
 				} elsif ($json->{MediaInfo}{MediaType} eq 'movie') {
 					readingsBulkUpdate($hash, 'Title', $json->{MediaInfo}{Title});
 					readingsBulkUpdate($hash, 'Description', $json->{MediaInfo}{Summary});
+					readingsBulkUpdate($hash, 'movieTitle', $json->{MediaInfo}{Title});
 				} elsif ($json->{MediaInfo}{MediaType} eq 'series') {
-					readingsBulkUpdate($hash, 'Title', $json->{MediaInfo}{Series}.' '.$json->{MediaInfo}{Season}.'x'.$json->{MediaInfo}{Episode}.' - '.$json->{MediaInfo}{Title});
+					readingsBulkUpdate($hash, 'Title', $json->{MediaInfo}{Series}.' S'.sprintf("%02d", $json->{MediaInfo}{Season}).'E'.sprintf("%02d", $json->{MediaInfo}{Episode}).' - '.$json->{MediaInfo}{Title});
 					readingsBulkUpdate($hash, 'Description', $json->{MediaInfo}{Plot});
+					readingsBulkUpdate($hash, 'seriesName', $json->{MediaInfo}{Series});
+					readingsBulkUpdate($hash, 'seriesSeason', $json->{MediaInfo}{Season});
+					readingsBulkUpdate($hash, 'seriesEpisode', $json->{MediaInfo}{Episode});
+					readingsBulkUpdate($hash, 'seriesTitle', $json->{MediaInfo}{Title});
 				} elsif ($json->{MediaInfo}{MediaType} eq 'recording') {
 					readingsBulkUpdate($hash, 'Title', $json->{MediaInfo}{ChannelName}.' - '.$json->{MediaInfo}{ProgramName});
 					readingsBulkUpdate($hash, 'Description', $json->{MediaInfo}{ProgramDescription});
+					readingsBulkUpdate($hash, 'recordingChannel', $json->{MediaInfo}{ChannelName});
+					readingsBulkUpdate($hash, 'recordingProgramName', $json->{MediaInfo}{ProgramName});
 				} else {
 					MEDIAPORTAL_Log $hash->{NAME}, 0, 'Unbekannte MediaInfo für "'.$json->{MediaInfo}{MediaType}.'" geliefert, aber nicht verarbeitet. Bitte diese komplette Information ins Forum einstellen: '.Dumper($json->{MediaInfo});
 				}
@@ -455,15 +675,32 @@ sub MEDIAPORTAL_ProcessMessage($$) {
 			readingsBeginUpdate($hash);
 			readingsBulkUpdate($hash, 'Duration', MEDIAPORTAL_ConvertSecondsToTime($json->{Duration}));
 			readingsBulkUpdate($hash, 'Position', MEDIAPORTAL_ConvertSecondsToTime($json->{Position}));
+			if ($json->{Duration}) {
+				readingsBulkUpdate($hash, 'PositionPercent', sprintf(AttrVal($hash->{NAME}, 'PositionPercentFormat', '%.1f'), 100 * $json->{Position} / $json->{Duration}));
+			} else {
+				readingsBulkUpdate($hash, 'PositionPercent', 0);
+			}
 			readingsEndUpdate($hash, AttrVal($hash->{NAME}, 'generateNowPlayingUpdateEvents', 0));
 		} elsif ($json->{Type} eq "properties") {
 			MEDIAPORTAL_Log $hash->{NAME}, 4, 'PROPERTIES received.';
 			
 			MEDIAPORTAL_Log undef, 4, 'JSON: '.Dumper($json);
 		} elsif ($json->{Type} eq "facadeinfo") {
-			MEDIAPORTAL_Log $hash->{NAME}, 4, 'FACADEINFO5 received.';
+			MEDIAPORTAL_Log $hash->{NAME}, 4, 'FACADEINFO received.';
 		} elsif ($json->{Type} eq "dialog") {
 			MEDIAPORTAL_Log $hash->{NAME}, 4, 'DIALOG received.';
+		} elsif ($json->{Type} eq "plugins") {
+			MEDIAPORTAL_Log $hash->{NAME}, 1, 'Plugins received.';
+			eval {
+				my %plugins = ();
+				foreach (@{$json->{Plugins}}) {
+					$plugins{$_->{Name}} = $_->{WindowId};
+				}
+				readingsSingleUpdate($hash, 'Plugins', MEDIAPORTAL_Dumper(\%plugins), 1);
+			};
+			if ($@) {
+				MEDIAPORTAL_Log $hash->{NAME}, 1, "Error during processing of plugins: $@";
+			}
 		} else {
 			MEDIAPORTAL_Log $hash->{NAME}, 1, "Unhandled message received: MessageType '$json->{Type}'";
 		}
@@ -471,62 +708,6 @@ sub MEDIAPORTAL_ProcessMessage($$) {
 		MEDIAPORTAL_Log $hash->{NAME}, 1, 'Unhandled message received without any Messagetype: '.$msg;
 	}
 }
-
-########################################################################################
-#
-#  MEDIAPORTAL_DoInit
-#
-########################################################################################
-sub MEDIAPORTAL_DoInit($) {
-	my ($hash) = @_;
-	
-	$hash->{STATE} = 'Connecting...';
-	$hash->{helper}{buffer} = '';
-	$hash->{helper}{LastStatusTimestamp} = time();
-	
-	# Versuch, die MAC-Adresse des Ziels selber herauszufinden...
-	if (AttrVal($hash->{NAME}, 'macaddress', '') eq '') {
-		my $newmac = MEDIAPORTAL_GetMAC($hash);
-		
-		if (defined($newmac)) {
-			CommandAttr(undef, $hash->{NAME}.' macaddress '.$newmac);
-		}
-	}
-	
-	RemoveInternalTimer($hash);
-	InternalTimer(gettimeofday() + $MEDIAPORTAL_Interval, 'MEDIAPORTAL_GetIntervalStatus', $hash, 0);
-	
-	return undef;
-}
-
-########################################################################################
-#
-#  MEDIAPORTAL_Ready
-#
-########################################################################################
-sub MEDIAPORTAL_Ready($) {
-	my ($hash) = @_;
-	
-	return DevIo_OpenDev($hash, 1, 'MEDIAPORTAL_DoInit');
-}
-
-########################################################################################
-#
-#  MEDIAPORTAL_Attr
-#
-########################################################################################
-#sub MEDIAPORTAL_Attr($@) {
-#	my (@a) = @_;
-#	
-#	my $hash = $defs{$a[1]};
-#	my $name = $hash->{NAME};
-#	
-#	MEDIAPORTAL_Log $hash->{NAME}, 5,"********** 1 $a[1] 2 $a[2]";
-#	if($a[0] eq 'set') {
-#	}
-#	
-#	return undef;
-#}
 
 ########################################################################################
 #
@@ -643,6 +824,18 @@ sub MEDIAPORTAL_DoWakeup($;$$) {
 
 ########################################################################################
 #
+#  MEDIAPORTAL_GetTimeSeconds
+#
+########################################################################################
+sub MEDIAPORTAL_GetTimeSeconds($) {
+	my ($timeStr) = @_;
+	
+	return MEDIAPORTAL_Max(int($1)*3600 + int($2)*60 + int($3), 1) if ($timeStr =~ m/(\d+):(\d+):(\d+)/);
+	return 0;
+}
+
+########################################################################################
+#
 #  MEDIAPORTAL_ConvertSecondsToTime
 #
 ########################################################################################
@@ -651,6 +844,15 @@ sub MEDIAPORTAL_ConvertSecondsToTime($) {
 	
 	return sprintf('%01d:%02d:%02d', $seconds / 3600, ($seconds%3600) / 60, $seconds%60) if ($seconds > 0);
 	return '0:00:00';
+}
+
+########################################################################################
+#
+#  MEDIAPORTAL_Max
+#
+########################################################################################
+sub MEDIAPORTAL_Max($$) {
+	$_[$_[0] < $_[1]]
 }
 
 ########################################################################################
@@ -682,7 +884,22 @@ sub MEDIAPORTAL_posInList($@) {
 
 ########################################################################################
 #
-#  MEDIAPORTAL_Log - Log to the normal Log-command with the prefix 'SONOSPLAYER'
+#  MEDIAPORTAL_Dumper - Returns the 'Dumpered' Output of the given Datastructure-Reference
+#
+########################################################################################
+sub MEDIAPORTAL_Dumper($) {
+	my ($varRef) = @_;
+	
+	$Data::Dumper::Indent = 0;
+	my $text = Dumper($varRef);
+	$Data::Dumper::Indent = 2;
+	
+	return $text;
+}
+
+########################################################################################
+#
+#  MEDIAPORTAL_Log - Log to the normal Log-command with the prefix 'MEDIAPORTAL'
 #
 ########################################################################################
 sub MEDIAPORTAL_Log($$$) {
@@ -694,6 +911,8 @@ sub MEDIAPORTAL_Log($$$) {
 1;
 
 =pod
+=item summary    Connects to a running MediaPortal instance via the WifiRemote plugin.
+=item summary_DE Verbindet sich über das Wifiremote-Plugin mit einer Mediaportal-Instanz.
 =begin html
 
 <a name="MEDIAPORTAL"></a>
@@ -768,8 +987,12 @@ sub MEDIAPORTAL_Log($$$) {
 <h4>Attributes</h4>
 <ul>
 <li><b>Common</b><ul>
+<li><a name="MEDIAPORTAL_attribut_disable"><b><code>disable &lt;value&gt;</code></b>
+</a><br />One of (0, 1). With this attribute you can disable the module.</li>
 <li><a name="MEDIAPORTAL_attribut_generateNowPlayingUpdateEvents"><b><code>generateNowPlayingUpdateEvents &lt;value&gt;</code></b>
 </a><br />One of (0, 1). With this value you can disable (or enable) the generation of <code>NowPlayingUpdate</code>-Events. If set, Fhem generates an event per second with the updated time-values for the current playing. Defaults to "0".</li>
+<li><a name="MEDIAPORTAL_attribut_HeartbeatInterval"><b><code>HeartbeatInterval &lt;interval&gt;</code></b>
+</a><br />In seconds. Defines the heartbeat interval in seconds which is used for testing the correct work of the connection to Mediaportal. A value of 0 deactivate the heartbeat-check. Defaults to "15".</li>
 <li><a name="MEDIAPORTAL_attribut_macaddress"><b><code>macaddress &lt;address&gt;</code></b>
 </a><br />Sets the MAC-Address for the Player. This is needed for WakeUp-Function. e.g. "90:E6:BA:C2:96:15"</li>
 </ul></li>
@@ -859,8 +1082,12 @@ sub MEDIAPORTAL_Log($$$) {
 <h4>Attribute</h4>
 <ul>
 <li><b>Grundsätzliches</b><ul>
+<li><a name="MEDIAPORTAL_attribut_disable"><b><code>disable &lt;value&gt;</code></b>
+</a><br />Eins aus (0, 1). Mit diesem Attribut kann das Modul deaktiviert werden.</li>
 <li><a name="MEDIAPORTAL_attribut_generateNowPlayingUpdateEvents"><b><code>generateNowPlayingUpdateEvents &lt;value&gt;</code></b>
 </a><br />Eins aus (0, 1). Mit diesem Attribut kann die Erzeugung eines <code>NowPlayingUpdate</code>-Events an- oder abgeschaltet werden. Wenn auf "1" gesetzt, generiert Fhem ein Event pro Sekunde mit den angepassten Zeitangaben. Standard ist "0".</li>
+<li><a name="MEDIAPORTAL_attribut_HeartbeatInterval"><b><code>HeartbeatInterval &lt;intervall&gt;</code></b>
+</a><br />In Sekunden. Legt das Intervall für die Prüfung der Verbindung zu Mediaportal fest. Mit "0" kann die Prüfung deaktiviert werden. Wenn kein Wert angeggeben wird, wird "15" verwendet.</li>
 <li><a name="MEDIAPORTAL_attribut_macaddress"><b><code>macaddress &lt;address&gt;</code></b>
 </a><br />Gibt die Mac-Adresse des Mediaportal-Rechners an. Das wird für die WakeUp-Funktionalität benötigt. z.B. "90:E6:BA:C2:96:15"</li>
 </ul></li>

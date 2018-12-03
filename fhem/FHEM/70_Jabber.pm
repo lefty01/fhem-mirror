@@ -1,4 +1,5 @@
 ##############################################################################
+# $Id: 70_Jabber.pm 12904 2016-12-29 12:44:32Z BioS $
 #
 #     70_Jabber.pm
 #     An FHEM Perl module for connecting to an Jabber XMPP Server and 
@@ -22,9 +23,11 @@
 #     You should have received a copy of the GNU General Public License
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
-# Version: 1.5 - 2015-09-17
+# Version: 1.7 - 2016-12-29
 #
 # Changelog:
+# v1.7 2016-12-29 Added possibility to change componentname via attr JabberDomain (thx Turbokid)
+# v1.6 2016-07-10 Fix log message if otr message is empty (thx spikeh1)
 # v1.5 2015-09-17 Added OTR (Off the Record) end to end encryption
 #                 Added MUC (Multi-User-Channel) joining and handling
 # v1.4 2015-08-27 Fixed broken callback registration in Net::XMPP >= 1.04
@@ -85,7 +88,7 @@ Jabber_Initialize($)
   $hash->{DefFn}      = "Jabber_Define";
   $hash->{UndefFn}    = "Jabber_UnDef";
   $hash->{AttrFn}     = "Jabber_Attr";
-  $hash->{AttrList}   = "dummy:1,0 loglevel:0,1,2,3,4,5 OnlineStatus:available,unavailable PollTimer RecvWhitelist ResourceName MucJoin MucRecvWhitelist OTREnable OTRSharedSecret ".$readingFnAttributes;
+  $hash->{AttrList}   = "dummy:1,0 loglevel:0,1,2,3,4,5 OnlineStatus:available,unavailable PollTimer RecvWhitelist ResourceName MucJoin MucRecvWhitelist OTREnable OTRSharedSecret JabberDomain ".$readingFnAttributes;
 }
 
 ###################################
@@ -301,6 +304,9 @@ Jabber_Attr(@)
       }
     } elsif ($aName eq "OTRSharedSecret") {
       #Nothing special to do will be used later..
+    } elsif ($aName eq "JabberDomain" && $init_done) {
+      #restart connection...
+      $hash->{JabberDevice}->Disconnect();
     }
   }
 	return undef;
@@ -544,13 +550,19 @@ sub Jabber_CheckConnection($)
   }
 
   if (!$hash->{JabberDevice}->Connected()) {
+
+    my $componentname = $hash->{helper}{server};
+    if(exists($attr{$name}{JabberDomain}) && $attr{$name}{JabberDomain} ne '') {
+       $componentname = $attr{$name}{JabberDomain};
+    }
     
+
     my $connectionstatus = $hash->{JabberDevice}->Connect(
                             hostname=>$hash->{helper}{server}, 
                             port=>$hash->{helper}{port}, 
                             tls=>$hash->{helper}{tls},
                             ssl=>$hash->{helper}{ssl},
-                            componentname=>$hash->{helper}{server}
+                            componentname=>$componentname
                             );
                             
     if (!defined($connectionstatus)) {
@@ -671,7 +683,7 @@ sub Jabber_INC_Message {
     #When we have got no message after the OTR decrypt, we can leave this function.
 
     if (!defined($message) || $message eq "") {
-      Log 0, "$hash->{NAME} Message is empty after OTR decrypt.";
+      Log 0, "$hash->{NAME} Message is empty after OTR decrypt." if $debug;
       return undef;
     }
 
@@ -952,6 +964,9 @@ sub Jabber_OTR_disconnected {
 
 
 =pod
+=item device
+=item summary connect FHEM to the Jabber Network, send and receiving messages
+=item summary_DE verbindet FHEM and Jabber Netz, kann Nachrichten senden und empfangen
 =begin html
 
 <a name="Jabber"></a>

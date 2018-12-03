@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 91_notify.pm 17225 2018-08-29 12:34:29Z rudolfkoenig $
 package main;
 
 use strict;
@@ -15,8 +15,20 @@ notify_Initialize($)
   $hash->{DefFn} = "notify_Define";
   $hash->{NotifyFn} = "notify_Exec";
   $hash->{AttrFn}   = "notify_Attr";
-  $hash->{AttrList} ="disable:1,0 disabledForIntervals forwardReturnValue:1,0 ".
-                     "readLog:1,0 showtime:1,0 addStateEvent:1,0";
+  no warnings 'qw';
+  my @attrList = qw(
+    addStateEvent:1,0
+    disable:1,0
+    disabledForIntervals
+    disabledAfterTrigger
+    forwardReturnValue:1,0
+    ignoreRegexp
+    readLog:1,0
+    showtime:1,0
+  );
+  use warnings 'qw';
+  $hash->{AttrList} = join(" ", @attrList);
+
   $hash->{SetFn}    = "notify_Set";
   $hash->{StateFn}  = "notify_State";
   $hash->{FW_detailFn} = "notify_fhemwebFn";
@@ -28,7 +40,7 @@ sub
 notify_Define($$)
 {
   my ($hash, $def) = @_;
-  my ($name, $type, $re, $command) = split("[ \t]+", $def, 4);
+  my ($name, $type, $re, $command) = split("[ \t\n]+", $def, 4);
 
   if(!$command) {
     if($hash->{OLDDEF}) { # Called from modify, where command is optional
@@ -44,11 +56,19 @@ notify_Define($$)
   eval { "Hallo" =~ m/^$re$/ };
   return "Bad regexp: $@" if($@);
   $hash->{REGEXP} = $re;
+  my %specials= (
+    "%NAME" => $name,
+    "%TYPE" => $name,
+    "%EVENT" => "1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0",
+    "%SELF" => $name,
+  );
+  my $err = perlSyntaxCheck($command, %specials);
+  return $err if($err);
   $hash->{".COMMAND"} = $command;
 
   my $doTrigger = ($name !~ m/^$re$/);            # Forum #34516
   readingsSingleUpdate($hash, "state", "active", $doTrigger);
-  notifyRegexpChanged($hash, $re);
+  InternalTimer(0, sub(){  notifyRegexpChanged($hash, $re); }, $hash);
 
   return undef;
 }
@@ -62,8 +82,13 @@ notify_Exec($$)
   my $ln = $ntfy->{NAME};
   return "" if(IsDisabled($ln));
 
+  my $now = gettimeofday();
+  my $dat = AttrVal($ln, "disabledAfterTrigger", 0);
+  return "" if($ntfy->{TRIGGERTIME} && $now < $ntfy->{TRIGGERTIME}+$dat);
+
   my $n = $dev->{NAME};
   my $re = $ntfy->{REGEXP};
+  my $iRe = AttrVal($ln, "ignoreRegexp", undef);
   my $events = deviceEvents($dev, AttrVal($ln, "addStateEvent", 0));
   return if(!$events); # Some previous notify deleted the array.
   my $max = int(@{$events});
@@ -73,7 +98,7 @@ notify_Exec($$)
   for (my $i = 0; $i < $max; $i++) {
     my $s = $events->[$i];
     $s = "" if(!defined($s));
-    my $found = ($n =~ m/^$re$/ || "$n:$s" =~ m/^$re$/);
+    my $found = ($n =~ m/^$re$/ || "$n:$s" =~ m/^$re$/s);
     if(!$found && AttrVal($n, "eventMap", undef)) {
       my @res = ReplaceEventMap($n, [$n,$s], 0);
       shift @res;
@@ -81,6 +106,7 @@ notify_Exec($$)
       $found = ("$n:$s" =~ m/^$re$/);
     }
     if($found) {
+      next if($iRe && ($n =~ m/^$iRe$/ || "$n:$s" =~ m/^$iRe$/));
       Log3 $ln, 5, "Triggering $ln";
       my %specials= (
                 "%NAME" => $n,
@@ -94,6 +120,7 @@ notify_Exec($$)
       my $r = AnalyzeCommandChain(undef, $exec);
       Log3 $ln, 3, "$ln return value: $r" if($r);
       $ret .= " $r" if($r);
+      $ntfy->{TRIGGERTIME} = $now;
       $ntfy->{STATE} =
         AttrVal($ln,'showtime',1) ? $dev->{NTFY_TRIGGERTIME} : 'active';
     }
@@ -125,6 +152,12 @@ notify_Attr(@)
     return;
   }
 
+  if($a[0] eq "set" && $a[2] eq "ignoreRegexp") {
+    return "Missing argument for ignoreRegexp" if(!defined($a[3]));
+    eval { "HALLO" =~ m/$a[3]/ };
+    return $@;
+  }
+
   if($a[0] eq "set" && $a[2] eq "disable") {
     $do = (!defined($a[3]) || $a[3]) ? 1 : 2;
   }
@@ -147,8 +180,11 @@ notify_Set($@)
   my %sets = (addRegexpPart=>2, removeRegexpPart=>1, inactive=>0, active=>0);
   
   my $cmd = $a[1];
-  return "Unknown argument $cmd, choose one of " # No dropdown in FHEMWEB
-    if(!defined($sets{$cmd}));
+  if(!defined($sets{$cmd})) {
+    my $ret ="Unknown argument $cmd, choose one of ".join(" ", sort keys %sets);
+    $ret =~ s/active/active:noArg/g;
+    return $ret;
+  }
   return "$cmd needs $sets{$cmd} parameter(s)" if(@a-$sets{$cmd} != 2);
 
   if($cmd eq "addRegexpPart") {
@@ -209,13 +245,15 @@ notify_fhemwebFn($$$$)
   my ($FW_wname, $d, $room, $pageHash) = @_; # pageHash is set for summaryFn.
   my $hash = $defs{$d};
 
-  my $ret .= "<br>Regexp wizard";
-  my $row=0;
-  $ret .= "<br><table class=\"block wide\">";
+  my $ret .= "<div class='makeTable wide'><span>Change wizard</span>".
+             "<table class='block wide'>";
+  my $row = 0;
   my @ra = split(/\|/, $hash->{REGEXP});
+  $ret .= "<tr class='".(($row++&1)?"odd":"even").
+        "'><td colspan='2'>Change the condition:</td></tr>";
   if(@ra > 1) {
     foreach my $r (@ra) {
-      $ret .= "<tr class=\"".(($row++&1)?"odd":"even")."\">";
+      $ret .= "<tr class='".(($row++&1)?"odd":"even")."'>";
       my $cmd = "cmd.X= set $d removeRegexpPart&val.X=$r"; # =.set: avoid JS
       $ret .= "<td>$r</td>";
       $ret .= FW_pH("$cmd&detail=$d", "removeRegexpPart", 1,undef,1);
@@ -225,9 +263,10 @@ notify_fhemwebFn($$$$)
 
   my @et = devspec2array("TYPE=eventTypes");
   if(!@et) {
+    $ret .= "<tr class='".(($row++&1)?"odd":"even")."'>";
     $ret .= FW_pH("$FW_ME/docs/commandref.html#eventTypes",
                   "To add a regexp an eventTypes definition is needed",
-                  1, undef, 1);
+                  1, undef, 1)."</tr>";
   } else {
     my %dh;
     my $etList = AnalyzeCommand(undef, "get $et[0] list");
@@ -252,15 +291,96 @@ notify_fhemwebFn($$$$)
     $ret .= FW_detailSelect($d, "set", $list, "addRegexpPart");
     $ret .= "</td></tr>";
   }
-  $ret .= "</table>";
+  my ($tr, $js) = notfy_addFWCmd($d, $hash->{REGEXP}, $row);
+  return "$ret$tr</table></div><br>$js";
+}
 
-  return $ret;
+sub
+notfy_addFWCmd($$$)
+{
+  my ($d, $param, $row) = @_;
+
+  my $ret="";
+  $ret .= "<tr class='".(($row++&1)?"odd":"even")."'><td colspan='2'>".
+                "&nbsp;</td></tr>";
+  $ret .= "<tr class='".(($row++&1)?"odd":"even")."'><td colspan='2'>".
+                "Change the executed command:</td></tr>";
+  $ret .= "<tr class='".(($row++&1)?"odd":"even")."'><td colspan='2'>";
+
+  my @list = grep { !$defs{$_}{TEMPORARY} && $_ ne $d && 
+                    $modules{$defs{$_}{TYPE}}{SetFn} } sort keys %defs;
+  $ret .= "<input class='set' id='modCmd' type='submit' value='modify' ".
+             "data-d='$d' data-p='$param'>";
+  $ret .= "<div class='set downText'>&nbsp;$d $param set </div>";
+  $ret .= FW_select("modDev", "mod", \@list, undef, "set");
+  $ret .= "<select class='set' id='modArg'></select>";
+  $ret .= "<input type='text' name='modVal' size='10'/>";
+  $ret .= "</td></tr>";
+
+  my $js = << 'END';
+<script>
+  var ntArr, ntDev;
+
+  function
+  ntfyCmd()
+  {
+    ntDev=$("#modDev").val();
+    FW_cmd(FW_root+
+      "?cmd="+addcsrf(encodeURIComponent("set "+ntDev+" ?"))+"&XHR=1",
+      function(ret) {
+        ret = ret.replace(/[\r\n]/g,'');
+        ntArr=ret.substr(ret.indexOf("choose one of")+14,ret.length).split(" ");
+        var str="";
+        for(var i1=0; i1<ntArr.length; i1++) {
+          var off = ntArr[i1].indexOf(":");
+          str += "<option value="+i1+">"+
+                    (off==-1 ? ntArr[i1] : ntArr[i1].substr(0,off))+
+                 "</option>";
+        }
+        $("#modArg").html(str);
+        ntfyArg();
+      });
+  }
+
+  function
+  ntfyArg()
+  {
+    var v=ntArr[$("#modArg").val()];
+    var vArr = [];
+    if(v.indexOf(":") > 0)
+      vArr = v.substr(v.indexOf(":")+1).split(",");
+    FW_replaceWidget($("#modArg").next(), ntDev, vArr);
+  }
+
+  function
+  ntfyGo()
+  {
+    var d=$("#modCmd").attr("data-d");
+    var p=$("#modCmd").attr("data-p");
+    var cmd = "modify "+d+" "+p+" set "+$("#modDev").val()+" "+
+              $("#modArg :selected").text()+" "+$("[name=modVal]").val();
+    location=FW_root+"?cmd="+addcsrf(encodeURIComponent(cmd))+"&detail="+d;
+  }
+  
+  $(document).ready(function(){
+    $("#modDev").change(ntfyCmd);
+    $("#modArg").change(ntfyArg);
+    $("#modCmd").click(ntfyGo);
+    $("#").change(ntfyArg);
+    ntfyCmd();
+  });
+</script>
+END
+
+  return ($ret, $js);
 }
 
 1;
 
 =pod
 =item helper
+=item summary    execute a command upon receiving an event
+=item summary_DE f&uuml;hrt bei Events Anweisungen aus
 =begin html
 
 <a name="notify"></a>
@@ -401,13 +521,18 @@ notify_fhemwebFn($$$$)
     <li><a href="#disable">disable</a></li>
     <li><a href="#disabledForIntervals">disabledForIntervals</a></li>
 
+    <a name="disabledAfterTrigger"></a>
+    <li>disabledAfterTrigger someSeconds<br>
+      disable the execution for someSeconds after it triggered.
+    </li>
+
     <a name="addStateEvent"></a>
     <li>addStateEvent<br>
       The event associated with the state Reading is special, as the "state: "
       string is stripped, i.e $EVENT is not "state: on" but just "on". In some
-      circumstances it is desireable to get an additional event where "state: "
-      is not stripped. In such a case the addStateEvent attribute should be
-      set to 1 (default is 0, i.e. do not generate an additional event).<br>
+      circumstances it is desireable to get the event without "state: "
+      stripped. In such a case the addStateEvent attribute should be set to 1
+      (default is 0, i.e. strip the "state: " string).<br>
 
       Note 1: you have to set this attribute for the event "receiver", i.e.
       notify, FileLog, etc.<br>
@@ -424,6 +549,13 @@ notify_fhemwebFn($$$$)
         FHEMWEB to display this value, when clicking "on" or "off", which is
         often not intended.</li>
 
+    <a name="ignoreRegexp"></a>
+    <li>ignoreRegexp regexp<br>
+        It is hard to create a regexp which is _not_ matching something, this
+        attribute helps in this case, as the event is ignored if matches the
+        argument. The syntax is the same as for the original regexp.
+        </li>
+
     <a name="readLog"></a>
     <li>readLog<br>
         Execute the notify for messages appearing in the FHEM Log. The device
@@ -433,6 +565,13 @@ notify_fhemwebFn($$$$)
           define n notify n:.*Server.started.* { Log 1, "Really" }<br>
           attr n readLog
         </code></ul>
+        </li>
+
+    <a name="perlSyntaxCheck"></a>
+    <li>perlSyntaxCheck<br>
+        by setting the <b>global</b> attribute perlSyntaxCheck, a syntax check
+        will be executed upon definition or modification, if the command is
+        perl and FHEM is already started.
         </li>
 
   </ul>
@@ -612,8 +751,8 @@ notify_fhemwebFn($$$$)
       Das mit dem state Reading verkn&uuml;pfte Event ist speziell, da das
       dazugeh&ouml;rige Prefix "state: " entfernt wird, d.h. $EVENT ist nicht
       "state: on", sondern nur "on". In manchen F&auml;llen ist es aber
-      erw&uuml;nscht ein zus&auml;tzliches Event zu bekommen, wo "state: " nicht
-      entfernt ist. F&uuml;r diese F&auml;lle sollte addStateEvent auf 1
+      erw&uuml;nscht das unmodifizierte Event zu bekommen, d.h. wo "state: "
+      nicht entfernt ist. F&uuml;r diese F&auml;lle sollte addStateEvent auf 1
       gesetzt werden, die Voreinstellung ist 0 (deaktiviert).<br>
 
       Achtung:
@@ -634,6 +773,14 @@ notify_fhemwebFn($$$$)
         Meldungen im Log zu haben.
         </li>
 
+    <a name="ignoreRegexp"></a>
+    <li>ignoreRegexp regexp<br>
+        Es ist nicht immer einfach ein Regexp zu bauen, was etwas _nicht_
+        matcht. Dieses Attribu hilft in diesen F&auml;llen: das Event wird
+        ignoriert, falls den angegebenen Regexp. Syntax ist gleich wie in der
+        Definition.
+        </li>
+
     <a name="readLog"></a>
     <li>readLog<br>
         Das notify wird f&uuml;r Meldungen, die im FHEM-Log erscheinen,
@@ -645,6 +792,14 @@ notify_fhemwebFn($$$$)
           attr n readLog
         </code></ul>
         </li>
+
+    <a name="perlSyntaxCheck"></a>
+    <li>perlSyntaxCheck<br>
+        nach setzen des <b>global</b> Attributes perlSyntaxCheck wird eine 
+        Syntax-Pr&uuml;fung der Anweisung durchgef&uuml;hrt bei jeder
+        &Auml;nderung (define oder modify), falls die Anweisung Perl ist, und
+        FHEM bereits gestartet ist.  </li>
+
   </ul>
   <br>
 

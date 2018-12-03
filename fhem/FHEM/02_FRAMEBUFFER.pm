@@ -5,7 +5,7 @@
 # based on 02_RSS.pm 
 #
 ##############################################
-# $Id$
+# $Id: 02_FRAMEBUFFER.pm 12126 2016-09-06 18:35:26Z kaihs $
 
 package main;
 use strict;
@@ -357,6 +357,8 @@ FRAMEBUFFER_returnPNG($) {
 
 
 =pod
+=item device
+=item summary Graphical display on a Linux framebuffer
 =begin html
 
 <a name="FRAMEBUFFER"></a>

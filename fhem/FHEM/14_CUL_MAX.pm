@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 14_CUL_MAX.pm 12440 2016-10-26 20:24:45Z mgehre $
 # Written by Matthias Gehre, M.Gehre@gmx.de, 2012-2013
 package main;
 
@@ -322,7 +322,7 @@ CUL_MAX_Parse($$)
         #This is a request for TimeInformation send to us
         Log3 $hash, 5, "Got request for TimeInformation, sending it";
         CUL_MAX_SendTimeInformation($shash, $src);
-      } else {
+      } elsif(length($payload) > 0) {
         my ($f1,$f2,$f3,$f4,$f5) = unpack("CCCCC",pack("H*",$payload));
         #For all fields but the month I'm quite sure
         my $year = $f1 + 2000;
@@ -351,7 +351,8 @@ CUL_MAX_Parse($$)
       }
 
       #If $isToMe is true, this device is already paired and just wants to be reacknowledged
-      if($shash->{pairmode} || $isToMe) {
+      #If we already have the device created but it was reseted (batteries changed?), we directly re-pair (without pairmode)
+      if($shash->{pairmode} || $isToMe || exists($modules{MAX}{defptr}{$src})) {
         Log3 $hash, 3, "CUL_MAX_Parse: " . ($isToMe ? "Re-Pairing" : "Pairing") . " device $src of type $device_types{$type} with serial $serial";
         Dispatch($shash, "MAX,$isToMe,define,$src,$device_types{$type},$serial,0", {});
 
@@ -488,7 +489,7 @@ CUL_MAX_SendQueueHandler($$)
     }
   }
   if($pktIdx == @{$hash->{sendQueue}} && !defined($responseToShutterContact)) {
-    Log3 $hash, 2, "There is a packet for ShutterContact $packetForShutterContactInQueue in queue. Please push the button on the respective ShutterContact so the packet can be send.";
+    Log3 $hash, 2, "There is a packet for ShutterContact $packetForShutterContactInQueue in queue. Please trigger a window action (open or close the window) to wake up the respective ShutterContact and let it receive the packet.";
     $timeout += 3;
     InternalTimer($timeout, "CUL_MAX_SendQueueHandler", $hash, 0);
     return undef;
@@ -513,8 +514,8 @@ CUL_MAX_SendQueueHandler($$)
       Log3 $hash, 5, "needPreamble: $needPreamble, necessaryCredit: $necessaryCredit, credit10ms: $credit10ms";
       if( defined($credit10ms) && $credit10ms < $necessaryCredit ) {
         my $waitTime = $necessaryCredit-$credit10ms; #we get one credit10ms every second
-        $timeout += $waitTime;
-        Log3 $hash, 2, "CUL_MAX_SendQueueHandler: Not enough credit! credit10ms is $credit10ms, but we need $necessaryCredit. Waiting $waitTime seconds.";
+        $timeout += $waitTime + 1;
+        Log3 $hash, 2, "CUL_MAX_SendQueueHandler: Not enough credit! credit10ms is $credit10ms, but we need $necessaryCredit. Waiting $waitTime seconds. Currently " . @{$hash->{sendQueue}} . " messages are waiting to be sent.";
       } else {
         #Update TimeInformation payload. It should reflect the current time when sending,
         #not the time when it was enqueued. A low credit10ms can defer such a packet for multiple
@@ -699,7 +700,9 @@ CUL_MAX_BroadcastTime(@)
 
 </ul>
 =end html
-
+=device
+=item summary Uses a CUL (or compatible) to control MAX! devices.
+=item summary_DE Benutzt einen CUL (oder kompatibles Gerät) um MAX! Geräte zu steuern.
 =begin html_DE
 
 <a name="CUL_MAX"></a>

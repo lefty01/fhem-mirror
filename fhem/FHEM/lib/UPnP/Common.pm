@@ -2,7 +2,7 @@
 #
 # Common.pm
 #
-# $Id$
+# $Id: Common.pm 10759 2016-02-07 20:00:12Z rleins $
 #
 # Now (in this version) part of Fhem.
 #

@@ -3,6 +3,7 @@
 # fhem bridge to MySensors (see http://mysensors.org)
 #
 # Copyright (C) 2014 Norbert Truchsess
+# Copyright (C) 2018 Hauswart@forum.fhem.de
 #
 #     This file is part of fhem.
 #
@@ -19,8 +20,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
-
-# $Id$
+# $Id: 10_MYSENSORS_DEVICE.pm 17611 2018-10-24 10:56:06Z Hauswart $
 #
 ##############################################
 
@@ -42,16 +42,18 @@ sub MYSENSORS_DEVICE_Initialize($) {
   $hash->{AttrFn}   = "MYSENSORS::DEVICE::Attr";
   
   $hash->{AttrList} =
-    "config:M,I ".
-    "mode:node,repeater ".
-    "version:1.4 ".
-    "setCommands ".
-    "setReading_.+ ".
-    "mapReadingType_.+ ".
-    "mapReading_.+ ".
-    "requestAck:1 ". 
-    "IODev ".
-    "showtime:0,1 ".
+    "config:M,I " .
+    "mode:node,repeater " .
+    "version:1.4 " .
+    "setCommands " .
+    "setReading_.+ " .
+    "mapReadingType_.+ " .
+    "mapReading_.+ " .
+    "requestAck:1 " . 
+    "timeoutAck " .
+    "timeoutAlive " .
+    "IODev " .
+    "showtime:0,1 " .
     $main::readingFnAttributes;
 
   main::LoadModule("MYSENSORS");
@@ -80,46 +82,52 @@ BEGIN {
     Log3
     SetExtensions
     ReadingsVal
+    InternalTimer
+    RemoveInternalTimer
   ))
 };
 
 my %static_types = (
   S_DOOR                  => { receives => [], sends => [V_TRIPPED,V_ARMED] }, # Door and window sensors
-  S_MOTION                => { receives => [], sends => [V_TRIPPED] }, # MotionSensor
+  S_MOTION                => { receives => [], sends => [V_TRIPPED,V_ARMED] }, # Motion sensors
   S_SMOKE                 => { receives => [], sends => [V_TRIPPED,V_ARMED] }, # Smoke sensor
-  S_LIGHT                 => { receives => [V_STATUS,V_WATT], sends => [V_STATUS,V_WATT] }, # Binary device (on/off), Alias for S_BINARY
+  S_BINARY                => { receives => [V_STATUS,V_WATT], sends => [V_STATUS,V_WATT] }, # Binary device (on/off)
   S_DIMMER                => { receives => [V_STATUS,V_PERCENTAGE,V_WATT], sends => [V_STATUS,V_PERCENTAGE,V_WATT] }, # Dimmable device of some kind
-  S_COVER                 => { receives => [V_UP,V_DOWN,V_STOP,V_PERCENTAGE], sends => [V_PERCENTAGE] }, # Window covers or shades
-  S_TEMP                  => { receives => [], sends => [V_TEMP] }, # Temperature sensor
+  S_COVER                 => { receives => [V_UP,V_DOWN,V_STOP,V_PERCENTAGE], sends => [V_UP,V_DOWN,V_STOP,V_PERCENTAGE] }, # Window covers or shades
+  S_TEMP                  => { receives => [], sends => [V_TEMP,V_ID] }, # Temperature sensor
   S_HUM                   => { receives => [], sends => [V_HUM] }, # Humidity sensor
   S_BARO                  => { receives => [], sends => [V_PRESSURE,V_FORECAST] }, # Barometer sensor (Pressure)
-  S_WIND                  => { receives => [], sends => [V_WIND,V_GUST] }, # Wind sensor
+  S_WIND                  => { receives => [], sends => [V_WIND,V_GUST,V_DIRECTION] }, # Wind sensor
   S_RAIN                  => { receives => [], sends => [V_RAIN,V_RAINRATE] }, # Rain sensor
-  S_UV                    => { receives => [], sends => [V_UV] }, # UV Sensor
+  S_UV                    => { receives => [], sends => [V_UV] }, # UV sensor
   S_WEIGHT                => { receives => [], sends => [V_WEIGHT,V_IMPEDANCE] }, # Weight sensor for scales etc.
-  S_POWER                 => { receives => [V_VAR1], sends => [V_WATT,V_KWH,VAR1] }, # Power measuring device, like power meters
-  S_HEATER                => { receives => [], sends => [V_HVAC_SETPOINT_HEAT,V_HVAC_FLOW_STATE,V_TEMP] }, # Heater device
-  S_DISTANCE              => { receives => [], sends => [V_DISTANCE] }, # Distance sensor
-  S_LIGHT_LEVEL           => { receives => [], sends => [V_LIGHT_LEVEL] }, # Light sensor
+  S_POWER                 => { receives => [V_VAR1], sends => [V_WATT,V_KWH,V_VAR,V_VA,V_POWER_FACTOR,V_VAR1] }, # Power measuring device, like power meters
+  S_HEATER                => { receives => [], sends => [V_HVAC_SETPOINT_HEAT,V_HVAC_FLOW_STATE,V_TEMP,V_STATUS] }, # Heater device
+  S_DISTANCE              => { receives => [], sends => [V_DISTANCE,V_UNIT_PREFIX] }, # Distance sensor
+  S_LIGHT_LEVEL           => { receives => [], sends => [V_LIGHT_LEVEL,V_LEVEL] }, # Light sensor
   S_ARDUINO_NODE          => { receives => [], sends => [] }, # Arduino node device
   S_ARDUINO_REPEATER_NODE => { receives => [], sends => [] }, # Arduino repeating node device
   S_LOCK                  => { receives => [V_LOCK_STATUS], sends => [V_LOCK_STATUS] }, # Lock device
-  S_IR                    => { receives => [V_IR_SEND], sends => [V_IR_RECEIVE] }, # Ir sender/receiver device
+  S_IR                    => { receives => [V_IR_SEND], sends => [V_IR_RECEIVE,V_IR_RECORD,V_IR_SEND] }, # Ir sender/receiver device
   S_WATER                 => { receives => [V_VAR1], sends => [V_FLOW,V_VOLUME,V_VAR1] }, # Water meter
   S_AIR_QUALITY           => { receives => [], sends => [V_LEVEL,V_UNIT_PREFIX] }, # Air quality sensor e.g. MQ-2
   S_CUSTOM                => { receives => [V_VAR1,V_VAR2,V_VAR3,V_VAR4,V_VAR5], sends => [V_VAR1,V_VAR2,V_VAR3,V_VAR4,V_VAR5] }, # Use this for custom sensors where no other fits.
   S_DUST                  => { receives => [], sends => [V_LEVEL,V_UNIT_PREFIX] }, # Dust level sensor
   S_SCENE_CONTROLLER      => { receives => [], sends => [V_SCENE_ON,V_SCENE_OFF] }, # Scene controller device
-  S_RGB_LIGHT             => { receives => [V_RGB,V_WATT], sends => [V_RGB,V_WATT] }, # RGB light
-  S_RGBW_LIGHT            => { receives => [V_RGBW,V_WATT], sends => [V_RGBW,V_WATT] }, # RGBW light (with separate white component)
+  S_RGB_LIGHT             => { receives => [V_RGB,V_WATT,V_PERCENTAGE], sends => [V_RGB,V_WATT,V_PERCENTAGE] }, # RGB light
+  S_RGBW_LIGHT            => { receives => [V_RGBW,V_WATT,V_PERCENTAGE], sends => [V_RGBW,V_WATT,V_PERCENTAGE] }, # RGBW light (with separate white component)
   S_COLOR_SENSOR          => { receives => [V_RGB], sends => [V_RGB] }, # Color sensor
-  S_HVAC                  => { receives => [], sends => [V_HVAC_SETPOINT_HEAT,V_HVAC_SETPOINT_COOL,V_HVAC_FLOW_STATE,V_HVAC_FLOW_MODE,V_HVAC_SPEED] }, # Thermostat/HVAC device
+  S_HVAC                  => { receives => [], sends => [V_STATUS,V_TEMP,V_HVAC_SETPOINT_HEAT,V_HVAC_SETPOINT_COOL,V_HVAC_FLOW_STATE,V_HVAC_FLOW_MODE,V_HVAC_SPEED] }, # Thermostat/HVAC device
   S_MULTIMETER            => { receives => [], sends => [V_VOLTAGE,V_CURRENT,V_IMPEDANCE] }, # Multimeter device
   S_SPRINKLER             => { receives => [], sends => [V_STATUS,V_TRIPPED] }, # Sprinkler device
   S_WATER_LEAK            => { receives => [], sends => [V_TRIPPED,V_ARMED] }, # Water leak sensor
   S_SOUND                 => { receives => [], sends => [V_LEVEL,V_TRIPPED,V_ARMED] }, # Sound sensor
   S_VIBRATION             => { receives => [], sends => [V_LEVEL,V_TRIPPED,V_ARMED] }, # Vibration sensor
   S_MOISTURE              => { receives => [], sends => [V_LEVEL,V_TRIPPED,V_ARMED] }, # Moisture sensor
+  S_INFO                  => { receives => [V_TEXT], sends => [V_TEXT] }, # LCD text device
+  S_GAS                   => { receives => [], sends => [V_FLOW,V_VOLUME] }, # Gas meter
+  S_GPS                   => { receives => [], sends => [V_POSITION] }, # GPS Sensor
+  S_WATER_QUALITY         => { receives => [], sends => [V_TEMP,V_PH,V_ORP,V_EC,V_STATUS] }, # Water quality sensor
 );
 
 my %static_mappings = (
@@ -176,6 +184,16 @@ my %static_mappings = (
   V_HVAC_SETPOINT_COOL => { type => "hvacsetpointcool" },
   V_HVAC_SETPOINT_HEAT => { type => "hvacsetpointheat" },
   V_HVAC_FLOW_MODE => { type => "hvacflowmode" },
+  V_TEXT 		=> { type => "text" },
+  V_CUSTOM 		=> { type => "custom" },
+  V_POSITION	=> { type => "position" },
+  V_IR_RECORD	=> { type => "ir_record" },
+  V_PH			=> { type => "ph" },
+  V_ORP			=> { type => "orp" },
+  V_EC			=> { type => "ec" },
+  V_VAR			=> { type => "value" },
+  V_VA			=> { type => "va" },
+  V_POWER_FACTOR => { type => "power_factor" },
 );
 
 sub Define($$) {
@@ -186,6 +204,7 @@ sub Define($$) {
   $hash->{sets} = {
     'time' => "",
     reboot => "",
+#    clear => "",
   };
   $hash->{ack} = 0;
   $hash->{typeMappings} = {map {variableTypeToIdx($_) => $static_mappings{$_}} keys %static_mappings};
@@ -197,7 +216,9 @@ sub Define($$) {
 
 sub UnDefine($) {
   my ($hash) = @_;
-
+  my $name = $hash->{NAME};
+  RemoveInternalTimer("timeoutAck:$name");
+  RemoveInternalTimer("timeoutAlive:$name");
   return undef;
 }
 
@@ -209,10 +230,13 @@ sub Set($@) {
     return grep (/(^on$)|(^off$)/,keys %{$hash->{sets}}) == 2 ? SetExtensions($hash, $list, $name, $command, @values) : "Unknown argument $command, choose one of $list";
   }
   COMMAND_HANDLER: {
-    $command eq "clear" and do {
-      sendClientMessage($hash, childId => 255, cmd => C_INTERNAL, subType => I_CHILDREN, payload => "C");
-      last;
-    };
+#    $command eq "clear" and do {
+#	  # Test 102 anstatt 255 :) und Log
+#      sendClientMessage($hash, childId => 255, cmd => C_INTERNAL, subType => I_CHILDREN, payload => "C");
+#	  Log3 ($name,3,"MYSENSORS_DEVICE $name: clear");
+#	  # Test
+#      last;
+#    };
     $command eq "time" and do {
       sendClientMessage($hash, childId => 255, cmd => C_INTERNAL, subType => I_TIME, payload => time);
       last;
@@ -231,8 +255,8 @@ sub Set($@) {
           subType => $type,
           payload => $mappedValue,
         );
-        readingsSingleUpdate($hash,$setcommand->{var},$setcommand->{val},1) unless ($hash->{ack} or $hash->{IODev}->{ack});
-      };
+	readingsSingleUpdate($hash,$setcommand->{var},$setcommand->{val},1) unless ($hash->{ack} or $hash->{IODev}->{ack});
+	};
       return "$command not defined: ".GP_Catch($@) if $@;
       last;
     };
@@ -260,10 +284,10 @@ sub Attr($$$$) {
     $attribute eq "mode" and do {
       if ($command eq "set" and $value eq "repeater") {
         $hash->{repeater} = 1;
-        $hash->{sets}->{clear} = "";
+#       $hash->{sets}->{clear} = "";
       } else {
         $hash->{repeater} = 0;
-        delete $hash->{sets}->{clear};
+#       delete $hash->{sets}->{clear};
       }
       last;
     };
@@ -365,11 +389,29 @@ sub Attr($$$$) {
       }
       last;
     };
+	$attribute eq "timeoutAck" and do {
+		if ($command eq "set") {
+			$hash->{timeoutAck} = $value;
+		} else {
+			$hash->{timeoutAck} = 0;
+		}
+		last;
+	};
+	$attribute eq "timeoutAlive" and do {
+		if ($command eq "set" and $value) {
+			$hash->{timeoutAlive} = $value;
+			refreshInternalMySTimer($hash,"Alive");
+		} else {
+			$hash->{timeoutAlive} = 0;
+		}
+		last;
+	};
   }
 }
 
 sub onGatewayStarted($) {
-  my ($hash) = @_;
+	my ($hash) = @_;
+	refreshInternalMySTimer($hash,"Alive") if ($hash->{timeoutAlive});
 }
 
 sub onPresentationMessage($$) {
@@ -425,36 +467,38 @@ sub onPresentationMessage($$) {
         push @ret,"no setReading for $id, $typeStr";
       }
     }
-    Log3 ($hash->{NAME},4,"MYSENSORS_DEVICE $hash->{NAME}: errors on C_PRESENTATION-message for childId $id, subType ".sensorTypeToStr($nodeType)." ".join (", ",@ret)) if @ret;
+    Log3 ($hash->{NAME}, 4, "MYSENSORS_DEVICE $hash->{NAME}: errors on C_PRESENTATION-message for childId $id, subType ".sensorTypeToStr($nodeType)." ".join (", ",@ret)) if @ret;
   }
 }
 
 sub onSetMessage($$) {
-  my ($hash,$msg) = @_;
-  if (defined $msg->{payload}) {
-    eval {
-      my ($reading,$value) = rawToMappedReading($hash,$msg->{subType},$msg->{childId},$msg->{payload});
-      readingsSingleUpdate($hash,$reading,$value,1);
-    };
-    Log3 ($hash->{NAME},4,"MYSENSORS_DEVICE $hash->{NAME}: ignoring C_SET-message ".GP_Catch($@)) if $@;
-  } else {
-    Log3 ($hash->{NAME},5,"MYSENSORS_DEVICE $hash->{NAME}: ignoring C_SET-message without payload");
-  }
+	my ($hash,$msg) = @_;
+	my $name = $hash->{NAME};
+	if (defined $msg->{payload}) {
+		eval {
+			my ($reading,$value) = rawToMappedReading($hash,$msg->{subType},$msg->{childId},$msg->{payload});
+			readingsSingleUpdate($hash, $reading, $value, 1);
+		};
+		Log3 ($hash->{NAME}, 4, "MYSENSORS_DEVICE $hash->{NAME}: ignoring C_SET-message ".GP_Catch($@)) if $@;
+		refreshInternalMySTimer($hash,"Alive") if $hash->{timeoutAlive};
+	} else {
+		Log3 ($hash->{NAME}, 5, "MYSENSORS_DEVICE $hash->{NAME}: ignoring C_SET-message without payload");
+	};
 }
 
 sub onRequestMessage($$) {
-  my ($hash,$msg) = @_;
-
-  eval {
-    my ($readingname,$val) = rawToMappedReading($hash, $msg->{subType}, $msg->{childId}, $msg->{payload});
-    sendClientMessage($hash,
-      childId => $msg->{childId},
-      cmd => C_SET,
-      subType => $msg->{subType},
-      payload => ReadingsVal($hash->{NAME},$readingname,$val)
-    );
-  };
-  Log3 ($hash->{NAME},4,"MYSENSORS_DEVICE $hash->{NAME}: ignoring C_REQ-message ".GP_Catch($@)) if $@;
+	my ($hash,$msg) = @_;
+	eval {
+		my ($readingname,$val) = rawToMappedReading($hash, $msg->{subType}, $msg->{childId}, $msg->{payload});
+		sendClientMessage($hash,
+			childId => $msg->{childId},
+			cmd => C_SET,
+			subType => $msg->{subType},
+			payload => ReadingsVal($hash->{NAME},$readingname,$val)
+		);
+	};
+	refreshInternalMySTimer($hash,"Alive") if $hash->{timeoutAlive};
+	Log3 ($hash->{NAME}, 4, "MYSENSORS_DEVICE $hash->{NAME}: ignoring C_REQ-message ".GP_Catch($@)) if $@;
 }
 
 sub onInternalMessage($$) {
@@ -464,16 +508,16 @@ sub onInternalMessage($$) {
   my $typeStr = internalMessageTypeToStr($type);
   INTERNALMESSAGE: {
     $type == I_BATTERY_LEVEL and do {
-      readingsSingleUpdate($hash,"batterylevel",$msg->{payload},1);
-      Log3 ($name,4,"MYSENSORS_DEVICE $name: batterylevel $msg->{payload}");
+      readingsSingleUpdate($hash, "batterylevel", $msg->{payload}, 1);
+      Log3 ($name, 4, "MYSENSORS_DEVICE $name: batterylevel $msg->{payload}");
       last;
     };
     $type == I_TIME and do {
       if ($msg->{ack}) {
-        Log3 ($name,4,"MYSENSORS_DEVICE $name: response to time-request acknowledged");
+        Log3 ($name, 4, "MYSENSORS_DEVICE $name: response to time-request acknowledged");
       } else {
         sendClientMessage($hash,cmd => C_INTERNAL, childId => 255, subType => I_TIME, payload => time);
-        Log3 ($name,4,"MYSENSORS_DEVICE $name: update of time requested");
+        Log3 ($name, 4, "MYSENSORS_DEVICE $name: update of time requested");
       }
       last;
     };
@@ -495,11 +539,11 @@ sub onInternalMessage($$) {
     };
     $type == I_CONFIG and do {
       if ($msg->{ack}) {
-        Log3 ($name,4,"MYSENSORS_DEVICE $name: response to config-request acknowledged");
+        Log3 ($name, 4, "MYSENSORS_DEVICE $name: response to config-request acknowledged");
       } else {
-        readingsSingleUpdate($hash,"parentId",$msg->{payload},1);
+        readingsSingleUpdate($hash, "parentId", $msg->{payload}, 1);
         sendClientMessage($hash,cmd => C_INTERNAL, childId => 255, subType => I_CONFIG, payload => AttrVal($name,"config","M"));
-        Log3 ($name,4,"MYSENSORS_DEVICE $name: respond to config-request, node parentId = " . $msg->{payload});
+        Log3 ($name, 4, "MYSENSORS_DEVICE $name: respond to config-request, node parentId = " . $msg->{payload});
       }
       last;
     };
@@ -516,18 +560,18 @@ sub onInternalMessage($$) {
       last;
     };
     $type == I_CHILDREN and do {
-      readingsSingleUpdate($hash,"state","routingtable cleared",1);
-      Log3 ($name,4,"MYSENSORS_DEVICE $name: routingtable cleared");
+      readingsSingleUpdate($hash, "state", "routingtable cleared", 1);
+      Log3 ($name, 3, "MYSENSORS_DEVICE $name: routingtable cleared");
       last;
     };
     $type == I_SKETCH_NAME and do {
       $hash->{$typeStr} = $msg->{payload};
-      readingsSingleUpdate($hash,"SKETCH_NAME",$msg->{payload},1);
+      readingsSingleUpdate($hash, "SKETCH_NAME", $msg->{payload}, 1);
       last;
     };
     $type == I_SKETCH_VERSION and do {
       $hash->{$typeStr} = $msg->{payload};
-      readingsSingleUpdate($hash,"SKETCH_VERSION",$msg->{payload},1);
+      readingsSingleUpdate($hash, "SKETCH_VERSION", $msg->{payload}, 1);
       last;
     };
     $type == I_REBOOT and do {
@@ -554,10 +598,15 @@ sub onInternalMessage($$) {
 }
 
 sub sendClientMessage($%) {
-  my ($hash,%msg) = @_;
-  $msg{radioId} = $hash->{radioId};
-  $msg{ack} = $hash->{ack} unless defined $msg{ack};
-  sendMessage($hash->{IODev},%msg);
+	my ($hash,%msg) = @_;
+	$msg{radioId} = $hash->{radioId};
+	$msg{ack} = $hash->{ack} unless defined $msg{ack};
+	sendMessage($hash->{IODev},%msg);
+	refreshInternalMySTimer($hash,"Ack") if (($hash->{ack} or $hash->{IODev}->{ack}) and $hash->{timeoutAck}) ; 
+}
+
+sub onStreamMessage($$) {
+	my ($hash, $msg) = @_;
 }
 
 sub rawToMappedReading($$$$) {
@@ -591,79 +640,108 @@ sub mappedReadingToRaw($$$) {
   die "no mapping for reading $reading";
 }
 
+sub refreshInternalMySTimer($$) {
+	my ($hash,$calltype) = @_;
+	my $name = $hash->{NAME};
+	Log3 $name, 5, "$name: refreshInternalMySTimer called ($calltype)";
+	if ($calltype eq "Alive") {
+		RemoveInternalTimer("timeoutAlive:$name");
+		my $nextTrigger = main::gettimeofday() + $hash->{timeoutAlive};
+		InternalTimer($nextTrigger, "MYSENSORS::DEVICE::timeoutMySTimer", "timeoutAlive:$name", 0);
+			if ($hash->{STATE} ne "NACK" or $hash->{STATE} eq "NACK" and @{$hash->{IODev}->{messagesForRadioId}->{$hash->{radioId}}->{messages}} == 0) {
+				my $do_trigger = $hash->{STATE} ne "alive" ? 1 : 0;
+				readingsSingleUpdate($hash,"state","alive",$do_trigger);
+			}
+	} elsif ($calltype eq "Ack") {
+		RemoveInternalTimer("timeoutAck:$name");
+		my $nextTrigger = main::gettimeofday() + $hash->{timeoutAck};
+		InternalTimer($nextTrigger, "MYSENSORS::DEVICE::timeoutMySTimer", "timeoutAck:$name", 0);
+		Log3 $name, 4, "$name: Ack timeout timer set at $nextTrigger";
+	}
+}
+
+sub timeoutMySTimer($) {
+	my ($calltype, $name) = split(':', $_[0]);
+	my $hash = $main::defs{$name};
+	Log3 $name, 5, "$name: timeoutMySTimer called ($calltype)";
+	if ($calltype eq "timeoutAlive") {
+		readingsSingleUpdate($hash,"state","dead",1) unless ($hash->{STATE} eq "NACK");
+	} elsif ($calltype eq "timeoutAck") {
+		#readingsSingleUpdate($hash,"state","timeoutAck passed",1);# if ($hash->{STATE} eq "NACK");
+		if ($hash->{IODev}->{outstandingAck} == 0) {
+			Log3 $name, 4, "$name: timeoutMySTimer called ($calltype), no outstanding Acks at all";
+			readingsSingleUpdate($hash,"state","alive",1) if ($hash->{STATE} eq "NACK");
+		} elsif (@{$hash->{IODev}->{messagesForRadioId}->{$hash->{radioId}}->{messages}}) {
+			Log3 $name, 4, "$name: timeoutMySTimer called ($calltype), outstanding: $hash->{IODev}->{messagesForRadioId}->{$hash->{radioId}}->{messages}";
+			readingsSingleUpdate($hash,"state","NACK",1) ;
+		} else {
+			Log3 $name, 4, "$name: timeoutMySTimer called ($calltype), no outstanding Acks for Node";
+			readingsSingleUpdate($hash,"state","alive",1) if ($hash->{STATE} eq "NACK");
+		}
+	}
+}
+
 1;
 
 =pod
+=item device
+=item summary includes MYSENSOR clients
+=item summary_DE integriert MYSENSOR Sensoren
+
 =begin html
 
 <a name="MYSENSORS_DEVICE"></a>
 <h3>MYSENSORS_DEVICE</h3>
 <ul>
-  <p>represents a mysensors sensor attached to a mysensor-node</p>
-  <p>requires a <a href="#MYSENSOR">MYSENSOR</a>-device as IODev</p>
-  <a name="MYSENSORS_DEVICEdefine"></a>
-  <p><b>Define</b></p>
-  <ul>
-    <p><code>define &lt;name&gt; MYSENSORS_DEVICE &lt;Sensor-type&gt; &lt;node-id&gt;</code><br/>
-      Specifies the MYSENSOR_DEVICE device.</p>
-  </ul>
-  <a name="MYSENSORS_DEVICEset"></a>
-  <p><b>Set</b></p>
-  <ul>
-    <li>
-      <p><code>set &lt;name&gt; clear</code><br/>
-         clears routing-table of a repeater-node</p>
-    </li>
-    <li>
-      <p><code>set &lt;name&gt; time</code><br/>
-         sets time for nodes (that support it)</p>
-    </li>
-    <li>
-      <p><code>set &lt;name&gt; reboot</code><br/>
-         reboots a node (requires a bootloader that supports it).<br/>
-         Attention: Nodes that run the standard arduino-bootloader will enter a bootloop!<br/>
-         Dis- and reconnect the nodes power to restart in this case.</p>
-    </li>
-  </ul>
-  <a name="MYSENSORS_DEVICEattr"></a>
-  <p><b>Attributes</b></p>
-  <ul>
-    <li>
-      <p><code>attr &lt;name&gt; config [&lt;M|I&gt;]</code><br/>
-         configures metric (M) or inch (I). Defaults to 'M'</p>
-    </li>
-    <li>
-      <p><code>attr &lt;name&gt; setCommands [&lt;command:reading:value&gt;]*</code><br/>
-         configures one or more commands that can be executed by set.<br/>
-         e.g.: <code>attr &lt;name&gt; setCommands on:switch_1:on off:switch_1:off</code><br/>
-         if list of commands contains both 'on' and 'off' <a href="#setExtensions">set extensions</a> are supported</p>
-    </li>
-    <li>
-      <p><code>attr &lt;name&gt; setReading_&lt;reading&gt; [&lt;value&gt;]*</code><br/>
-         configures a reading that can be modified by set-command<br/>
-         e.g.: <code>attr &lt;name&gt; setReading_switch_1 on,off</code></p>
-    </li>
-    <li>
-      <p><code>attr &lt;name&gt; mapReading_&lt;reading&gt; &lt;childId&gt; &lt;readingtype&gt; [&lt;value&gt;:&lt;mappedvalue&gt;]*</code><br/>
-         configures the reading-name for a given childId and sensortype<br/>
-         E.g.: <code>attr xxx mapReading_aussentemperatur 123 temperature</code></p>
-    </li>
-    <li>
-      <p><code>att &lt;name&gt; requestAck</code><br/>
-         request acknowledge from nodes.<br/>
-         if set the Readings of nodes are updated not before requested acknowledge is received<br/>
-         if not set the Readings of nodes are updated immediatly (not awaiting the acknowledge).<br/>
-         May also be configured on the gateway for all nodes at once</p>
-    </li>
-    <li>
-      <p><code>attr &lt;name&gt; mapReadingType_&lt;reading&gt; &lt;new reading name&gt; [&lt;value&gt;:&lt;mappedvalue&gt;]*</code><br/>
-         configures reading type names that should be used instead of technical names<br/>
-         E.g.: <code>attr xxx mapReadingType_LIGHT switch 0:on 1:off</code>
-         to be used for mysensor Variabletypes that have no predefined defaults (yet)</p>
-    </li>
-  </ul>
+	<p>represents a mysensors sensor attached to a mysensor-node</p>
+	<p>requires a <a href="#MYSENSOR">MYSENSOR</a>-device as IODev</p>
+	<a name="MYSENSORS_DEVICE define"></a>
+	<p><b>Define</b></p>
+	<ul>
+		<p><code>define &lt;name&gt; MYSENSORS_DEVICE &lt;Sensor-type&gt; &lt;node-id&gt;</code><br/>Specifies the MYSENSOR_DEVICE device.</p>
+	</ul>
+	<a name="MYSENSORS_DEVICEset"></a>
+	<p><b>Set</b></p>
+	<ul>
+		<li>
+			<p><code>set &lt;name&gt; clear</code><br/>clears routing-table of a repeater-node</p>
+		</li>
+		<li>
+			<p><code>set &lt;name&gt; time</code><br/>sets time for nodes (that support it)</p>
+		</li>
+		<li>
+			<p><code>set &lt;name&gt; reboot</code><br/>reboots a node (requires a bootloader that supports it).<br/>Attention: Nodes that run the standard arduino-bootloader will enter a bootloop!<br/>Dis- and reconnect the nodes power to restart in this case.</p>
+		</li>
+	</ul>
+	<a name="MYSENSORS_DEVICEattr"></a>
+	<p><b>Attributes</b></p>
+	<ul>
+		<li>
+			<p><code>attr &lt;name&gt; config [&lt;M|I&gt;]</code><br/>configures metric (M) or inch (I). Defaults to 'M'</p>
+		</li>
+		<li>
+			<p><code>attr &lt;name&gt; setCommands [&lt;command:reading:value&gt;]*</code><br/>configures one or more commands that can be executed by set.<br/>e.g.: <code>attr &lt;name&gt; setCommands on:switch_1:on off:switch_1:off</code><br/>if list of commands contains both 'on' and 'off' <a href="#setExtensions">set extensions</a> are supported</p>
+		</li>
+		<li>
+			<p><code>attr &lt;name&gt; setReading_&lt;reading&gt; [&lt;value&gt;]*</code><br/>configures a reading that can be modified by set-command<br/>e.g.: <code>attr &lt;name&gt; setReading_switch_1 on,off</code></p>
+		</li>
+		<li>
+			<p><code>attr &lt;name&gt; mapReading_&lt;reading&gt; &lt;childId&gt; &lt;readingtype&gt; [&lt;value&gt;:&lt;mappedvalue&gt;]*</code><br/>configures the reading-name for a given childId and sensortype<br/>e.g.: <code>attr xxx mapReading_aussentemperatur 123 temperature</code></p>
+		</li>
+		<li>
+			<p><code>att &lt;name&gt; requestAck</code><br/>request acknowledge from nodes.<br/>if set the Readings of nodes are updated not before requested acknowledge is received<br/>if not set the Readings of nodes are updated immediatly (not awaiting the acknowledge).<br/>May also be configured on the gateway for all nodes at once</p>
+		</li>
+		<li>
+			<p><code>attr &lt;name&gt; mapReadingType_&lt;reading&gt; &lt;new reading name&gt; [&lt;value&gt;:&lt;mappedvalue&gt;]*</code><br/>configures reading type names that should be used instead of technical names<br/>e.g.: <code>attr xxx mapReadingType_LIGHT switch 0:on 1:off</code>to be used for mysensor Variabletypes that have no predefined defaults (yet)</p>
+		</li>
+		<li>
+			<p><code>attr &lt;name&gt; timeoutAck &lt;time in seconds&gt;*</code><br/>configures timeout to set device state to NACK in case not all requested acks are received</p>
+		</li>
+		<li>
+			<p><code>attr &lt;name&gt; timeoutAlive &lt;time in seconds&gt;*</code><br/>configures timeout to set device state to alive or dead. If messages from node are received within timout spec, state will be alive, otherwise dead. If state is NACK (in case timeoutAck is also set), state will only be changed to alive, if there are no outstanding messages to be sent.</p>
+		</li>
+</ul>
 </ul>
 
 =end html
 =cut
-

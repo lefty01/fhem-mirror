@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 10_MAX.pm 16847 2018-06-10 18:42:19Z rudolfkoenig $
 # Written by Matthias Gehre, M.Gehre@gmx.de, 2012-2013
 #
 package main;
@@ -685,6 +685,7 @@ MAX_Parse($$)
 
     readingsBulkUpdate($shash, "mode", $ctrl_modes[$mode] );
     readingsBulkUpdate($shash, "battery", $batterylow ? "low" : "ok");
+    readingsBulkUpdate($shash, "batteryState", $batterylow ? "low" : "ok"); # Forum #87575
     #The formatting of desiredTemperature must match with in MAX_Set:$templist
     #Sometime we get an MAX_Parse MAX,1,ThermostatState,01090d,180000000000, where desiredTemperature is 0 - ignore it
     readingsBulkUpdate($shash, "desiredTemperature", MAX_SerializeTemperature($desiredTemperature)) if($desiredTemperature != 0);
@@ -721,6 +722,9 @@ MAX_Parse($$)
       if(defined($null2) and ($null1 != 0 or $null2 != 0)) {
         $untilStr = MAX_ParseDateTime($null1,$heaterTemperature,$null2)->{str};
         $heaterTemperature = "";
+        $shash->{until} = "$untilStr";
+      } else {
+        delete($shash->{until});
       }
       $heaterTemperature = "" if(!defined($heaterTemperature));
 
@@ -728,6 +732,7 @@ MAX_Parse($$)
       $shash->{rferror} = $rferror;
       readingsBulkUpdate($shash, "mode", $ctrl_modes[$mode] );
       readingsBulkUpdate($shash, "battery", $batterylow ? "low" : "ok");
+      readingsBulkUpdate($shash, "batteryState", $batterylow ? "low" : "ok"); # Forum #87575
       readingsBulkUpdate($shash, "displayActualTemperature", ($displayActualTemperature) ? 1 : 0);
     } else {
       Log3 $hash, 2, "Invalid $msgtype packet"
@@ -756,6 +761,7 @@ MAX_Parse($$)
     $shash->{rferror} = $rferror;
 
     readingsBulkUpdate($shash, "battery", $batterylow ? "low" : "ok");
+    readingsBulkUpdate($shash, "batteryState", $batterylow ? "low" : "ok"); # Forum #87575
     readingsBulkUpdate($shash,"onoff",$isopen);
 
   }elsif($msgtype eq "PushButtonState") {
@@ -766,6 +772,7 @@ MAX_Parse($$)
     my $batterylow = vec($bits2, 7, 1); #1 if battery is low
 
     readingsBulkUpdate($shash, "battery", $batterylow ? "low" : "ok");
+    readingsBulkUpdate($shash, "batteryState", $batterylow ? "low" : "ok"); # Forum #87575
     readingsBulkUpdate($shash, "onoff", $onoff);
     readingsBulkUpdate($shash, "connection", $gateway);
 
@@ -903,6 +910,9 @@ MAX_DbLog_splitFn($)
 1;
 
 =pod
+=item device
+=item summary controls an MAX! device
+=item summary_DE Steuerung eines MAX! Geräts
 =begin html
 
 <a name="MAX"></a>
@@ -1032,6 +1042,7 @@ MAX_DbLog_splitFn($)
     <li>desiredTemperature<br>Only for HeatingThermostat and WallMountedThermostat</li>
     <li>valveposition<br>Only for HeatingThermostat</li>
     <li>battery</li>
+    <li>batteryState</li>
     <li>temperature<br>The measured temperature (= measured temperature at sensor + measurementOffset), only for HeatingThermostat and WallMountedThermostat</li>
   </ul>
 </ul>
@@ -1208,6 +1219,7 @@ MAX_DbLog_splitFn($)
     <li>desiredTemperature<br>Nur f&uuml;r Heizk&ouml;rperthermostate und Wandthermostate</li>
     <li>valveposition<br>Nur f&uuml;r Heizk&ouml;rperthermostate</li>
     <li>battery</li>
+    <li>batteryState</li>
     <li>temperature<br>Die gemessene Temperatur (= gemessene Temperatur + <code>measurementOffset</code>),
        nur f&uuml;r Heizk&ouml;rperthermostate und Wandthermostate</li>
   </ul>

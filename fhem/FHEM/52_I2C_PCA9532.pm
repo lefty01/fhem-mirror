@@ -1,5 +1,5 @@
 ##############################################################################
-# $Id$
+# $Id: 52_I2C_PCA9532.pm 17863 2018-11-27 23:28:39Z klausw $
 #
 ##############################################################################
 # Modul for I2C PWM Driver PCA9532
@@ -24,6 +24,7 @@ package main;
 use strict;
 use warnings;
 use SetExtensions;
+no if $] >= 5.017011, warnings => 'experimental::smartmatch';
 #use POSIX;
 use Scalar::Util qw(looks_like_number);
 
@@ -79,8 +80,6 @@ sub I2C_PCA9532_Init($$) {
 		return "Define: Wrong syntax. Usage:\n" .
 					 "define <name> I2C_PCA9532 <i2caddress>";
 	}
-	#return "$name I2C Address not valid" unless ($a[0] =~ /^(0x|)([0-7]|)[0-9A-F]$/xi);
- 
 	if (defined (my $address = shift @$args)) {
 		$hash->{I2C_Address} = $address =~ /^0.*$/ ? oct($address) : $address; 
 	} else {
@@ -95,6 +94,7 @@ sub I2C_PCA9532_Init($$) {
 	I2C_PCA9532_Set($hash, $name,"PWM1", ReadingsVal($name,"PWM1",0) );
 	#Portzustände wiederherstellen
 	my @outports = sort(split(/,/,AttrVal($name, "OutputPorts", "")));
+	I2C_PCA9532_ResetInputs($hash, @outports);
 	foreach (0..15) {
 		I2C_PCA9532_Set($hash, $name,"Port".$_, ReadingsVal($name,"Port".$_,0) ) if ( $_ ~~ @outports);
 	}
@@ -178,8 +178,8 @@ sub I2C_PCA9532_Attr(@) {
 		substr($attr,0,1,"");
 		my $regaddr = ($attr == 0 ? 2 : 4);
 		$msg = I2C_PCA9532_I2CSet($hash,$val,$regaddr);
-###################################################################irgendwann raus damit
- } elsif ($attr && $attr eq "InputPorts") {
+################################################################### irgendwann raus damit
+ 	} elsif ($attr && $attr eq "InputPorts") {
 		my @inp = split(" ", $val) if defined($val);
 		my $oval = 65535;
 		foreach (@inp) {
@@ -198,24 +198,26 @@ sub I2C_PCA9532_Attr(@) {
 			$val = "" unless defined($val);
 			Log3 $hash ,1 , "\"attr $name $attr $val\" will removed in further versions, generated: \"attr $name OutputPorts $outports\" please store it in your config and remove InputPorts";
 ###############################################################################################
-		} elsif ($attr && $attr eq "OutputPorts") {
+	} elsif ($attr && $attr eq "OutputPorts") {
 		my @inp = split(/,/, $val) if defined($val);
 		foreach (@inp) {
 			return "wrong value: $_ for \"attr $name $attr\" use comma separated numbers 0-15" unless ($_ >= 0 && $_ < 16);
 		}
-		$msg = I2C_PCA9532_ResetInputs($hash, @inp) unless $msg;
- } elsif ($attr && $attr eq "OnStartup") {
-	if (defined $val) {
-		foreach (split (/,/,$val)) {
-			my @pair = split (/=/,$_);
-			$msg = "wrong value: $_ for \"attr $hash->{NAME} $attr\" use comma separated <port>=on|off|PWM0|PWM1|last or PWM0|PWM1=0..255|last where <port> = 0 - 15 " 
-				unless ( scalar(@pair) == 2 &&
+		if ($main::init_done) {
+			$msg = I2C_PCA9532_ResetInputs($hash, @inp) unless $msg;		
+		}
+ 	} elsif ($attr && $attr eq "OnStartup") {
+		if (defined $val) {
+			foreach (split (/,/,$val)) {
+				my @pair = split (/=/,$_);
+				$msg = "wrong value: $_ for \"attr $hash->{NAME} $attr\" use comma separated <port>=on|off|PWM0|PWM1|last or PWM0|PWM1=0..255|last where <port> = 0 - 15 " 
+					unless ( scalar(@pair) == 2 &&
 								(($pair[0] =~ m/^[0-9]|1[0-5]$/i && ( $pair[1] eq "last" || exists($setsP{$pair[1]}) ) ) ||
 								( $pair[0] =~ m/^PWM(0|1)$/i     && looks_like_number($pair[1]) &&  $pair[1] >=0 && $pair[1] < 256))
-								);		
+							);		
+			}
 		}
-	}
- }
+ 	}
 	return ($msg) ? $msg : undef; 
 }
 
@@ -259,12 +261,10 @@ sub I2C_PCA9532_Set($@) {
 	my $cmd = $a[1];
 	my $val = $a[2];
 	my @outports = sort(split(/,/,AttrVal($name, "OutputPorts", "")));
-	#my @inports = sort(split( " ",AttrVal($name, "InputPorts", "")));
 	unless (@a == 3) {
 	
 	}
 	my $msg;
-	#my %sendpackage = ( i2caddress => $hash->{I2C_Address}, direction => "i2cwrite" );
 	if ( $cmd && $cmd =~ m/^Port((0|)[0-9]|1[0-5])$/i) {
 		return "wrong value: $val for \"set $name $cmd\" use one of: " . 
 			join(',', (sort { $setsP{ $a } <=> $setsP{ $b } } keys %setsP) )
@@ -287,38 +287,23 @@ sub I2C_PCA9532_Set($@) {
 			}
 		}
 		$msg = I2C_PCA9532_I2CSet($hash,$sbyte,$regaddr);
-	
-		#$sendpackage{data} = sprintf("%.2X",$sbyte);	
-		#$sendpackage{data} = $sbyte;	
-		#$sendpackage{reg} = sprintf("%.2X", $regaddr);
-		#$sendpackage{reg} = $regaddr;
-		
+			
 	} elsif ($cmd && $cmd =~ m/^PWM[0-1]$/i) {
 		return "wrong value: $val for \"set $name $cmd\" use 0-255"
 			unless(looks_like_number($val) && $val >= 0 && $val < 256);
 		substr($cmd,0,3,"");
 		my $regaddr = ($cmd == 0 ? 3 : 5);
 		$msg = I2C_PCA9532_I2CSet($hash,$val,$regaddr);
-		#return $msg if $msg;
-		
-		#$sendpackage{data} = sprintf("%.2X", $val);
-		#$sendpackage{data} = $val;
-		#$sendpackage{reg} = sprintf("%.2X", $regaddr);
 		
 	} else {
 		my $list = undef;
 		foreach (0..15) {
 			next unless ( $_ ~~ @outports );		#Inputs ueberspringen
-			#$list .= "Port" . $_ . ":" . join(',', sort keys %setsP) . " ";
 			$list .= "Port" . $_ . ":" . join(',', (sort { $setsP{ $a } <=> $setsP{ $b } } keys %setsP) ) . " ";
 		}
 		$list .= join($setdim, ("PWM0", "PWM1")) . $setdim;
 		$msg = "Unknown argument $a[1], choose one of " . $list;
 	}
-	#return "$name: no IO device defined" unless ($hash->{IODev});
-	#my $phash = $hash->{IODev};
-	#my $pname = $phash->{NAME};
-	#CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
 	return defined $msg ? $msg : undef 
 }
 ###############################################################################
@@ -333,6 +318,7 @@ sub I2C_PCA9532_I2CSet {
 				}) if (defined $hash->{I2C_Address});
 	} else {
 		return "no IODev assigned to '$hash->{NAME}'";
+		Log3 $hash, 5, "$hash->{NAME} I2CSet: Register: $reg Wert: $regval";
 	}
 }
 ###############################################################################
@@ -440,6 +426,9 @@ sub I2C_PCA9532_UpdReadings($$$) {
 1;
 
 =pod
+=item device
+=item summary controls PWM outputs from an via I2C connected PCA9532
+=item summary_DE steuern der PWM Ausg&aumlnge eines &uuml;ber I2C angeschlossenen PCA9532
 =begin html
 
 <a name="I2C_PCA9532"></a>
@@ -456,7 +445,8 @@ sub I2C_PCA9532_UpdReadings($$$) {
 	<b>Define</b>
 	<ul>
 		<code>define &lt;name&gt; I2C_PCA9532 &lt;I2C Address&gt;</code><br>
-		where <code>&lt;I2C Address&gt;</code> is an 2 digit hexadecimal value<br>
+		<code>&lt;I2C Address&gt;</code> may be an 2 digit hexadecimal value (0xnn) or an decimal value<br>
+		For example 0x40 (hexadecimal) = 64 (decimal). An I2C address are 7 MSB, the LSB is the R/W bit.<br>
 	</ul>
 
 	<a name="I2C_PCA9532Set"></a>
@@ -497,22 +487,26 @@ sub I2C_PCA9532_UpdReadings($$$) {
 	<a name="I2C_PCA9532Attr"></a>
 	<b>Attributes</b>
 	<ul>
-		<li>poll_interval<br>
+		<li><a name="poll_interval">poll_interval</a><br>
 			Set the polling interval in minutes to query the GPIO's level<br>
 			Default: -, valid values: decimal number<br><br>
 		</li>
-		<li>OutputPorts<br>
+		<li><a name="OutputPorts">OutputPorts</a><br>
 			Comma separated list of Portnumers that are used as Outputs<br>
 			Only ports in this list can be written<br>
 			Default: no, valid values: 0 1 2 .. 15<br><br>
 		</li>
-		<li>OnStartup<br>
+		<li><a name="OnStartup">OnStartup</a><br>
 			Comma separated list of output ports/PWM registers and their desired state after start<br>
 			Without this atribut all output ports will set to last state<br>
 			Default: -, valid values: &lt;port&gt;=on|off|PWM0|PWM1|last or PWM0|PWM1=0..255|last where &lt;port&gt; = 0 - 15<br><br>
 		</li>
-		<li>T0/T1<br>
-			Sets PWM0/PWM1 to another Frequency. The Formula is: Fx = 152/(Tx + 1) The corresponding frequency value is shown under internals.<br>
+		<li><a name="T0">T0</a><br>
+			Sets PWM0 to another Frequency. The Formula is: Fx = 152/(Tx + 1) The corresponding frequency value is shown under internals.<br>
+			Default: 0 (152Hz), valid values: 0-255<br><br>
+		</li>
+		<li><a name="T1">T1</a><br>
+			Sets PWM1 to another Frequency. The Formula is: Fx = 152/(Tx + 1) The corresponding frequency value is shown under internals.<br>
 			Default: 0 (152Hz), valid values: 0-255<br><br>
 		</li>
 		<li><a href="#IODev">IODev</a></li>
@@ -541,7 +535,8 @@ sub I2C_PCA9532_UpdReadings($$$) {
 	<b>Define</b>
 	<ul>
 		<code>define &lt;name&gt; I2C_PCA9532 &lt;I2C Address&gt;</code><br>
-		Der Wert <code>&lt;I2C Address&gt;</code> ist ein zweistelliger Hex-Wert<br>
+		<code>&lt;I2C Address&gt;</code> kann ein zweistelliger Hex-Wert (0xnn) oder ein Dezimalwert sein<br>
+		Beispielsweise 0x40 (hexadezimal) = 64 (dezimal). Als I2C Adresse verstehen sich die 7 MSB, das LSB ist das R/W Bit.<br>
 	</ul>
 
 	<a name="I2C_PCA9532Set"></a>
@@ -582,22 +577,26 @@ sub I2C_PCA9532_UpdReadings($$$) {
 	<a name="I2C_PCA9532Attr"></a>
 	<b>Attribute</b>
 	<ul>
-		<li>poll_interval<br>
+		<li><a name="poll_interval">poll_interval</a><br>
 			Aktualisierungsintervall aller Werte in Minuten.<br>
 			Standard: -, g&uuml;ltige Werte: Dezimalzahl<br><br>
 		</li>
-		<li>OutputPorts<br>
+		<li><a name="OutputPorts">OutputPorts</a><br>
 			Durch Komma getrennte Portnummern die als Outputs genutzt werden.<br>
 			Nur Ports in dieser Liste k&ouml;nnen geschrieben werden.<br>
 			Standard: no, g&uuml;ltige Werte: 0 1 2 .. 15<br><br>
 		</li>
-		<li>OnStartup<br>
+		<li><a name="OnStartup">OnStartup</a><br>
 			Durch Komma getrennte Output Ports/PWM Register und ihr gew&uuml;nschter Status nach dem Start.<br>
 			Ohne dieses Attribut werden alle Ausg&auml;nge nach dem Start auf den letzten Status gesetzt.<br>
 			Standard: -, g&uuml;ltige Werte: &lt;port&gt;=on|off|PWM0|PWM1|last oder PWM0|PWM1=0..255|last wobei &lt;port&gt; = 0 - 15<br><br>
 		</li>
-		<li>T0/T1<br>
-			&Auml;nderung der Frequenzwerte von PWM0/PWM1 nach der Formel: Fx = 152/(Tx + 1). Der entsprechende Frequenzwert wird unter Internals angezeigt.<br>
+		<li><a name="T0">T0</a><br>
+			&Auml;nderung der Frequenzwerte von PWM0 nach der Formel: Fx = 152/(Tx + 1). Der entsprechende Frequenzwert wird unter Internals angezeigt.<br>
+			Standard: 0 (152Hz), g&uuml;ltige Werte: 0-255<br><br>
+		</li>
+		<li><a name="T1">T1</a><br>
+			&Auml;nderung der Frequenzwerte von PWM1 nach der Formel: Fx = 152/(Tx + 1). Der entsprechende Frequenzwert wird unter Internals angezeigt.<br>
 			Standard: 0 (152Hz), g&uuml;ltige Werte: 0-255<br><br>
 		</li>
 		<li><a href="#IODev">IODev</a></li>

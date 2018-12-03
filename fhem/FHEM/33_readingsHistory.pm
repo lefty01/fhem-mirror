@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 33_readingsHistory.pm 16299 2018-03-01 08:06:55Z justme1968 $
 ##############################################################################
 #
 #     This file is part of fhem.
@@ -25,6 +25,11 @@ use warnings;
 
 use POSIX qw(strftime);
 
+use vars qw(%defs);
+use vars qw(%attr);
+sub Log($$);
+sub Log3($$$);
+
 use vars qw($FW_ME);
 use vars qw($FW_wname);
 use vars qw($FW_subdir);
@@ -50,6 +55,8 @@ sub readingsHistory_Initialize($)
 
   $hash->{FW_detailFn}  = "readingsHistory_detailFn";
   $hash->{FW_summaryFn}  = "readingsHistory_detailFn";
+
+  $data{FWEXT}{"readingsHistory"}{SCRIPT} = "fhemweb_readingsHistory.js";
 
   $hash->{FW_atPageEnd} = 1;
 
@@ -394,7 +401,7 @@ readingsHistory_Notify($$)
       my ($old, $new) = ($1, $2);
       if( defined($hash->{CONTENT}{$old}) ) {
 
-        $hash->{DEF} =~ s/(\s*)$old((:\S+)?\s*)/$1$new$2/g;
+        $hash->{DEF} =~ s/(^|\s+)$old((:\S+)?\s*)/$1$new$2/g;
       }
       readingsHistory_updateDevices($hash);
     } elsif( $dev->{NAME} eq "global" && $s =~ m/^DELETED ([^ ]*)$/) {
@@ -402,7 +409,7 @@ readingsHistory_Notify($$)
 
       if( defined($hash->{CONTENT}{$name}) ) {
 
-        $hash->{DEF} =~ s/(\s*)$name((:\S+)?\s*)/ /g;
+        $hash->{DEF} =~ s/(^|\s+)$name((:\S+)?\s*)/ /g;
         $hash->{DEF} =~ s/^ //;
         $hash->{DEF} =~ s/ $//;
       }
@@ -509,7 +516,7 @@ readingsHistory_Notify($$)
           }
           unshift( @{$hash->{fhem}{history}}, $entry );
 
-          DoTrigger( "$name", "history: $msg" ) if( $hash->{mayBeVisible} );
+          DoTrigger( "$name", "history: <html>$msg</html>" ) if( $hash->{mayBeVisible} );
         }
       }
     }
@@ -638,7 +645,7 @@ readingsHistory_Set($@)
     }
     unshift( @{$hash->{fhem}{history}}, $entry );
 
-    DoTrigger( "$name", "history: $msg" ) if( $hash->{mayBeVisible} );
+    DoTrigger( "$name", "history: <html>$msg</html>" ) if( $hash->{mayBeVisible} );
     return undef;
   }
 
@@ -713,6 +720,8 @@ readingsHistory_Attr($$$)
 
 =pod
 =item helper
+=item summary    display a history of readings from on or more devices
+=item summary_DE Anzeige der Historie von Readings eines oder mehrerer Ger&auml;te
 =begin html
 
 <a name="readingsHistory"></a>
@@ -731,7 +740,7 @@ readingsHistory_Attr($$$)
     <ul>
       <li>&lt;device&gt; can be of the form INTERNAL=VALUE where INTERNAL is the name of an internal value and VALUE is a regex.</li>
       <li>If regex is a comma separatet list it will be used as an enumeration of allowed readings.</li>
-      <li>if no device/reading argument is given only lines with 'set <device> add ...' are displayed.</li>
+      <li>if no device/reading argument is given only lines with 'set &lt;device&gt; add ...' are displayed.</li>
     </ul><br>
 
     Examples:

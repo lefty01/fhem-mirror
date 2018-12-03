@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 98_average.pm 16293 2018-02-28 21:33:57Z rudolfkoenig $
 # Average computing
 
 package main;
@@ -94,7 +94,7 @@ average_Notify($$)
 
     ################
     # Avg computing
-    $evName =~ s/[^A-Za-z_-].*//;
+    $evName =~ s/[^A-Za-z\d_\.\-\/]//g;
     $tn = TimeNow() if(!$tn);
 
     my @dNow = split("[ :-]", $tn);
@@ -191,6 +191,8 @@ average_Notify($$)
 
 =pod
 =item helper
+=item summary    add avarage Readings to arbitrary devices
+=item summary_DE berechnet Durchschnittswerte (als Readings)
 =begin html
 
 <a name="average"></a>
@@ -288,7 +290,7 @@ average_Notify($$)
       feeding unit. In the first case, the time between the events plays an
       important role, in the second case not. Default is integral.
     <li>nominmax</li>
-      don't compute min and max values. Default is 0 (compute min & max).
+      don't compute min and max values. Default is 0 (compute min &amp; max).
     <li>noaverage</li>
       don't compute average values. Default is 0 (compute avarage).
   </ul>

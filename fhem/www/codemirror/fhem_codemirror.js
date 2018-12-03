@@ -1,22 +1,25 @@
-/* $Id$ */
+/* $Id: fhem_codemirror.js 16926 2018-07-01 09:15:20Z rudolfkoenig $ */
 
 var cm_loaded = 0;
 var cm_active = 0;
 var cm_attr = {
-    matchBrackets:      true,
-    autoRefresh:        true,
-    search:             true,
-    comment:            true,
-    autocomplete:       true,
-    autocompleteAlways: false,
-    autoCloseBrackets:  true,
-    indentUnit:         4,
-    type:               "fhem",
-    theme:              "blackboard",
-    indentWithTabs:     true,
-    autofocus:          true,
-    lineNumbers:        true,
-    smartIndent:        false,
+    matchBrackets:       true,
+    autoRefresh:         true,
+    search:              true,
+    comment:             true,
+    autocomplete:        true,
+    autocompleteAlways:  false,
+    autoCloseBrackets:   true,
+    indentUnit:          4,
+    type:                "fhem",
+    theme:               "blackboard",
+    indentWithTabs:      true,
+    autofocus:           true,
+    lineNumbers:         true,
+    jumpToLine:          false,
+    jumpToLine_extraKey: false,
+    smartIndent:         false,
+    height:              false,
     extraKeys: {
         'Tab': function(cm) {
             if (cm.somethingSelected()) {
@@ -53,26 +56,17 @@ var cm_attr = {
     }
 };
 
-$(document).ready(function(){
-    var els = document.getElementsByTagName("textarea");
-    if(els.length == 0)
-    return;
-
-    if($(els[0]).closest("div#edit").css("display")=="none") { // DEF special
-    $("table.internals a").each(function(){
-        var oc = $(this).attr("onclick");
-        if(oc) {
-            $(this).attr("onclick", oc+
-            's=document.getElementById("edit").getElementsByTagName("textarea");'+
-            'if(!s[0].editor) { s[0].editor=true; AddCodeMirror(s[0]);}');
-        }
-    });
-    } else {
-        AddCodeMirror(els[0]);
-    }
-});
-
 function AddCodeMirror(e, cb) {
+    if(e instanceof jQuery) {
+	AddCodeMirror(e.get(0), cb);
+	return;
+    }
+
+    if(e == undefined || e.editor) {
+	return;
+    }
+    e.editor = true;
+
     if(cm_active && cm_loaded == cm_active)
         return cm_wait(e, cb);
         
@@ -84,6 +78,7 @@ function AddCodeMirror(e, cb) {
       loadLink("codemirror/codemirror.css");
       loadScript("codemirror/codemirror.js", function(){cm_loaded++;} );
         
+    // load additional addons
     if (cm_attr.autoCloseBrackets) {
         cm_active++; loadScript("codemirror/closebrackets.js", function(){cm_loaded++;} );
     }
@@ -112,7 +107,26 @@ function AddCodeMirror(e, cb) {
     if (cm_attr.autoRefresh) {
         cm_active++; loadScript("codemirror/autorefresh.js",  function(){cm_loaded++;} );
     }
+    if (cm_attr.jumpToLine) {
+        cm_active++; loadScript("codemirror/jump-to-line.js", function(){cm_loaded++;} );
+        if (cm_attr.jumpToLine_extraKey) {
+            cm_attr.extraKeys[cm_attr.jumpToLine_extraKey] = 'jumpToLine';
+        }
+    }
+    if (cm_attr.keyMap) {
+        cm_active++; loadScript("codemirror/"+cm_attr.keyMap+".js", function(){cm_loaded++;} );
+    }
     
+    // editor user preferences
+    if (cm_attr.height) {
+        if(cm_attr.height == true)
+            cm_attr.height = "auto";
+        if(isNaN(cm_attr.height)) {
+            $("head").append('<style type="text/css">.CodeMirror {height:auto;}');
+        } else {
+            $("head").append('<style type="text/css">.CodeMirror {height:' + cm_attr.height + 'px;}');
+        }
+    }
     
     // get the type from hidden filename extension, load the type-file.js, theme.css and call cm_wait
     var ltype;
@@ -148,16 +162,21 @@ function cm_wait(cm_editor, callback, recursions) {
         return;
     }
 
-    var cm = CodeMirror.fromTextArea(cm_editor, cm_attr);
+    // setTimeout needed for FireFox 58+, Forum #87740
+    setTimeout(function(){
+        var cm = CodeMirror.fromTextArea(cm_editor, cm_attr);
 
-    if (cm_attr.autocomplete && cm_attr.autocompleteAlways) {
-        cm.on("keyup", function (cm, event) {
-            if ( !cm.state.completionActive && String.fromCharCode(event.keyCode).match(/\w/) ) {
-                CodeMirror.commands.autocomplete(cm, null, {completeSingle: false});
-            }
-        });
-    }
+        if (cm_attr.autocomplete && cm_attr.autocompleteAlways) {
+            cm.on("keyup", function (cm, event) {
+                if ( !cm.state.completionActive &&
+                     String.fromCharCode(event.keyCode).match(/\w/) ) {
+                    CodeMirror.commands.autocomplete(cm, null, 
+                        {completeSingle: false});
+                }
+            });
+        }
 
-    if(callback)
-        callback(cm);
+        if(callback)
+            callback(cm);
+      }, 10);
 }

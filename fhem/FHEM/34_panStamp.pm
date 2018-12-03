@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 34_panStamp.pm 12056 2016-08-22 19:30:31Z justme1968 $
 
 package main;
 
@@ -537,6 +537,8 @@ panStamp_Attr(@)
 1;
 
 =pod
+=item summary    interface to a panStamp based SWAP network
+=item summary_DE Anbindung von panStamp basierten SWAP Netwerken
 =begin html
 
 <a name="panStamp"></a>

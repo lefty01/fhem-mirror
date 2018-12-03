@@ -1,6 +1,6 @@
 ################################################################
 #
-#  $Id$
+#  $Id: 98_UbiquitiOut.pm 8471 2015-04-23 17:46:01Z wzut $
 #
 #  (c) 2015 Copyright: Wzut
 #  forum : http://forum.fhem.de/index.php/topic,34131.0.html

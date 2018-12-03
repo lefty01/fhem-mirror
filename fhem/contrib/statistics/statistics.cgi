@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 ################################################################
-# $Id$
+# $Id: statistics.cgi 8278 2015-03-23 17:55:33Z betateilchen $
 #
 #  (c) 2012 Copyright: Martin Fischer (m_fischer at gmx dot de)
 #  All rights reserved

@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 31_LightScene.pm 17044 2018-07-28 18:34:46Z justme1968 $
 
 package main;
 
@@ -29,7 +29,7 @@ sub LightScene_Initialize($)
   $hash->{SetFn}    = "LightScene_Set";
   $hash->{GetFn}    = "LightScene_Get";
   $hash->{AttrFn}   = "LightScene_Attr";
-  $hash->{AttrList} = "async_delay followDevices:1,2 switchingOrder ". $readingFnAttributes;
+  $hash->{AttrList} = "async_delay followDevices:1,2 lightSceneRestoreOnlyIfChanged:1,0 showDeviceCurrentState:1,0 switchingOrder traversalOrder ". $readingFnAttributes;
 
   $hash->{FW_detailFn}  = "LightScene_detailFn";
   $data{FWEXT}{"/LightScene"}{FUNC} = "LightScene_CGI"; #mod
@@ -113,8 +113,8 @@ LightScene_2html($)
   $ret .= "<tr><td><div class=\"devType\"><a href=\"$FW_ME?detail=$name\">".AttrVal($name, "alias", $name)."</a></div></td></tr>" if( $show_heading );
   $ret .= "<tr><td><table class=\"block wide\">";
 
-  if( defined($FW_webArgs{detail}) ) {
-    $room = "&detail=$FW_webArgs{detail}";
+  if( defined($FW_webArgs{detail}) || AttrVal($name,"showDeviceCurrentState",undef) ) {
+    $room = "&detail=$FW_webArgs{detail}" if( defined($FW_webArgs{detail}) );
 
     $ret .= sprintf("<tr class=\"%s\">", ($row&1)?"odd":"even");
     #$row++;
@@ -223,7 +223,7 @@ LightScene_Notify($$)
       my ($old, $new) = ($1, $2);
       if( defined($hash->{CONTENT}{$old}) ) {
 
-        $hash->{DEF} =~ s/(\s*)$old(\s*)/$1$new$2/;
+        $hash->{DEF} =~ s/(^|\s+)$old(\s+|$)/$1$new$2/;
 
         foreach my $scene (keys %{ $hash->{SCENES} }) {
           $hash->{SCENES}{$scene}{$new} = $hash->{SCENES}{$scene}{$old} if( defined($hash->{SCENES}{$scene}{$old}) );
@@ -238,7 +238,7 @@ LightScene_Notify($$)
 
       if( defined($hash->{CONTENT}{$name}) ) {
 
-        $hash->{DEF} =~ s/(\s*)$name(\s*)/ /;
+        $hash->{DEF} =~ s/(^|\s+)$name(\s+|$)/ /;
         $hash->{DEF} =~ s/^ //;
         $hash->{DEF} =~ s/ $//;
 
@@ -274,12 +274,12 @@ LightScene_Notify($$)
       $reading = "state";
       $value = $s;
 
-      if( $hash->{mayBeVisible} ) {
+      if( $hash->{mayBeVisible} || $hash->{followDevices} ) {
         my $room = AttrVal($name, "room", "");
         my %extPage = ();
         (undef, undef, $value) = FW_devState($dev->{NAME}, $room, \%extPage);
 
-        DoTrigger( $name, "$dev->{NAME}.$reading: $value" ) if( $hash->{mayBeVisible} );
+        DoTrigger( $name, "$dev->{NAME}.$reading: <html>$value</html>" );
       }
 
       if( $hash->{followDevices} ) {
@@ -332,6 +332,8 @@ sub
 myStatefileName()
 {
   my $statefile = $attr{global}{statefile};
+  my @t = localtime(gettimeofday());
+  $statefile = ResolveDateWildcards($statefile, @t);
   $statefile = substr $statefile,0,rindex($statefile,'/')+1;
   return $statefile ."LightScenes.save" if( $LightScene_hasJSON );
   return $statefile ."LightScenes.dd.save" if( $LightScene_hasDataDumper );
@@ -413,12 +415,13 @@ LightScene_Load($)
 }
 
 sub
-LightScene_SaveDevice($$;$)
+LightScene_SaveDevice($$;$$)
 {
-  my($hash,$d,$scene) = @_;
+  my($hash,$d,$scene,$desc) = @_;
 
   my $state = "";
   my $icon = undef;
+  my $id = undef;
   my $type = $defs{$d}->{TYPE};
   $type = "" if( !defined($type) );
 
@@ -496,10 +499,16 @@ LightScene_SaveDevice($$;$)
     if( $defs{$d}->{helper}->{devtype} eq "G" ) {
 
       if( $scene ) {
-        my $id = "FHEM-$hash->{NAME}-$scene";
+        if( ref($desc) eq 'HASH' ) {
+          $id = $desc->{id} if( $desc->{id} );
+          fhem( "set $d deletescene $id" );
+        }
+        my $name = "FHEM-$hash->{NAME}-$scene";
+        my $ret = fhem( "set $d savescene $name" );
+        if( $ret =~ m/^created (.*)/ ) {
+          $id = $1;
+        }
         $state = "scene $id";
-        #FIXME: id too long, new POST api does not use id
-        fhem( "set $d savescene $id" );
       } else {
         $state = "<unknown>";
       }
@@ -537,7 +546,7 @@ LightScene_SaveDevice($$;$)
     $state = Value($d);
   }
 
-  return($state,$icon,$type);
+  return($state,$icon,$type,$id);
 }
 
 sub
@@ -583,20 +592,21 @@ LightScene_Set($@)
 
   my @sorted = sort keys %{$hash->{SCENES}};
 
-  if( $cmd eq "?" ){ return "Unknown argument ?, choose one of remove:".join(",", @sorted) ." rename save set setcmd scene:".join(",", @sorted) ." nextScene:noArg previousScene:noArg"};
+  if( $cmd eq "?" ){ return "Unknown argument ?, choose one of remove:".join(",", @sorted) ." rename save set setcmd scene:".join(",", @sorted) ." all nextScene:noArg previousScene:noArg"};
 
+  if( $cmd eq "all" && !defined( $scene ) ) { return "Usage: set $name all <command>" };
   if( $cmd eq "save" && !defined( $scene ) ) { return "Usage: set $name save <scene_name>" };
   if( $cmd eq "scene" && !defined( $scene ) ) { return "Usage: set $name scene <scene_name>" };
   if( $cmd eq "remove" && !defined( $scene ) ) { return "Usage: set $name remove <scene_name>" };
   if( $cmd eq "rename" && !defined( $scene ) ) { return "Usage: set $name rename <scene_alt> <scene_neu>" };
 
   if( $cmd eq "remove" ) {
-    return "no such scene $scene" if( !defined $hash->{SCENES}{$scene} );
+    return "no such scene: $scene" if( !defined $hash->{SCENES}{$scene} );
     delete( $hash->{SCENES}{$scene} );
     return undef;
 
   } elsif( $cmd eq "rename" ) {
-    return "no such scene $scene" if( !defined $hash->{SCENES}{$scene} );
+    return "no such scene: $scene" if( !defined $hash->{SCENES}{$scene} );
     my ($new) = @a;
     if( !( $new ) ) { return "Usage: set $name rename <scene_alt> <scene_neu>" };
 
@@ -604,11 +614,14 @@ LightScene_Set($@)
     delete( $hash->{SCENES}{$scene} );
     return undef;
 
+  } elsif( $cmd eq "scene" ) {
+    return "no such scene: $scene" if( !defined $hash->{SCENES}{$scene} );
+
   } elsif( $cmd eq "set" || $cmd eq "setcmd" ) {
     my ($d, @args) = @a;
 
     if( !defined( $scene ) || !defined( $d ) ) { return "Usage: set $name set <scene_name> <device> [<cmd>]" };
-    return "no stored scene >$scene<" if( !defined($hash->{SCENES}{$scene} ) );
+    return "no such scene: $scene" if( !defined $hash->{SCENES}{$scene} );
     #return "device >$d< is not a member of scene >$scene<" if( !defined($hash->{CONTENT}{$d} ) );
 
     if( !@args ) {
@@ -630,25 +643,39 @@ LightScene_Set($@)
     return undef;
 
   } elsif( $cmd eq 'nextScene' || $cmd eq 'previousScene' ) {
-    return "no scenes defined" if( $#sorted < 0 );
+    my $sorted = \@sorted;
+    if( my $list = AttrVal($name, 'traversalOrder', undef ) ) {
+      my @parts = split( /[ ,\n]/, $list );
+      $sorted = \@parts;
+    }
+    my $max = scalar @{$sorted}-1;
+
+    return "no scenes defined" if( $max < 0 );
     my $current = ReadingsVal( $name, 'state', '' );
-    my( $index )= grep { $sorted[$_] eq $current } 0..$#sorted;
+    my( $index )= grep { $sorted->[$_] eq $current } 0..$max;
     $index = -1 if( !defined($index) );
 
     ++$index if( $cmd eq 'nextScene' );
     --$index if( $cmd eq 'previousScene' );
-    $index = 0 if( $index > $#sorted );
-    $index = $#sorted if( $index < 0 );
+
+    return if( $scene && $scene eq 'nowrap' && $index > $max );
+    return if( $scene && $scene eq 'nowrap' && $index < 0 );
+
+    $index = 0 if( $index > $max );
+    $index = $max if( $index < 0 );
 
     $cmd = 'scene';
-    $scene = $sorted[$index];
+    $scene = $sorted->[$index];
+
+    return "no such scene: $scene" if( !defined $hash->{SCENES}{$scene} );
   }
 
 
   $hash->{INSET} = 1;
 
   my @devices;
-  if( $cmd eq "scene" && defined($hash->{switchingOrder}) && defined($hash->{switchingOrder}{$scene}) ) {
+  if( ( $cmd eq "scene" || $cmd eq "all" )
+      && defined($hash->{switchingOrder}) && defined($hash->{switchingOrder}{$scene}) ) {
     @devices = @{$hash->{switchingOrder}{$scene}};
   } else {
     @devices = @{$hash->{devices}};
@@ -665,13 +692,14 @@ LightScene_Set($@)
     }
 
     if( $cmd eq "save" ) {
-      my($state,$icon,$type) = LightScene_SaveDevice($hash,$d,$scene);
+      my($state,$icon,$type,$id) = LightScene_SaveDevice($hash,$d,$scene,$hash->{SCENES}{$scene}{$d});
 
       if( $icon || ref($state) eq 'ARRAY' || $type eq "SWAP_0000002200000003" || $type eq "HUEDevice"  ) {
         my %desc;
         $desc{state} = $state;
         my ($icon, $link, $isHtml) = FW_dev2image($d);
         $desc{icon} = $icon;
+        $desc{id} = $id if( $id );
         $hash->{SCENES}{$scene}{$d} = \%desc;
       } else {
         $hash->{SCENES}{$scene}{$d} = $state;
@@ -701,6 +729,13 @@ LightScene_Set($@)
         $count += $switched;
         $ret .= $rr // "";
       }
+
+    } elsif ( $cmd eq "all" ) {
+      $ret .= " " if( $ret );
+      my($rr,$switched) = LightScene_RestoreDevice($hash,$d,"$scene ".join(" ", @a));
+      $count += $switched;
+      $ret .= $rr // "";
+
     } else {
       $ret = "Unknown argument $cmd, choose one of save scene";
     }
@@ -709,6 +744,8 @@ LightScene_Set($@)
 
   if( $cmd eq "scene" ) {
     readingsSingleUpdate($hash, "state", $scene, 1 ) if( !$hash->{followDevices} || $count == 0 );
+  } elsif( $cmd eq "all" ) {
+    readingsSingleUpdate($hash, "state", "all $scene ".join(" ", @a), 1 ) if( !$hash->{followDevices} || $count == 0 );
   }
 
   delete($hash->{INSET});
@@ -907,46 +944,51 @@ LightScene_editTable($) {
   $dd.=FW_hidden("detail",$hash->{NAME}) . "\n";
   $dd.="</form>\n";
   # make table
-  if ($scn eq "Choose scene" || $scn eq '') {
-    $html.="<table><tr><td>Edit scene</td><td>$dd</td></tr>";
-  } else {
-	$html.="<table><tr><td>Edit scene</td><td>$dd</td></tr></table>";
-    $html .= '<table class="block wide">';
-    $html .= '<tr><th>Device</th><th>Command</th></tr>'."\n";
-    my $row=0;
-	my @devices;
-    if( $scn && defined($hash->{switchingOrder}) && defined($hash->{switchingOrder}{$scn}) ) {
+  my @devices;
+  if( $scn && defined($hash->{SCENES}{$scn}) ) {
+    if( defined($hash->{switchingOrder}) && defined($hash->{switchingOrder}{$scn}) ) {
       @devices = @{$hash->{switchingOrder}{$scn}};
     } else {
       @devices = @{$hash->{devices}};
     }
+  } else {
+    $scn = '';
+  }
+
+  if ($scn eq "Choose scene" || $scn eq '') {
+    $html.="<table><tr><td>Edit scene</td><td>$dd</td></tr>";
+  } else {
+    $html.="<table><tr><td>Edit scene</td><td>$dd</td></tr></table>";
+    $html .= '<table class="block wide">';
+    $html .= '<tr><th>Device</th><th>Command</th></tr>'."\n";
+    my $row=0;
     #table rows
-	my @cmds    = qw(set setcmd);
+    my @cmds    = qw(set setcmd);
     my $set     = "set $hash->{NAME} set $scn";
     my $setcmd  = '';
     foreach my $dev (@devices) {
       $row+=1;
       $html .= "<tr class=\"".(($row&1)?"odd":"even")."\">";
-	  $html .= "<td>$dev</td>";
-	  my $default = $hash->{SCENES}{$scn}{$dev};
+      $html .= "<td>$dev</td>";
+      my $default = $hash->{SCENES}{$scn}{$dev};
 
       if ($hash->{SCENES}{$scn}{$dev} =~ m/^;/) {
-	    $default =~ s/^;//;
-		$setcmd='setcmd';
+        $default =~ s/^;//;
+        $setcmd='setcmd';
       } else {
-		$setcmd='set';
-	  }
-	  $default = $default->{state} if( ref($default) eq 'HASH' );
-	  $html.="<td><form method=\"get\" action=\"" . $FW_ME . "/LightScene\">\n";
+        $setcmd='set';
+      }
+      $default = $default->{state} if( ref($default) eq 'HASH' );
+      $html.="<td><form method=\"get\" action=\"" . $FW_ME . "/LightScene\">\n";
       $html.=FW_select('',"cmd1", \@cmds, $setcmd, 'select')."\n";
-	  $html.=FW_textfieldv("val.$dev", 50, 'class',$default)."\n";
-	  $html.=FW_hidden("dev.$dev", $dev) . "\n";
-	  $html.=FW_hidden("cmd.$dev", $set) . "\n";
+      $html.=FW_textfieldv("val.$dev", 50, 'class',$default)."\n";
+      $html.=FW_hidden("dev.$dev", $dev) . "\n";
+      $html.=FW_hidden("cmd.$dev", $set) . "\n";
       $html.=FW_submit("lse", 'saveline');
-  	  $html.=FW_hidden("scn", $scn) . "\n";
-	  $html.=FW_hidden("detail",$hash->{NAME}) . "\n";
-	  $html .= "</form></td>\n";
-	}
+      $html.=FW_hidden("scn", $scn) . "\n";
+      $html.=FW_hidden("detail",$hash->{NAME}) . "\n";
+      $html .= "</form></td>\n";
+    }
   }
   #table end
   $html .= "</table><br>\n";
@@ -957,6 +999,8 @@ LightScene_editTable($) {
 
 =pod
 =item helper
+=item summary   create scenes from multiple fhem devices
+=item summary_DE verwaltet Szenen aus mehreren FHEM Ger&auml;ten
 =begin html
 
 <a name="LightScene"></a>
@@ -993,23 +1037,29 @@ LightScene_editTable($) {
   <a name="LightScene_Set"></a>
     <b>Set</b>
     <ul>
+      <li>all &lt;command&gt;<br>
+        execute set &lt;command&gt; for alle devices in this LightScene</li>
       <li>save &lt;scene_name&gt;<br>
-      save current state for alle devices in this LightScene to &lt;scene_name&gt;</li>
+        save current state for alle devices in this LightScene to &lt;scene_name&gt;</li>
       <li>scene &lt;scene_name&gt;<br>
-      shows scene &lt;scene_name&gt; - all devices are switched to the previously saved state</li>
+        shows scene &lt;scene_name&gt; - all devices are switched to the previously saved state</li>
+      <li>nextScene [nowrap]<br>
+        activates the next scene in alphabetical order after the current scene or the first if no current scene is set.</li>
+      <li>previousScene [nowrap]<br>
+        activates the previous scene in alphabetical order before the current scene or the last if no current scene is set.</li>
       <li>set &lt;scene_name&gt; &lt;device&gt; [&lt;cmd&gt;]<br>
-      set the saved state of &lt;device&gt; in &lt;scene_name&gt; to &lt;cmd&gt;</li>
+        set the saved state of &lt;device&gt; in &lt;scene_name&gt; to &lt;cmd&gt;</li>
       <li>setcmd &lt;scene_name&gt; &lt;device&gt; [&lt;cmd&gt;]<br>
-      set command to be executed for &lt;device&gt; in &lt;scene_name&gt; to &lt;cmd&gt;.
+        set command to be executed for &lt;device&gt; in &lt;scene_name&gt; to &lt;cmd&gt;.
       &lt;cmd&gt; can be any commandline that fhem understands including multiple commands separated by ;;
       <ul>
         <li>set kino_group setcmd allOff LampeDecke sleep 30 ;; set LampeDecke off</li>
         <li>set light_group setcmd test Lampe1 sleep 10 ;; set Lampe1 on ;; sleep 5 ;; set Lampe1 off</li>
       </ul></li>
       <li>remove &lt;scene_name&gt;<br>
-      remove &lt;scene_name&gt; from list of saved scenes</li>
+        remove &lt;scene_name&gt; from list of saved scenes</li>
       <li>rename &lt;scene_old_name&gt; &lt;scene_new_name&gt;<br>
-      rename &lt;scene_old_name&gt; to &lt;scene_new_name&gt;</li>
+        rename &lt;scene_old_name&gt; to &lt;scene_new_name&gt;</li>
     </ul><br>
 
   <a name="LightScene_Get"></a>
@@ -1053,6 +1103,8 @@ LightScene_editTable($) {
         1 -> if no match is found state will be unchanged and a nomatch event will be triggered.<br>
         2 -> if no match is found state will be set to unknown. depending on the scene and devices state can toggle multiple
              times. use a watchdog if you want to handle this.</li>
+      <li>showDeviceCurrentState<br>
+        show the current state of member devices in weblink</li>
       <li>switchingOrder<br>
         space separated list of &lt;scene&gt;:&lt;deviceList&gt; items that will give a per scene order
         in which the devices should be switched.<br>
@@ -1063,6 +1115,10 @@ LightScene_editTable($) {
         Example: To switch a master power outlet before every other device at power on and after every device on power off:<br>
         <code>define media LightScene TV,DVD,Amplifier,masterPower<br>
               attr media switchingOrder .*On:masterPower,.* allOff:!.*,masterPower</code>
+        </li>
+      <li>traversalOrder<br>
+        comma separated list of scene names that should be traversed by the prevoiusScene and nextScene commands.<br>
+        default not set -> all scenes will be traversed in alphabetical order
         </li>
       <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
     </ul><br>

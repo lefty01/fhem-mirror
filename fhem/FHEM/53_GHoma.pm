@@ -1,51 +1,69 @@
 ##############################################
-# $Id$
+# $Id: 53_GHoma.pm 17726 2018-11-10 23:11:47Z klausw $
+#
+# 
+# modifikation fuer Energiemessung von martin-s
+#
+# Todo:
+# - unbekannte Strings mit Log1 speichern
+# - unbekannte Steckermodelle mit Log1 speichern
 #
 # Protokoll:
 # Prefix (5a a5), Anzahl Nutzbytes (2 Byte), Payload, Checksumme (FF - LowByte der Summe aller Payloadbytes), Postfix (5b b5)
 # Antwort von Dose hat immer die letzen 3 Bloecke der MAC vom 11-13 Byte
 #
 # Payload immer in "|"
-# Init1 (vom Server):
+#
+#Init1 (vom Server):
 # 5a a5 00 07|02 05 0d 07 05 07 12|c6 5b b5
 #                ** ** ** ** ** **													** scheinen zufaellig zu sein
 # 5a a5 00 01|02|fd 5b b5
-# Antwort auf Init1 von Dose:
+#Antwort auf Init1 von Dose:
 # 5A A5 00 0B|03 01 0A C0 32 23 62 8A 7E 01 C2|AF 5B B5
 #                               MM MM MM    **										MM: letzte 3 Stellen der MAC, ** scheinbar eine Checksumme basierend auf den 6 zufaelligen Bytes von Init1
-# Init2 (vom Server):
+#                         ?? ??                                                     ??: Unterschiedlich bei verschiedenen Steckermodellen
+#Init2 (vom Server):
 # 5a a5 00 02|05 01|f9 5b b5
-# Antwort auf Init2 von Dose:
+#Antwort auf Init2 von Dose:
 # 5A A5 00 12|07 01 0A C0 32 23 62 8A 7E 00 01 06 AC CF 23 62 8A 7E|5F 5B B5
 #                               MM MM MM											MM: letzte 3 Stellen der MAC
 #                                                 MM MM MM MM MM MM					MM: komplette MAC
+#                         ?? ??                                                     ??: Unterschiedlich bei verschiedenen Steckermodellen
 # 5A A5 00 12|07 01 0A C0 32 23 62 8A 7E 00 02 05 00 01 01 08 11|4C 5B B5    			Anzahl Bytes stimmt nicht! ist aber immer so
+#                                                       FF FF FF					FF: Firmware Version
 # 5A A5 00 15|90 01 0A E0 32 23 62 8A 7E 00 00 00 81 11 00 00 01 00 00 00 00|32 5B B5		Status der Dose (wird auch immer bei Zustandsaenderung geschickt)
 #                               MM MM MM											MM: letzte 3 Stellen der MAC
 #                                                 qq								qq: Schaltquelle 	81=lokal geschaltet, 11=remote geschaltet
 #                                                                         oo 		oo: Schaltzustand	ff=an, 00=aus
+#                         ?? ??                                                     ??: Unterschiedlich bei verschiedenen Steckermodellen
 # Danach kommt alle x Sekunden ein Heartbeat von der Dose:
 # 5A A5 00 09|04 01 0A C0 32 23 62 8A 7E|71 5B B5
 #                               MM MM MM
+#                         ?? ??                                                     ??: Unterschiedlich bei verschiedenen Steckermodellen
 # Antwort vom Server (wenn die nicht kommt blinkt Dose wieder und muss neu initialisiert werden):
 # 5a a5 00 01|06|f9 5b b5
 #---------------------------------------------------------------------------------------------------------
 # Einschalten der Dose:
 # 5a a5 00 17|10 01 01 0a e0 32 23 62 8a 7e ff fe 00 00 10 11 00 00 01 00 00 00 ff|26 5b b5
 #                                  MM MM MM
+#                            ?? ??                                                     ??: Unterschiedlich bei verschiedenen Steckermodellen
 # Ausschalten der Dose
 # 5a a5 00 17|10 01 01 0a e0 32 23 62 8a 7e ff fe 00 00 10 11 00 00 01 00 00 00 00|25 5b b5
 #                                  MM MM MM
+#                            ?? ??                                                     ??: Unterschiedlich bei verschiedenen Steckermodellen
 # beides wird quittiert (ebenso wird auch bei lokaler betaetigung quittiert) -> siehe 3. Antwort auf Init 2
+#---------------------------------------------------------------------------------------------------------
+# Bei Dosen mit Verbrauchsdaten:
+# 5A A5 00 16|90 01 0a e0 35 23 d3 48 d4 ff fe 01 81 39 00 00 01 03 20 00 56 9b|70 5b b5	Verbrauchsdaten
+#                         ?? ?? MM MM MM
+#																 id					id: Art der Daten 01 = Leistung, 02 = Energie, 03 = Spannung, 04 = Strom, 05 = Frequenz, 07 = maxpower, 08 = Cosphi
+#																	   VV VV VV     VV: Verbrauchswerte (muss durch 100 geteilt werden)
+
 package main;
 use strict;
 use warnings;
 use SetExtensions;
 use TcpServerUtils;
-
-use constant  { PREFIX    => pack('C*', (0x5a,0xa5)),
-                POSTFIX   => pack('C*', (0x5b,0xb5)),
-                INIT1A    => pack('C*', (0x02,0x05,0x0d,0x07,0x05,0x07,0x12)), };
 
 my $prefix =  pack('C*', (0x5a,0xa5));
 my $postfix = pack('C*', (0x5b,0xb5));
@@ -54,13 +72,25 @@ my $init1a =  pack('C*', (0x02,0x05,0x0d,0x07,0x05,0x07,0x12));
 my $init1b =  pack('C*', (0x02));
 my $init2 =   pack('C*', (0x05,0x01));
 my $hbeat =   pack('C*', (0x06));
-my $switch1 = pack('C*', (0x10,0x01,0x01,0x0a,0xe0,0x32,0x23));
+my $switch1 = pack('C*', (0x10,0x01,0x01,0x0a,0xe0));
 my $switch2 = pack('C*', (0xff,0xfe,0x00,0x00,0x10,0x11,0x00,0x00,0x01,0x00,0x00,0x00));
 
-my $dosehb =  pack('C*', (0x00,0x09,0x04,0x01,0x0A,0xC0,0x32,0x23));
-my $cinit1 =  pack('C*', (0x03,0x01,0x0a,0xc0,0x32,0x23));
-my $cmac =    pack('C*', (0x07,0x01,0x0a,0xc0,0x32,0x23));
-my $cswitch = pack('C*', (0x90,0x01,0x0a,0xe0,0x32,0x23));
+my $dosehb =  pack('C*', (0x00,0x09,0x04,0x01,0x0a,0xc0));
+my $cinit1 =  pack('C*', (0x03,0x01,0x0a,0xc0));
+my $cmac =    pack('C*', (0x07,0x01,0x0a,0xc0));
+my $cswitch = pack('C*', (0x90,0x01,0x0a,0xe0));
+
+my $measure = pack('C*', (0xff,0xfe,0x01,0x81,0x39,0x00,0x00,0x01));
+
+my %values = (
+	'01' => 'power',
+	'02' => 'energy',
+	'03' => 'voltage',
+	'04' => 'current',
+	'05' => 'frequency',
+	'07' => 'maxpower',
+	'08' => 'cosphi',
+);
 
 my $timeout = 60;
 
@@ -75,9 +105,10 @@ sub GHoma_Initialize($) {			#
   $hash->{AttrFn}   = "GHoma_Attr";
   $hash->{StateFn}  = "GHoma_State";
   $hash->{AttrList} = "restoreOnStartup:last,on,off restoreOnReinit:last,on,off blocklocal:yes,no ".
-                      "allowfrom connectTimeout connectInterval";
+                      "allowfrom connectTimeout connectInterval $readingFnAttributes";
   $hash->{noAutocreatedFilelog} = 1;		# kein Filelog bei Autocreate anlegen
-  $hash->{ShutdownFn} = "GHoma_Shutdown";
+  $hash->{ShutdownFn}	 = "GHoma_Shutdown";
+  $hash->{DbLog_splitFn} = "GHoma_DbLog_splitFn";
 }
 #####################################
 sub GHoma_ClientConnect($) {		# im Mom unnuetz
@@ -133,7 +164,7 @@ sub GHoma_ClientDisconnect($$) {	# im Mom unnuetz
 #####################################
 sub GHoma_Shutdown($) {				#
   my ($hash) = @_;
-  return unless defined $hash->{Id};        #nicht für Server
+  return unless defined $hash->{Id};        #nicht f?r Server
   # state auf letzten Schaltwert setzen oder auf fixen Startwert (wird bereitsbeim Shutdown ausgefuehrt)
   if      (AttrVal($hash->{NAME},"restoreOnStartup","last") eq "on") {
 	readingsSingleUpdate($hash, "state", "on", 1);
@@ -210,7 +241,7 @@ sub GHoma_moveclient($$) {			# Handles von temporaerem Client zu Statischem uebe
   	$chash->{FD} = $thash->{FD};
 	$chash->{CD} = $thash->{CD};
 	$chash->{SNAME} = $thash->{SNAME};
-	my @client = split(":",$thash->{NAME});
+	my @client = split("_",$thash->{NAME});
 	$chash->{IP} = $client[1];
 	$chash->{PORT} = $client[2];
 	$selectlist{$chash->{NAME}} = $chash;
@@ -247,11 +278,11 @@ sub GHoma_Read($) {					# wird von der globalen loop aufgerufen (ueber $hash->{F
     return;
   }
   
-  if ( substr($buf,0,10) eq ($prefix . $dosehb )) {     									# Heartbeat (Dosen Id wird nicht ueberprueft)
-    #DevIo_SimpleWrite($hash, GHoma_BuildString($hbeat) , undef);
+  if ( substr($buf,0,8) eq ($prefix . $dosehb )) {     									# Heartbeat (Dosen Id wird nicht ueberprueft)
+	#DevIo_SimpleWrite($hash, GHoma_BuildString($hbeat) , undef);
 	RemoveInternalTimer($hash);
 	$buf =~ s/(.|\n)/sprintf("%.2X ",ord($1))/eg;		#empfangene Zeichen in Hexwerte wandeln
-	Log3 $name, 5, "$name empfangen: $buf";
+	Log3 $name, 5, "$name Heartbeatanfrage empfangen: $buf";
     syswrite( $hash->{CD}, GHoma_BuildString($hbeat) );
     Log3 $hash, 5, "$hash->{NAME} Heartbeat gesendet";
     InternalTimer(gettimeofday()+ $timeout, "GHoma_Timer", $hash,0);
@@ -272,10 +303,11 @@ sub GHoma_Read($) {					# wird von der globalen loop aufgerufen (ueber $hash->{F
 		}
 		
 		(my $smsg = $_) =~ s/(.|\n)/sprintf("%.2X ",ord($1))/eg;							# empfangene Zeichen in Hexwerte wandeln
-		Log3 $hash, 5, "$hash->{NAME} RX: 5A A5 $smsg";										# ...und ins Log schreiben
+		Log3 $hash, 4, "$hash->{NAME} RX: 5A A5 $smsg";										# ...und ins Log schreiben
 		
-		if ( substr($_,2,6) eq ($cinit1)) {  												# Antwort auf erstes Init
-			#$hash->{Id} = substr($_,8,3);
+		$hash->{Pattern} = unpack('H*', substr($_,6,2) ) unless defined $hash->{Pattern};
+		
+		if ( substr($_,2,4) eq ($cinit1)) {  												# Antwort auf erstes Init
 			$hash->{Id} = unpack('H*', substr($_,8,3) );
 			unless ($hash->{isClient}) {
 				# fuer Server Loesung bei erster Antwort von Dose nach bestehendem Device mit gleicher Id suchen und Verbindung auf dieses Modul uebertragen
@@ -289,10 +321,6 @@ sub GHoma_Read($) {					# wird von der globalen loop aufgerufen (ueber $hash->{F
 					}
 				}
 				unless ( defined $clientdefined) {							# ...ein Neues anlegen, falls keins existiert
-					#my $id = unpack('H*', $hash->{Id} );
-					#Log3 $name, 4, "GHoma Unknown device $id, please define it";
-					#DoTrigger("global", "UNDEFINED GHoma_$id GHoma $id");
-					#GHoma_moveclient($hash, $defs{"GHoma_$id"}) if ($defs{"GHoma_$id"});
 					Log3 $name, 4, "GHoma Unknown device $hash->{Id}, please define it";
 					DoTrigger("global", "UNDEFINED GHoma_$hash->{Id} GHoma $hash->{Id}");
 					GHoma_moveclient($hash, $defs{"GHoma_$hash->{Id}"}) if ($defs{"GHoma_$hash->{Id}"});
@@ -303,7 +331,7 @@ sub GHoma_Read($) {					# wird von der globalen loop aufgerufen (ueber $hash->{F
 				RemoveInternalTimer($hash);
 				InternalTimer(gettimeofday()+ $timeout, "GHoma_Timer", $hash,0);
 			}
-		} elsif ( substr($_,2,6) eq $cmac && substr($_,8,3) eq substr($_,17,3) ) {			# Nachricht mit MAC (kommt unter Anderem als Antwort auf Init2)
+		} elsif ( substr($_,2,4) eq $cmac && substr($_,8,3) eq substr($_,17,3) ) {			# Nachricht mit MAC (kommt unter Anderem als Antwort auf Init2)
 			my $mac;
 			for my $i (0...5) {			# MAC formattieren
 				$mac .= sprintf("%.2X",ord( substr($_,14+$i,1) ));
@@ -311,7 +339,10 @@ sub GHoma_Read($) {					# wird von der globalen loop aufgerufen (ueber $hash->{F
 				$mac .= ":";
 			}
 			$hash->{MAC} = $mac;
-		} elsif ( substr($_,2,6) eq $cswitch && (( length($_) - 5 ) == 0x15 ) ) {			# An oder Aus
+		} elsif ( substr($_,2,4) eq $cmac && (( length($_) - 5 ) == 0x11 ) ) {				# Nachricht mit Firmware Version
+			my ($high,$mid,$low)=unpack('CCC',substr($_,16,3));
+			$hash->{FWVERSION} = $high.".".$mid.".".$low;
+		} elsif ( substr($_,2,4) eq $cswitch && (( length($_) - 5 ) == 0x15 ) ) {			# An oder Aus
 			my $id = unpack('H*', substr($_,8,3) );
 			my $rstate = hex(unpack('H*', substr($_,22,1))) == 0xFF ? "on" : "off";
             my $src    = hex(unpack('H*', substr($_,14,1))) == 0x81 ? "local" : "remote";
@@ -339,11 +370,27 @@ sub GHoma_Read($) {					# wird von der globalen loop aufgerufen (ueber $hash->{F
 			
 			readingsBeginUpdate($hash);
 			readingsBulkUpdate($hash, 'state', $rstate);
-			readingsBulkUpdate($hash, 'source', $src);
+  			readingsBulkUpdate($hash, 'source', $src);
+  			readingsEndUpdate($hash, 1);
+		} elsif ( substr($_,2,4) eq $cswitch && substr($_,11,8) eq $measure && ( length($_) - 5 ) == 0x16) {	# Botschaft mit Verbrauchsdaten
+			readingsBeginUpdate($hash);
+			my $value=$values{unpack('H*',substr($_,19,1))};
+			if (defined($value)) {
+				my ($high,$mid,$low)=unpack('CCC',substr($_,21,3));
+				readingsBulkUpdate($hash, $value, ($high*65536+$mid*256+$low)/($value eq 'energy' ? 1000 : 100));
+			} else {
+				# readingsBulkUpdate($hash, 'message_'.unpack('H*',substr($_,19,1)), unpack('H*',substr($_,20)));
+				Log3 $name, 3, "$name unknown control message Id: " . unpack('H*',substr($_,19,1)) . " value: " . unpack('H*',substr($_,20));
+			}
 			readingsEndUpdate($hash, 1);
-		} 
+		} else {
+			# readingsBeginUpdate($hash);
+			# readingsBulkUpdate($hash, 'message_unkn', unpack('H*',$_));
+			# readingsEndUpdate($hash, 1);
+			Log3 $name, 3, "$name unknown message: " . unpack('H*',$_);
+		}
+      }
     }
-  }
   #Log3 $name, 5, "$name empfangen: $buf";
   return
 }
@@ -358,9 +405,9 @@ sub GHoma_Timer($) {					# wird ausgeloest wenn heartbeat nicht mehr kommt
 }
 #####################################
 sub GHoma_Attr(@) {					#
-  my @a = @_;
-  my $hash = $defs{$a[1]};
-
+  my ($command, $name, $attr, $val) = @_;
+  my $hash = $defs{$name};
+  
 	#  if($a[0] eq "set" && $a[2] eq "SSL") {
 	#    TcpServer_SetSSL($hash);
 	#    if($hash->{CD}) {
@@ -374,14 +421,19 @@ sub GHoma_Attr(@) {					#
 #####################################
 sub GHoma_Set($@) {					#
   my ($hash, @a) = @_;
-  return undef unless defined $hash->{Id};					# set fuer den Server ausblenden
   my $name = $a[0];
   my $type = $a[1];
+  return "Unknown argument $type, choose one of ConfigAll ConfigSingle" unless (defined $hash->{Id} || $type eq "ConfigAll" || $type eq "ConfigSingle");	# set fuer den Server
   my @sets = ('on:noArg', 'off:noArg');
   
   my $status = ReadingsVal($hash->{NAME},"state","");
   
-  if($type eq "on") {
+  if($type eq "ConfigAll") {
+	GHoma_udpsend($hash, defined $a[2] ? $a[2] : undef, undef );
+  } elsif($type eq "ConfigSingle") {
+  	return "$a[2] ist not an correct IP or hostname" unless $a[2] =~ /^((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*)+(\.([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*))*$)$/;
+	GHoma_udpsend($hash, defined $a[3] ? $a[3] : undef, $a[2] );
+  } elsif($type eq "on") {
 	$type = pack('C*', (0xff));
 	readingsSingleUpdate($hash, "state", "set_on", 1) if ( $status =~ m/([set_]?o[n|ff])$/i );
 	$hash->{LASTSTATE} = "on";
@@ -394,7 +446,8 @@ sub GHoma_Set($@) {					#
 	return SetExtensions($hash, $slist, @a);
   }
   if (defined $hash->{CD}) {
-	syswrite( $hash->{CD}, GHoma_BuildString($switch1 . pack('C*', ( hex(substr($hash->{Id},0,2)), hex(substr($hash->{Id},2,2)), hex(substr($hash->{Id},4,2)) ) ) . $switch2 . $type) );
+  	Log3 $hash, 2, "$hash->{NAME}: Pattern noch nicht empfangen" unless defined $hash->{Pattern};
+	syswrite( $hash->{CD}, GHoma_BuildString($switch1  . pack('C*', ( hex(substr($hash->{Pattern},0,2)), hex(substr($hash->{Pattern},2,2)) ) ) . pack('C*', ( hex(substr($hash->{Id},0,2)), hex(substr($hash->{Id},2,2)), hex(substr($hash->{Id},4,2)) ) ) . $switch2 . $type) );
   }
   return undef;
 }
@@ -415,11 +468,78 @@ sub GHoma_Undef($$) {				#
   return TcpServer_Close($hash) if defined $hash->{FD};
 }
 #####################################
+sub GHoma_udpsend{
+  eval "use IO::Socket::INET;";
+	return "please install IO::Socket::INET" if($@);
+  my ($hash, $ownIP, $clientIP) = @_;	
+  
+  # flush after every write
+  $| = 1;
 
+  my ($socket,$data);
+  $socket = new IO::Socket::INET (
+	PeerAddr  => (defined $clientIP ? $clientIP : '255.255.255.255'),
+	PeerPort  =>  '48899',
+	Proto     => 'udp',
+	Broadcast => (defined $clientIP ? 0 : 1)
+  ) or die "ERROR in Socket Creation : $!\n";
+
+#send operation
+  unless (defined $ownIP) {
+  	my $ownIPl = `hostname -I`;
+  	my @ownIPs = grep { /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/ } split / /, $ownIPl;
+  	$ownIP = $ownIPs[0];
+  } else {
+    return "$ownIP ist not an correct IP or hostname" unless $ownIP =~ /^((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*)+(\.([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*))*$)$/
+  }
+  Log3 $hash, 1, "$hash->{NAME}: setting server address for GHoma plugs to $ownIP:$hash->{PORT}";
+
+  my @sdata = (
+    "HF-A11ASSISTHREAD",
+	"+ok",
+	"AT+VER\r",
+	"AT+TCPTO\r"
+	);
+
+my @sdata = (
+    "HF-A11ASSISTHREAD",
+	"+ok",
+	"AT+NETP=TCP,Client,$hash->{PORT},$ownIP\r",
+	"AT+TCPTO=120\r"
+	);
+	
+  foreach (@sdata) {
+  	$socket->send($_);
+	Log3 $hash, 1, "$hash->{NAME}: sende Multicast: $_";
+  }
+  $socket->close();
+
+}
+
+sub GHoma_DbLog_splitFn($) {  			# Einheiten
+    my ($event) = @_;
+    Log3 undef, 5, "in DbLog_splitFn empfangen: $event"; 
+    my ($reading, $value, $unit) = "";
+
+    my @parts = split(/ /,$event);
+    $reading = shift @parts;
+    $reading =~ tr/://d;
+    $value = $parts[0];
+    $unit = "W" 	if(lc($reading) =~ m/power/);
+    $unit = "kWh" 	if(lc($reading) =~ m/energy/);
+    $unit = "V" 	if(lc($reading) =~ m/voltage/);
+    $unit = "A" 	if(lc($reading) =~ m/current/);
+    $unit = "Hz" 	if(lc($reading) =~ m/frequency/);
+    $unit = "W" 	if(lc($reading) =~ m/maxpower/);
+    return ($reading, $value, $unit);
+}
 
 1;
 
 =pod
+=item device
+=item summary controls an G-Homa wlan adapter plug
+=item summary_DE Steuerung einer G-Homa Wlan Steckdose
 =begin html
 
 <a name="GHoma"></a>
@@ -429,17 +549,25 @@ sub GHoma_Undef($$) {				#
   <ul>
   Connects fhem to an G-Homa adapter plug<br><br>
   <b>preliminary:</b><br>
-    <li>Configure WLAN settings:<br>
+    <li>Configure WLAN settings (Firmware <= 1.06):<br>
       bring device in AP mode (press button for more than 3s, repeat this step until the LED is permanently on)<br>
       Now connect with your computer to G-Home network.<br>
       Browse to 10.10.100.254 (username:password = admin:admin)<br>
       In STA Setting insert your WLAN settings<br>
     </li>
-    <li>Configure Network Parameters setting:<br>
+    <li>Configure WLAN settings:<br>
+      bring device in AP mode (press button for more than 3s, repeat this step until the LED is permanently on)<br>
+      Configure WLAN with G-Homa App.<br>
+    </li>
+    <li>Configure Network Parameters setting (Firmware <= 1.06):<br>
       Other Setting -> Protocol to TCP-Client<br>
       Other Setting -> Port ID (remember value for FHEM settings)<br>
 	  Other Setting -> Server Address (IP of your FHEM Server)<br>
     </li>
+    <li>Configure Network Parameters settings:<br>
+      Use <code>set ... ConfigAll</code> from server device to set parameters automaticly.<br>
+    </li>
+    
     <li>Optional:<br>
       Block all outgoing connections for G-Homa in your router.<br>
     </li>
@@ -471,6 +599,11 @@ sub GHoma_Undef($$) {				#
     </ul>
     The <a href="#setExtensions"> set extensions</a> are also supported.<br>
     <br>
+	For server device:<br>
+	<code>set &lt;name&gt; ConfigAll [IP|hostname|FQDN of FHEM]</code><br>
+	Setting all GHoma plugs via UDP broadcast to TCP client of FHEM servers address and port of GHoma server device.<br>
+    <code>set &lt;name&gt; ConfigSingle &lt;IP of Plug&gt; [IP|hostname|FQDN of FHEM]</code><br>
+	Setting an specific GHoma plug via UDP to TCP client of FHEM servers address and port of GHoma server device.<br>
   </ul>
 
   <a name="GHomaattr"></a>
@@ -510,16 +643,23 @@ sub GHoma_Undef($$) {				#
   <ul>
   Verbindet fhem mit einem G-Homa Zwischenstecker<br><br>
   <b>Vorbereitung:</b><br>
-    <li>WLAN konfigurieren:<br>
+    <li>WLAN konfigurieren (bis Firmware 1.06):<br>
       Ger&auml;t in den AP modus bringen (Knopf f&uuml;r mehr als 3s dr&uuml;cken, diesen Schritt wiederholen bis die LED permanent leuchtet)<br>
       Nun einen Computer mit der SSID G-Home verbinden.<br>
       Im Browser zu 10.10.100.254 (username:passwort = admin:admin)<br>
       In STA Setting WLAN Einstellungen eintragen<br>
     </li>
-    <li>Network Parameters settings:<br>
+    <li>WLAN konfigurieren:<br>
+      Ger&auml;t in den AP modus bringen (Knopf f&uuml;r mehr als 3s dr&uuml;cken, diesen Schritt wiederholen bis die LED permanent leuchtet)<br>
+      Mit der G-Homa App das WLAN des Zwischensteckers einstellen<br>
+    </li>
+    <li>Network Parameters settings (bis Firmware 1.06):<br>
       Other Setting -> Protocol auf TCP-Server<br>
       Other Setting -> Port ID (wird sp&auml;ter f&uuml;r FHEM ben&ouml;tigt)<br>
 	  Other Setting -> Server Address (IP Adresse des FHEM Servers)<br>
+    </li>
+    <li>Network Parameters settings:<br>
+      &Uuml;ber <code>set ... ConfigAll</code> des Server Ger&auml;tes die Parameter automatisch setzen.<br>
     </li>
     <li>Optional:<br>
       Im Router alle ausgehenden Verbindungen f&uuml;r G-Homa blockieren.<br>
@@ -552,7 +692,12 @@ sub GHoma_Undef($$) {				#
     </ul>
     Die <a href="#setExtensions"> set extensions</a> werden auch unterst&uuml;tzt.<br>
     <br>
-  </ul>
+  	F&uuml;r Server Device:<br>
+	<code>set &lt;name&gt; ConfigAll [IP|hostname|FQDN von FHEM]</code><br>
+	Einstellen aller GHoma Zwischenstecker &uuml;ber UDP broadcast auf TCP client mit FHEM Server Adresse und Port des GHoma Server Devices.<br>
+	    <code>set &lt;name&gt; ConfigSingle &lt;IP des Zwischensteckers&gt; [IP|hostname|FQDN von FHEM]</code><br>
+	Einstellen eines einzelnen GHoma Zwischensteckers &uuml;ber UDP auf TCP client mit FHEM Server Adresse und Port des GHoma Server Devices.<br>
+</ul>
 
     
   
@@ -585,4 +730,4 @@ sub GHoma_Undef($$) {				#
 
 =end html_DE
 
-=cut 
+=cut

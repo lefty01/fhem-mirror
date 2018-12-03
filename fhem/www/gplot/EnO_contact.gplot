@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_contact.gplot 9546 2015-10-19 19:47:11Z klaus-schauer $
 # Display a contact log
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device

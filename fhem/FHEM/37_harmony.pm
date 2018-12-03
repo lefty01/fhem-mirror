@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 37_harmony.pm 16299 2018-03-01 08:06:55Z justme1968 $
 
 package main;
 
@@ -24,6 +24,15 @@ harmony_isFritzBox()
 
   return $harmony_isFritzBox;
 }
+sub
+harmony_decode_json($)
+{
+  my ($data) = @_;
+
+  return eval { decode_json($data) } if( harmony_isFritzBox() );
+
+  return eval { JSON->new->utf8(0)->decode($data) };
+}
 
 sub
 harmony_Initialize($)
@@ -41,6 +50,8 @@ harmony_Initialize($)
   $hash->{AttrList} = "disable:1 nossl:1 $readingFnAttributes";
 
   $hash->{FW_detailFn}  = "harmony_detailFn";
+
+  $hash->{FW_showStatus} = 1;
 }
 
 #####################################
@@ -248,11 +259,9 @@ harmony_actionOfCommand($$)
 
   foreach my $group (@{$device->{controlGroup}}) {
     foreach my $function (@{$group->{function}}) {
-      if( lc($function->{name}) eq $command ) {
-        return decode_json($function->{action}) if( harmony_isFritzBox() );
-
-        return JSON->new->utf8(0)->decode($function->{action});
-
+      #if( lc($function->{name}) eq $command ) {
+      if( lc($function->{name}) =~ m/^$command$/ ) {
+        return harmony_decode_json($function->{action});
       }
     }
   }
@@ -279,7 +288,8 @@ sub
 harmony_Set($$@)
 {
   my ($hash, $name, $cmd, @params) = @_;
-  my ($param, $param2) = @params;
+  my ($param_a, $param_h) = parseParams(\@params);
+  my ($param, $param2) = @{$param_a};
   #$cmd = lc( $cmd );
 
   my $list = "";
@@ -394,12 +404,17 @@ harmony_Set($$@)
       return "unknown command $param2" if( !$action );
     }
 
-    Log3 $name, 4, "$name: sending $action->{command} for ". harmony_labelOfDevice($hash, $action->{deviceId} );
+    my $duration = $param_h->{duration};
+    return "duration musst be numeric" if( defined($duration) && $duration !~ m/^([\d.-])+$/ );
+    $duration = 0.1 if( !$duration || $duration < 0 );
+    $duration = 5 if $duration > 5;
+
+    Log3 $name, 4, "$name: sending $action->{command} for ${duration}s for ". harmony_labelOfDevice($hash, $action->{deviceId} );
 
     my $payload = "status=press:action={'command'::'$action->{command}','type'::'$action->{type}','deviceId'::'$action->{deviceId}'}:timestamp=0";
     harmony_sendEngineRender($hash, "holdAction", $payload);
-    select(undef, undef, undef, (0.1));
-    $payload = "status=release:action={'command'::'$action->{command}','type'::'$action->{type}','deviceId'::'$action->{deviceId}'}:timestamp=100";
+    select(undef, undef, undef, ($duration));
+    $payload = "status=release:action={'command'::'$action->{command}','type'::'$action->{type}','deviceId'::'$action->{deviceId}'}:timestamp=".$duration*1000;
     harmony_sendEngineRender($hash, "holdAction", $payload);
 
     return undef;
@@ -493,8 +508,8 @@ harmony_Set($$@)
     return undef;
 
   } elsif( $cmd eq "reconnect" ) {
-    delete $hash->{helper}{UserAuthToken} if( $param eq "all" );
-    delete $hash->{identity} if( $param eq "all" );
+    delete $hash->{helper}{UserAuthToken} if( $param && $param eq "all" );
+    delete $hash->{identity} if( $param && $param eq "all" );
     harmony_connect($hash);
 
     return undef;
@@ -508,7 +523,7 @@ harmony_Set($$@)
     my $interval = $param?$param*60:60*60;
     $interval = -1 if( $interval < 0 );
 
-    harmony_sendIq($hash, "<oa xmlns='connect.logitech.com' mime='harmony.engine?setsleeptimer' token=''>interval=$interval</oa>", "setsleeptimer");
+    harmony_sendIq($hash, "<oa xmlns='connect.logitech.com' mime='harmony.engine?setsleeptimer'>interval=$interval</oa>", "setsleeptimer");
 
     return undef;
 
@@ -520,6 +535,19 @@ harmony_Set($$@)
   } elsif( $cmd eq "update" ) {
     harmony_sendIq($hash, "<oa xmlns='connect.logitech.com' mime='vnd.logtech.setup/vnd.logitech.firmware?update' token=''>format=json</oa>");
 
+    return undef;
+
+  } elsif( $cmd eq "active" ) {
+    return "can't activate disabled hub." if(AttrVal($name, "disable", undef));
+
+    $hash->{ConnectionState} = "Disconnected";
+    readingsSingleUpdate( $hash, "state", $hash->{ConnectionState}, 1 );
+    harmony_connect($hash);
+    return undef;
+
+  } elsif( $cmd eq "inactive" ) {
+    harmony_disconnect($hash);
+    readingsSingleUpdate($hash, "state", "inactive", 1);
     return undef;
 
   } elsif( $cmd eq "xxx" ) {
@@ -592,7 +620,7 @@ harmony_Set($$@)
 
   $list .= " channel" if( defined($hash->{currentActivityID}) && $hash->{currentActivityID} != -1 );
 
-  $list .= " command getConfig:noArg getCurrentActivity:noArg off:noArg reconnect:noArg sleeptimer sync:noArg text cursor:up,down,left,right,pageUp,pageDown,home,end special:previousTrack,nextTrack,stop,playPause,volumeUp,volumeDown,mute";
+  $list .= " command active:noArg inactive:noArg getConfig:noArg getCurrentActivity:noArg off:noArg reconnect:noArg sleeptimer sync:noArg text cursor:up,down,left,right,pageUp,pageDown,home,end special:previousTrack,nextTrack,stop,playPause,volumeUp,volumeDown,mute";
 
   $list .= " update:noArg" if( $hash->{hubUpdate} );
 
@@ -604,9 +632,30 @@ harmony_getLoginToken($)
 {
   my ($hash) = @_;
 
+  #return if( defined($hash->{helper}{UserAuthToken}) );
+
+  if( 0 ) {
+  my $https = "https";
+  $https = "http" if( AttrVal($hash->{NAME}, "nossl", 0) );
+
+  my $json = encode_json( { clientId => '',
+                            clientTypeId => 'ControlApp' } );
+
+  my($err,$data) = HttpUtils_BlockingGet({
+    url => "$https://svcs.myharmony.com/discovery/Discovery.svc/json/GetJson2Uris",
+    timeout => 10,
+    #noshutdown => 1,
+    #httpversion => "1.1",
+    header => "Content-Type: application/json;charset=utf-8",
+    data => $json,
+  });
+
+  harmony_dispatch( {hash=>$hash,type=>'GetJson2Uris'},$err,$data );
+  }
+
   return if( defined($hash->{helper}{UserAuthToken}) );
 
-  if( !$hash->{helper}{username} ) {
+  if( 1 || !$hash->{helper}{username} ) {
     $hash->{helper}{UserAuthToken} = "";
     return;
 
@@ -867,6 +916,9 @@ harmony_Read($)
   $data .= $buf;
 
   #FIXME: should use real xmpp/xml parser
+  # see forum https://forum.fhem.de/index.php/topic,14163.msg575033.html#msg575033
+  $data =~ s/<iq\/>//g;
+  $data =~ s/<\/iq><iq/<\/iq>\n<iq/g;
   my @lines = split( "\n", $data );
   foreach my $line (@lines) {
     if( $line =~ m/^<(\w*)\s*([^>]*)?\/>(.*)?/ ) {
@@ -925,11 +977,7 @@ harmony_Read($)
         my $json;
         my $decoded;
         if( $cdata =~ m/^{.*}$/ ) {
-          if( harmony_isFritzBox() ) {
-            $json = decode_json($cdata);
-          } else {
-            $json = JSON->new->utf8(0)->decode($cdata);
-          }
+          $json = harmony_decode_json($cdata);
           $decoded = $json;
 
         } else {
@@ -971,6 +1019,7 @@ harmony_Read($)
             if( defined($decoded->{sleepTimerId}) ) {
               if( $decoded->{sleepTimerId} == -1 ) {
                 delete $hash->{sleeptimer};
+                DoTrigger( $name, "sleeptimer: expired" );
               } else {
                 harmony_sendEngineGet($hash, "gettimerinterval", "timerId=$decoded->{sleepTimerId}");
               }
@@ -979,7 +1028,20 @@ harmony_Read($)
         } elsif( $tag eq "message" ) {
 
           if( $content =~ m/type="harmony.engine\?startActivityFinished"/ ) {
-            harmony_updateActivity($hash, $decoded->{activityId}) if( defined($decoded->{activityId}) );
+            if( my $id = $decoded->{activityId} ) {
+              if( harmony_activityOfId($hash, $id) ) {
+                if( $id == -1 && $hash->{helper}{ignorePowerOff} ) {
+                  delete $hash->{helper}{ignorePowerOff};
+
+                } else {
+                  harmony_updateActivity($hash, $id);
+                }
+
+              } else {
+                $hash->{helper}{ignorePowerOff} = 1;
+
+              }
+            }
 
           } elsif( $content =~ m/type="vnd.logitech.harmony\/vnd.logitech.control.button\?pressType"/ ) {
             DoTrigger( $name, "vnd.logitech.control.button: $decoded->{type}" );
@@ -1043,6 +1105,7 @@ harmony_Read($)
 
           } elsif( $content =~ m/engine\?gettimerinterval/ && $decoded ) {
             $hash->{sleeptimer} = FmtDateTime( gettimeofday() + $decoded->{interval} );
+            DoTrigger( $name, "sleeptimer: $hash->{sleeptimer}" );
 
           } elsif( $content =~ m/firmware\?/ && $decoded ) {
             Log3 $name, 4, "$name: firmware: $cdata";
@@ -1101,7 +1164,7 @@ harmony_Read($)
             Log3 $name, 3, "$name: unknown iq: $content";
 Log 3, Dumper $decoded;
 
-Log 3, Dumper decode_json($decoded->{resource}) if( !$json && $decoded->{resource} && $decoded->{resource} =~ m/^{.*}$/ );
+Log 3, Dumper harmony_decode_json($decoded->{resource}) if( !$json && $decoded->{resource} && $decoded->{resource} =~ m/^{.*}$/ );
 
           }
 
@@ -1155,7 +1218,7 @@ harmony_disconnect($)
 
   RemoveInternalTimer($hash);
   $hash->{ConnectionState} = "Disconnected";
-  readingsSingleUpdate( $hash, "state", $hash->{ConnectionState}, 1 ) if( $hash->{ConnectionState} ne ReadingsVal($hash->{NAME},"state", "" ) );
+  readingsSingleUpdate( $hash, "state", $hash->{ConnectionState}, 1 ) if( $hash->{ConnectionState} ne ReadingsVal($name, "state", "" ) );
 
   return if( !$hash->{CD} );
   Log3 $name, 2, "$name: disconnect";
@@ -1174,7 +1237,7 @@ harmony_connect($)
   my ($hash) = @_;
   my $name = $hash->{NAME};
 
-  return if( AttrVal($hash->{NAME}, "disable", 0) );
+  return if( IsDisabled($name) );
 
   harmony_disconnect($hash);
 
@@ -1189,7 +1252,7 @@ harmony_connect($)
     if( $conn ) {
       Log3 $name, 3, "$name: connected";
       $hash->{ConnectionState} = "Connected";
-      readingsSingleUpdate( $hash, "state", $hash->{ConnectionState}, 1 ) if( $hash->{ConnectionState} ne ReadingsVal($hash->{NAME},"state", "" ) );
+      readingsSingleUpdate( $hash, "state", $hash->{ConnectionState}, 1 ) if( $hash->{ConnectionState} ne ReadingsVal($name, "state", "" ) );
       $hash->{LAST_CONNECT} = FmtDateTime( gettimeofday() );
 
       $hash->{FD}    = $conn->fileno();
@@ -1333,15 +1396,13 @@ harmony_dispatch($$$)
       return undef;
     }
 
-    my $json;
-    if( harmony_isFritzBox() ) {
-      $json = decode_json($data);
-    } else {
-      $json = JSON->new->utf8(0)->decode($data);
-    }
+    my $json = harmony_decode_json($data);
 
     if( $param->{type} eq 'token' ) {
-      harmony_parseToken($hash,$json);
+      harmony_parseToken($hash, $json);
+
+    } elsif( $param->{type} eq 'GetJson2Uris' ) {
+Log 1, Dumper $json;
 
     }
   }
@@ -1361,7 +1422,7 @@ harmony_autocreate($;$)
 
   #foreach my $d (keys %defs) {
   #  next if($defs{$d}{TYPE} ne "autocreate");
-  #  return undef if(AttrVal($defs{$d}{NAME},"disable",undef));
+  #  return undef if( IsDisabled($defs{$d}{NAME} ) );
   #}
 
   my $autocreated = 0;
@@ -1551,12 +1612,7 @@ harmony_Get($$@)
       foreach my $group (@{$activity->{controlGroup}}) {
         $ret .= "\t$group->{name}\n";
         foreach my $function (@{$group->{function}}) {
-          my $action;
-          if( harmony_isFritzBox() ) {
-            $action = decode_json($function->{action});
-          } else {
-            $action = JSON->new->utf8(0)->decode($function->{action});
-          }
+          my $action = harmony_decode_json($function->{action});
 
           $ret .= sprintf( "\t\t%-20s\t%s (%s)\n", $function->{name}, $function->{label}, harmony_labelOfDevice($hash, $action->{deviceId}, $action->{deviceId}) );
         }
@@ -1745,6 +1801,8 @@ harmony_decrypt($)
 1;
 
 =pod
+=item summary    module for logitech harmony hub based remots
+=item summary_DE Modul für Logitech Harmony Hub basierte Fernbedienungen
 =begin html
 
 <a name="harmony"></a>
@@ -1754,6 +1812,8 @@ harmony_decrypt($)
 
   It is possible to: start and stop activities, send ir commands to devices, send keyboard input by bluetooth and
   smart keyboard usb dongles.<br><br>
+
+  You probably want to use it in conjunction with the <a href="#fakeRoku">fakeRoku</a> module.<br><br>
 
   Notes:
   <ul>
@@ -1805,11 +1865,11 @@ harmony_decrypt($)
   <a name="harmony_Set"></a>
   <b>Set</b>
   <ul>
-    <li>activity &lt;id&gt;|&ltname&gt; [&lt;channel&gt;]<br>
+    <li>activity &lt;id&gt;|&lt;name&gt; [&lt;channel&gt;]<br>
       switch to this activit and optionally switch to &lt;channel&gt;</li>
     <li>channel &lt;channel&gt;<br>
       switch to &lt;channel&gt; in the current activity</li>
-    <li>command [&lt;id&gt;|&ltname&gt;] &lt;command&gt;<br>
+    <li>command [&lt;id&gt;|&lt;name&gt;] &lt;command&gt; [duration=&lt;duration&gt;]<br>
       send the given ir command for the current activity or for the given device</li>
     <li>getConfig<br>
       request the configuration from the hub</li>
@@ -1825,7 +1885,7 @@ harmony_decrypt($)
       default -> 60 minutes</li>
     <li>sync<br>
       syncs the hub to the myHarmony config</li>
-    <li>hidDevice [&lt;id&gt;|&ltname&gt;]<br>
+    <li>hidDevice [&lt;id&gt;|&lt;name&gt;]<br>
       sets the target device for keyboard commands, if no device is given -> set the target to the
       default device for the current activity.</li>
     <li>text &lt;text&gt;<br>
@@ -1834,13 +1894,22 @@ harmony_decrypt($)
       moves the cursor by bluetooth/smart keaboard dongle. &lt;direction&gt; can be one of: up, down, left, right, pageUp, pageDown, home, end.</li>
     <li>special &lt;key&gt;<br>
       sends special key by bluetooth/smart keaboard dongle. &lt;key&gt; can be one of: previousTrack, nextTrack, stop, playPause, volumeUp, volumeDown, mute.</li>
-    <li>autocreate [&lt;id&gt;|&ltname&gt;]<br>
+    <li>autocreate [&lt;id&gt;|&lt;name&gt;]<br>
       creates a fhem device for a single/all device(s) in the harmony hub. if activities are startet the state
       of these devices will be updatet with the power state defined in these activites.</li>
     <li>update<br>
       triggers a firmware update. only available if a new firmware is available.</li>
+    <li>inactive<br>
+      inactivates the current device. note the slight difference to the 
+      disable attribute: using set inactive the state is automatically saved
+      to the statefile on shutdown, there is no explicit save necesary.<br>
+      this command is intended to be used by scripts to temporarily
+      deactivate the harmony device.<br>
+      the concurrent setting of the disable attribute is not recommended.</li>
+    <li>active<br>
+      activates the current device (see inactive).</li>
   </ul>
-  The command, hidDevice, text, cursor and special commmands are also available for the autocreated devices. The &lt;id&gt;|&ltname&gt; paramter hast to be omitted.<br><br>
+  The command, hidDevice, text, cursor and special commmands are also available for the autocreated devices. The &lt;id&gt;|&lt;name&gt; paramter hast to be omitted.<br><br>
 
   <a name="harmony_Get"></a>
   <b>Get</b>
@@ -1850,19 +1919,19 @@ harmony_decrypt($)
       parm = power -> list power state for each device in activity</li>
     <li>devices [&lt;param&gt;]<br>
       lists all devices</li>
-    <li>commands [&lt;id&gt;|&ltname&gt;]<br>
+    <li>commands [&lt;id&gt;|&lt;name&gt;]<br>
       lists the commands for the specified activity or for all activities</li>
-    <li>deviceCommands [&lt;id&gt;|&ltname&gt;]<br>
+    <li>deviceCommands [&lt;id&gt;|&lt;name&gt;]<br>
       lists the commands for the specified device or for all devices</li>
-    <li>activityDetail [&lt;id&gt;|&ltname&gt;]</li>
-    <li>deviceDetail [&lt;id&gt;|&ltname&gt;]</li>
+    <li>activityDetail [&lt;id&gt;|&lt;name&gt;]</li>
+    <li>deviceDetail [&lt;id&gt;|&lt;name&gt;]</li>
     <li>configDetail</li>
     <li>currentActivity<br>
       returns the current activity name</li>
     <li>showAccount<br>
       display obfuscated user and password in cleartext</li>
   </ul>
-  The commands commmand is also available for the autocreated devices. The &lt;id&gt;|&ltname&gt; paramter hast to be omitted.<br><br>
+  The commands commmand is also available for the autocreated devices. The &lt;id&gt;|&lt;name&gt; paramter hast to be omitted.<br><br>
 
 
   <a name="harmony_Attr"></a>

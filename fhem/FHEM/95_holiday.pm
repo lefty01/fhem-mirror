@@ -1,12 +1,12 @@
 #######################################################################
-# $Id$
+# $Id: 95_holiday.pm 17763 2018-11-16 12:37:47Z rudolfkoenig $
 package main;
 
 use strict;
 use warnings;
 use POSIX;
 
-sub holiday_refresh($;$);
+sub holiday_refresh($;$$);
 
 #####################################
 sub
@@ -16,8 +16,10 @@ holiday_Initialize($)
 
   $hash->{DefFn}    = "holiday_Define";
   $hash->{GetFn}    = "holiday_Get";
+  $hash->{SetFn}    = "holiday_Set";
   $hash->{UndefFn}  = "holiday_Undef";
   $hash->{AttrList} = $readingFnAttributes;
+  $hash->{FW_detailFn} = "holiday_FW_detailFn";
 }
 
 
@@ -27,7 +29,7 @@ holiday_Define($$)
 {
   my ($hash, $def) = @_;
 
-  return holiday_refresh($hash->{NAME}) if($init_done);
+  return holiday_refresh($hash->{NAME}, undef, 1) if($init_done);
   InternalTimer(gettimeofday()+1, "holiday_refresh", $hash->{NAME}, 0);
   return undef;
 }
@@ -41,11 +43,11 @@ holiday_Undef($$)
 }
 
 sub
-holiday_refresh($;$)
+holiday_refresh($;$$)
 {
-  my ($name, $fordate) = (@_);
+  my ($name, $fordate, $showAvailable) = (@_);
   my $hash = $defs{$name};
-  my $internal;
+  my $fromTimer=0;
 
   return if(!$hash);           # Just deleted
 
@@ -53,7 +55,7 @@ holiday_refresh($;$)
   my @lt = localtime($nt);
   my @fd;
   if(!$fordate) {
-    $internal = 1;
+    $fromTimer = 1;
     $fordate = sprintf("%02d-%02d", $lt[4]+1, $lt[3]);
     @fd = @lt;
   } else {
@@ -61,9 +63,38 @@ holiday_refresh($;$)
     @fd = localtime(mktime(1,1,1,$d,$m-1,$lt[5],0,0,-1));
   }
 
-  my $fname = $attr{global}{modpath} . "/FHEM/" . $hash->{NAME} . ".holiday";
-  my ($err, @holidayfile) = FileRead($fname);
-  return $err if($err);
+  Log3 $name, 5, "holiday_refresh $name called for $fordate ($fromTimer)";
+
+  my $dir = $attr{global}{modpath} . "/FHEM";
+  my ($err, @holidayfile) = FileRead("$dir/$name.holiday");
+  if($err) {
+    $dir = $attr{global}{modpath}."/FHEM/holiday";
+    ($err, @holidayfile) = FileRead("$dir/$name.holiday");
+    $hash->{READONLY} = 1;
+  } else {
+    $hash->{READONLY} = 0;
+  }
+
+  if($err) {
+    if($showAvailable) {
+      my @ret;
+      if(configDBUsed()) {
+        @ret = cfgDB_FW_fileList($dir,".*.holiday",@ret);
+        map { s/\.configDB$//;$_ } @ret;
+      } else {
+        if(opendir(DH, $dir)) {
+          @ret = grep { m/\.holiday$/ } readdir(DH);
+          closedir(DH);
+        }
+      }
+      $err .= "\nAvailable holiday files: ".
+              join(" ", map { s/.holiday//;$_ } @ret);
+    } else {
+      Log 1, "$name: $err";
+    }
+    return $err;
+  }
+  $hash->{HOLIDAYFILE} = "$dir/$name.holiday";
 
   my @foundList;
   foreach my $l (@holidayfile) {
@@ -145,7 +176,7 @@ holiday_refresh($;$)
       my $yday=$fd[7];
       # create time object of target date - mktime counts months and their
       # days from 0 instead of 1, so subtract 1 from each
-      my $tgt=mktime(0,0,1,$a[4]-1,$a[3]-1,$fd[5],0,0,-1);
+      my $tgt=mktime(0,0,1,$a[4],$a[3]-1,$fd[5],0,0,-1);
       my $tgtmin=$tgt;
       my $tgtmax=$tgt;
       my $weeksecs=7*24*60*60; # 7 days, 24 hours, 60 minutes, 60seconds each
@@ -168,6 +199,19 @@ holiday_refresh($;$)
         Log 1, "Wrong distance spec: $l";
         next;
       }
+    } elsif($l =~ m/^6/) { # own calculation
+        my @args = split(" +", $l, 4);
+        my $res = "?";
+        no strict "refs";
+        eval { $res = &{$args[1]}($args[2]); };
+        use strict "refs";
+        if($@) {
+           Log 1, "holiday: Error in own function: $@";
+           next;
+        }
+        if($res eq $fordate) {
+           $found = $args[3];
+        }
     }
     push @foundList, $found if($found);
 
@@ -176,13 +220,13 @@ holiday_refresh($;$)
   push @foundList, "none" if(!int(@foundList));
   my $found = join(", ", @foundList);
 
-  RemoveInternalTimer($name);
-  $nt -= ($lt[2]*3600+$lt[1]*60+$lt[0]);         # Midnight
-  $nt += 86400 + 2;                              # Tomorrow
-  $hash->{TRIGGERTIME} = $nt;
-  InternalTimer($nt, "holiday_refresh", $name, 0);
+  if($fromTimer) {
+    RemoveInternalTimer($name);
+    $nt -= ($lt[2]*3600+$lt[1]*60+$lt[0]);         # Midnight
+    $nt += 86400 + 2;                              # Tomorrow
+    $hash->{TRIGGERTIME} = $nt;
+    InternalTimer($nt, "holiday_refresh", $name, 0);
 
-  if($internal) {
     readingsBeginUpdate($hash);
     readingsBulkUpdate($hash, 'state', $found);
     readingsBulkUpdate($hash, 'yesterday', CommandGet(undef,"$name yesterday"));
@@ -192,6 +236,44 @@ holiday_refresh($;$)
   } else {
     return $found;
   }
+}
+
+sub
+holiday_Set($@)
+{
+  my ($hash, @a) = @_;
+  my %sets = (
+    createPrivateCopy => $hash->{READONLY},
+    deletePrivateCopy => !$hash->{READONLY},
+    reload => 1
+  );
+    
+  return "unknown argument $a[1], choose one of ".
+              join(" ", map { "$_:noArg" }
+                        grep { $sets{$_} } keys %sets) if(!$sets{$a[1]});
+
+  if($a[1] eq "createPrivateCopy") {
+    return "Already a private version" if(!$hash->{READONLY});
+    my $fname = $attr{global}{modpath}."/FHEM/holiday/$hash->{NAME}.holiday";
+    my ($err, @holidayfile) = FileRead($fname);
+    return $err if($err);
+    $fname = $attr{global}{modpath}."/FHEM/$hash->{NAME}.holiday";
+    $err = FileWrite($fname, @holidayfile);
+    return $err if($err);
+    holiday_refresh($hash->{NAME});
+
+  } elsif($a[1] eq "deletePrivateCopy") {
+
+    return "Not a private version" if($hash->{READONLY});
+    my $err = FileDelete($attr{global}{modpath}."/FHEM/$hash->{NAME}.holiday");
+    return $err if($err);
+    holiday_refresh($hash->{NAME});
+
+  } elsif($a[1] eq "reload") {
+    holiday_refresh($hash->{NAME});
+
+  }
+  return undef;
 }
 
 sub
@@ -264,10 +346,23 @@ western_easter($)
   
   return $month, $day;
 }
+
+sub
+holiday_FW_detailFn($$$$)
+{
+  my ($FW_wname, $d, $room, $pageHash) = @_; # pageHash is set for summaryFn.
+
+  return "" if($defs{$d}{READONLY});
+  my $cfgDB = (configDBUsed() ? "configDB" : "");
+  return FW_pH("cmd=style edit $d.holiday $cfgDB",
+               "<div class=\"dval\">Edit $d.holiday</div>", 0, "dval", 1);
+}
+
 1;
 
 =pod
-=item helper
+=item summary    define holidays in a local file
+=item summary_DE Urlaubs-/Feiertagskalender aus einer lokalen Datei
 =begin html
 
 <a name="holiday"></a>
@@ -279,7 +374,12 @@ western_easter($)
     <code>define &lt;name&gt; holiday</code>
     <br><br>
     Define a set of holidays. The module will try to open the file
-    &lt;name&gt;.holiday in the <a href="#modpath">modpath</a>/FHEM directory.
+    &lt;name&gt;.holiday in the <a href="#modpath">modpath</a>/FHEM directory
+    first, then in the modpath/FHEM/holiday directory, the latter containing a
+    set of predefined files. This list of available holiday files will be shown
+    if an error occurs at the time of the definition, e.g. if you type "define
+    help holiday"<br>
+
     If entries in the holiday file match the current day, then the STATE of
     this holiday instance displayed in the <a href="#list">list</a> command
     will be set to the corresponding values, else the state is set to the text
@@ -322,9 +422,14 @@ western_easter($)
       <li>4<br>
           Interval. Arguments: &lt;MM-DD&gt; &lt;MM-DD&gt; &lt;holiday-name&gt;
           .<br>
+          Note: An interval cannot contain the year-end.
           Example:<br>
           <ul>
             4 06-01 06-30 Summer holiday<br>
+            4 12-20 01-10 Winter holiday  # DOES NOT WORK.
+                                        Use the following 2 lines instead:<br>
+            4 12-20 12-31 Winter holiday<br>
+            4 01-01 01-10 Winter holiday<br>
           </ul>
           </li>
       <li>5<br>
@@ -338,14 +443,52 @@ western_easter($)
             5 1 Mon 01 31 First Monday after Jan, 31st (1st Monday in February)<br>
           </ul>
           </li>
+      <li>6<br>
+          Use a perl function to calculate a date. Function must return the result as
+          an exact date in format "mm-dd", e.g. "12-02" <br/>
+          <br/>
+          Example:<br>
+          <ul><code>
+            6 calcAdvent 21 1.Advent<br>
+            6 calcAdvent 14 2.Advent<br>
+            6 calcAdvent  7 3.Advent<br>
+            6 calcAdvent  0 4.Advent<br>
+          </code></ul>
+          <br/>
+          Explanation:<br/>
+          <ul><code>
+          calcAdvent = name of function, e.g. included in 99_myUtils.pm<br/>
+          21 = parameter given to function<br/>
+          1.Advent = text to be shown in readings<br/>
+          </code></ul>
+          <br/>
+          this will call "calcAdvent(21)" to calculate a date.<br/>
+          Errors will be logged in Loglevel 1.<br/>
+      </li>
     </ul>
-    See also he.holiday in the contrib directory for official holidays in the
-    german country of Hessen, and by.holiday for the Bavarian definition.
   </ul>
   <br>
 
   <a name="holidayset"></a>
-  <b>Set</b> <ul>N/A</ul><br>
+  <b>Set</b>
+  <ul>
+    <li>createPrivateCopy<br>
+      <ul>
+        if the holiday file is opened from the FHEM/holiday directory (which is
+        refreshed by FHEM-update), then it is readonly, and should not be
+        modified. With createPrivateCopy the file will be copied to the FHEM
+        directory, where it can be modified.
+      </ul></li>
+    <li>deletePrivateCopy<br>
+      <ul>
+        delete the private copy, see createPrivateCopy above
+      </ul></li>
+    <li>reload<br>
+      <ul>
+        set the state, tomorrow and yesterday readings. Useful after manually
+        editing the file.
+      </ul></li>
+  </ul><br>
 
   <a name="holidayget"></a>
   <b>Get</b>
@@ -354,7 +497,7 @@ western_easter($)
       <code>get &lt;name&gt; yesterday</code><br>
       <code>get &lt;name&gt; today</code><br>
       <code>get &lt;name&gt; tomorrow</code><br>
-      <code>get &lt;name&gt; days <offset></code><br>
+      <code>get &lt;name&gt; days &lt;offset&gt;</code><br>
       <br><br>
       Return the holiday name of the specified date or the text none.
       <br><br>
@@ -378,9 +521,12 @@ western_easter($)
   <ul>
     <code>define &lt;name&gt; holiday</code>
     <br><br>
-    Definiert einen Satz mit Urlaubsinformationen. Das Modul versucht die Datei
-    &lt;name&gt;.holiday im Pfad <a href="#modpath">modpath</a>/FHEM zu
-    &ouml;ffnen.
+    Definiert einen Satz mit Urlaubsinformationen. Das Modul versucht die
+    Datei &lt;name&gt;.holiday erst in <a href="#modpath">modpath</a>/FHEM zu
+    &ouml;ffnen, und dann in modpath/FHEM/holiday, Letzteres enth&auml;lt eine
+    Liste von per FHEM-update verteilten Dateien f&uuml;r diverse
+    (Bundes-)L&auml;nder. Diese Liste wird bei einer Fehlermeldung angezeigt.
+
     Wenn Eintr&auml;ge im der Datei auf den aktuellen Tag passen wird der STATE
     der Holiday-Instanz die im <a href="#list">list</a> Befehl angezeigt wird
     auf die entsprechenden Werte gesetzt. Andernfalls ist der STATE auf den
@@ -427,9 +573,14 @@ western_easter($)
       <li>4<br>
           Intervall. Argument: &lt;MM-TT&gt; &lt;MM-TT&gt; &lt;Feiertag-Name&gt;
           .<br>
+          Achtung: Ein Intervall darf kein Jahresende enthalten.
           Beispiel:<br>
           <ul>
             4 06-01 06-30 Sommerferien<br>
+            4 12-20 01-10 Winterferien # FUNKTIONIER NICHT,
+                                        stattdessen folgendes verwenden:<br>
+            4 12-20 12-31 Winterferien<br>
+            4 01-01 01-10 Winterferien<br>
           </ul>
           </li>
       <li>5<br>
@@ -444,14 +595,52 @@ western_easter($)
             5 1 Mon 01 31 Erster Montag in Februar<br>
           </ul>
           </li>
+      <li>6<br>
+          Datum mit einer perl Funktion berechnen. Das Ergebnis muss ein exaktes
+          Datum im Format "mm-dd" sein, z.B."12-02" <br/>
+          <br/>
+          Beispiel:<br>
+          <ul><code>
+            6 calcAdvent 21 1.Advent<br>
+            6 calcAdvent 14 2.Advent<br>
+            6 calcAdvent  7 3.Advent<br>
+            6 calcAdvent  0 4.Advent<br>
+          </code></ul>
+          <br/>
+          Erkl&auml;rung:<br/>
+          <ul><code>
+          calcAdvent = Name der Funktion, z.B. enthalten in 99_myUtils.pm<br/>
+          21 = Parameter zum Funktionsaufruf<br/>
+          1.Advent = Text f&uuml;r die Anzeige in readings<br/>
+          </code></ul>
+          <br/>
+          erzeugt einen Funktionsaufruf "calcAdvent(21)" zur Berechnung eines Datums.<br/>
+          Fehler werden im Loglevel 1 protokolliert.<br/>
+      </li>
     </ul>
-    Siehe auch he.holiday im contrib Verzeichnis f&uuml;r offizielle Feiertage
-    in den deutschen Bundesl&auml;ndern Hessen und by.holiday f&uuml;r Bayern.
   </ul>
   <br>
 
   <a name="holidayset"></a>
-  <b>Set</b> <ul>N/A</ul><br>
+  <b>Set</b>
+  <ul>
+    <li>createPrivateCopy<br>
+      <ul>
+        Falls die Datei in der FHEM/holiday Verzeichnis ge&ouml;ffnet wurde,
+        dann ist sie nicht beschreibbar, da dieses Verzeichnis mit FHEM
+        update aktualisiert wird. Mit createPrivateCopy kann eine private Kopie
+        im FHEM Verzeichnis erstellt werden.
+      </ul></li>
+    <li>deletePrivateCopy<br>
+      <ul>
+        Entfernt die private Kopie, siehe auch createPrivateCopy
+      </ul></li>
+    <li>reload<br>
+      <ul>
+        setzt die state, tomorrow und yesterday Readings. Wird nach einem
+        manuellen Bearbeiten der .holiday Datei ben&ouml;tigt.
+      </ul></li>
+  </ul><br>
 
   <a name="holidayget"></a>
   <b>Get</b>
@@ -460,7 +649,7 @@ western_easter($)
       <code>get &lt;name&gt; yesterday</code><br>
       <code>get &lt;name&gt; today</code><br>
       <code>get &lt;name&gt; tomorrow</code><br>
-      <code>get &lt;name&gt; days <offset></code><br>
+      <code>get &lt;name&gt; days &lt;offset&gt;</code><br>
       <br><br>
       Gibt den Name des Feiertages zum angebenenen Datum zur&uuml;ck oder den
       Text none.

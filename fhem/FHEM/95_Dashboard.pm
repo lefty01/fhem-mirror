@@ -1,4 +1,4 @@
-﻿# $Id$
+﻿# $Id: 95_Dashboard.pm 16920 2018-06-29 12:01:56Z DS_Starter $
 ########################################################################################
 #
 # 95_Dashboard.pm
@@ -62,6 +62,10 @@
 #	Minor improvements in javascript and css.
 # 3.10: added attribute dashboard_tabXdevices, which can contain devspec definitions and thus allow to also shown not grouped devices
 #
+# ---- Changes by DS_Starter ----
+# 3.10.1   29.06.2018   added FW_hideDisplayName, Forum #88727
+#
+#
 # Known Bugs/Todos:
 # BUG: Nicht alle Inhalte aller Tabs laden, bei Plots dauert die bedienung des Dashboards zu lange. -> elemente hidden? -> widgets aus js über XHR nachladen und dann anzeigen (jquery xml nachladen...)
 # BUG: Variabler abstand wird nicht gesichert
@@ -97,13 +101,13 @@ package main;
 use strict;
 use warnings;
 use vars qw(%FW_icons); 	# List of icons
-use vars qw($FW_dir);       	# base directory for web server
-use vars qw($FW_icondir);   	# icon base directory
+use vars qw($FW_dir);      	# base directory for web server
+use vars qw($FW_icondir);   # icon base directory
 use vars qw($FW_room);      # currently selected room
 use vars qw(%defs);		    # FHEM device/button definitions
 #use vars qw(%FW_groups);	# List of Groups
-use vars qw($FW_wname);   # Web instance
-use vars qw(%FW_types);    # device types
+use vars qw($FW_wname);     # Web instance
+use vars qw(%FW_types);     # device types
 use vars qw($FW_ss);      	# is smallscreen, needed by 97_GROUP/95_VIEW
 
 #########################
@@ -116,7 +120,7 @@ my %group;
 my $dashboard_groupListfhem;
 my $fwjquery = "jquery.min.js";
 my $fwjqueryui = "jquery-ui.min.js";
-my $dashboardversion = "3.10";
+my $dashboardversion = "3.10.1";
 
 #############################################################################################
 sub Dashboard_Initialize ($) {
@@ -289,9 +293,10 @@ sub Dashboard_define ($$) {
 
  my @args = split (" ", $def);
 
- my $now = time();
- my $name = $hash->{NAME}; 
+ my $now          = time();
+ my $name         = $hash->{NAME}; 
  $hash->{VERSION} = $dashboardversion;
+ 
  readingsSingleUpdate( $hash, "state", "Initialized", 0 ); 
   
  RemoveInternalTimer($hash);
@@ -570,7 +575,7 @@ sub BuildDashboardTab($$)
           my @groupparts = split(':', $devicegroup);
 
           if (@groupparts == 1) {
-            my @devices = map { $_ . ':' . $_ } devspec2array($groupparts[0]);
+            my @devices = map { $_ . '$$$' . $_ } devspec2array($groupparts[0]);
             push(@tabdevicegroups, @devices);
           }
           else {
@@ -596,9 +601,9 @@ sub BuildDashboardTab($$)
 		if (@index > 0) {
 			for (my $j=0; $j<@index;$j++) {
 				my $groupname = @groups[$index[$j]];
-				$groupname .= ':' . 'group=' . $groupname;
+				$groupname .= '$$$' . 'a:group=' . $groupname;
 				if (@stabgroup > 1) {
-					$groupname .= ':' . $stabgroup[1];
+					$groupname .= '$$$' . $stabgroup[1];
 				}
 				push(@tabdevicegroups,$groupname);
 			}
@@ -609,7 +614,7 @@ sub BuildDashboardTab($$)
 
         # add sortings for groups not already having a defined sorting
         for (my $i=0;$i<@tabdevicegroups;$i++) {
-		my @stabgroup = split(":", trim($tabdevicegroups[$i]));		
+		my @stabgroup = split(/\$\$\$/, trim($tabdevicegroups[$i]));		
 		my $matchGroup = "," . quotemeta(trim($stabgroup[0])) . ",";
 
 		if ($tabsortings !~ m/$matchGroup/) {
@@ -717,7 +722,7 @@ sub BuildGroupWidgets($$$$$) {
         foreach my $singlegroup (@devicegroups) {
           # make sure that splitting with colon is not destroying the devspec that might
 	  # also contain a colon followed by a filter
-          my ($groupname, $groupdevices, $groupicon) = split(/:(?!FILTER=)/, $singlegroup);
+          my ($groupname, $groupdevices, $groupicon) = split(/\$\$\$/, $singlegroup);
 
           my @values = ($groupdevices, $groupicon);
           $groups{$groupname} = \@values;
@@ -803,8 +808,8 @@ sub BuildGroup
 	} @devices;
 
 	foreach my $d (@devices) {	
-                next if (!defined($defs{$d}));
-                $foundDevices++;
+        next if (!defined($defs{$d}));
+        $foundDevices++;
 
 		$ret .= sprintf("<tr class=\"%s\">", ($row&1)?"odd":"even");
 		
@@ -814,6 +819,7 @@ sub BuildGroup
 
 		$icon = FW_makeImage($icon,$icon,"icon dashboard_groupicon") . "&nbsp;" if($icon);
 	
+        $devName="" if($modules{$defs{$d}{TYPE}}{FW_hideDisplayName}); # Forum 88667
 		if (!$modules{$defs{$d}{TYPE}}{FW_atPageEnd}) { # Don't show Link for "atEnd"-devices
 			$ret .= FW_pH "detail=$d", "$icon$devName", 1, "col1", 1; 
 		}			
@@ -989,6 +995,8 @@ GetActiveTab ($)
 1;
 
 =pod
+=item summary    Dashboard for showing multiple devices sorted in tabs
+=item summary_DE Dashboard zur Anzeige mehrerer Geräte in verschiedenen Tabs
 =begin html
 
 <a name="Dashboard"></a>

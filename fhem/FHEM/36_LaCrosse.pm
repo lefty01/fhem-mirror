@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 36_LaCrosse.pm 16168 2018-02-13 21:01:41Z HCS $
 
 
 package main;
@@ -168,7 +168,7 @@ sub LaCrosse_Parse($$) {
   my ($hash, $msg) = @_;
   my $name = $hash->{NAME};
 
-  my( @bytes, $addr, $typeNumber, $typeName, $battery_new, $battery_low, $error, $type, $channel, $temperature, $humidity, $windDirection, $windSpeed, $windGust, $rain, $pressure );
+  my( @bytes, $addr, $typeNumber, $typeName, $battery_new, $battery_low, $error, $type, $channel, $temperature, $humidity, $windDirection, $windSpeed, $windGust, $rain, $pressure, $gas1, $gas2, $lux, $version, $voltage, $debug );
   $temperature = 0xFFFF;
   $humidity = 0xFF;
   $windDirection = 0xFFFF;
@@ -176,6 +176,12 @@ sub LaCrosse_Parse($$) {
   $windGust = 0xFFFF;
   $rain = 0xFFFF;
   $pressure = 0xFFFF;
+  $gas1 = 0xFFFFFF;
+  $gas2 = 0xFFFFFF;
+  $lux = 0xFFFFFF;
+  $version = 0xFF;
+  $voltage = 0xFF;
+  $debug = 0xFFFFFF;
   $error = 0;
 
   if( $msg =~ m/^OK 9/ ) {
@@ -245,7 +251,7 @@ sub LaCrosse_Parse($$) {
     #                                 |---------- Low battery
 
     @bytes = split( ' ', substr($msg, 5) );
-
+    
     return "" if(@bytes < 14);
 
     $addr = sprintf( "%02X", $bytes[0] );
@@ -262,6 +268,9 @@ sub LaCrosse_Parse($$) {
     }
     elsif($typeNumber == 4) {
       $typeName = "LaCrosseGateway";
+    }
+    elsif($typeNumber == 5) {
+      $typeName = "UniversalSensor";
     }
     else {
       $typeName = "unknown";
@@ -313,8 +322,33 @@ sub LaCrosse_Parse($$) {
 
     if(@bytes > 15 && $bytes[14] != 0xFF) {
       $pressure = $bytes[14] * 256 + $bytes[15];
+      $pressure /= 10.0 if $pressure > 5000;
     }
-
+  
+    if(@bytes > 18 && $bytes[16] != 0xFF) {
+      $gas1 = $bytes[16] * 65536 + $bytes[17] * 256 + $bytes[18];
+    }
+   
+    if(@bytes > 21 && $bytes[19] != 0xFF) {
+      $gas2 = $bytes[19] * 65536 + $bytes[20] * 256 + $bytes[21];
+    }
+  
+    if(@bytes > 24 && $bytes[22] != 0xFF) {
+      $lux = $bytes[22] * 65536 + $bytes[23] * 256 + $bytes[24];
+    }
+  
+    if(@bytes > 25 && $bytes[25] != 0xFF) {
+      $version = $bytes[25] / 10;
+    }
+  
+    if(@bytes > 26 && $bytes[26] != 0xFF) {
+      $voltage = $bytes[26] / 10;
+    }
+    
+    if(@bytes > 29 && $bytes[27] != 0xFF) {
+      $debug = $bytes[27] * 65536 + $bytes[28] * 256 + $bytes[29];
+    }
+  
   }
   else {
     DoTrigger($name, "UNKNOWNCODE $msg");
@@ -416,6 +450,11 @@ sub LaCrosse_Parse($$) {
       || (defined($rhash->{"previousT$channel"})
       && abs($rhash->{"previousH$channel"} - $humidity) <= AttrVal( $rname, "filterThreshold", 10 )
       && abs($rhash->{"previousT$channel"} - $temperature) <= AttrVal( $rname, "filterThreshold", 10 ) )) {
+      
+      # remove unwanted Battery2 readings
+      if (defined ($rhash->{READINGS}{battery2})) {
+        delete $rhash->{READINGS}{battery2}
+      }
 
       # Calculate average
       if (AttrVal( $rname, "doAverage", 0 ) && defined($rhash->{"previousT$channel"}) && $temperature != 0xFFFF) {
@@ -424,44 +463,42 @@ sub LaCrosse_Parse($$) {
       if (AttrVal( $rname, "doAverage", 0 ) && defined($rhash->{"previousH$channel"}) && $humidity != 0xFF) {
         $humidity = ($rhash->{"previousH$channel"} * 3 + $humidity) / 4;
       }
+      
+      # Calculate dew point
+      my $dewpoint = undef;
+      if( AttrVal( $rname, "doDewpoint", 0 ) && $humidity && $humidity <= 99 && $temperature != 0xFFFF ) {
+        $dewpoint = LaCrosse_CalcDewpoint($temperature, $humidity);
+      }
 
       # Handle resolution
-      if (my $resolution = AttrVal( $rname, "resolution", 0 )) {
-        if ($temperature != 0xFFFF) {
-          $temperature = int($temperature * 10 / $resolution + 0.5) * $resolution / 10;
-        }
-        if ($humidity != 0xFF) {
-          $humidity = int($humidity * 10 / $resolution + 0.5) * $resolution / 10;
-        }
+      my $resolution = AttrVal( $rname, "resolution", 1);
+      if ($temperature != 0xFFFF) {
+        $temperature = int($temperature * 10 / $resolution + ($temperature < 0 ? -0.5 : 0.5)) * $resolution / 10
+      }
+      if ($humidity != 0xFF) {
+        $humidity = int($humidity * 10 / $resolution + ($humidity < 0 ? -0.5 : 0.5)) * $resolution / 10
+      }
+      if ($dewpoint) {
+        $dewpoint = int($dewpoint * 10 / $resolution + ($dewpoint < 0 ? -0.5 : 0.5)) * $resolution / 10
       }
 
       readingsBeginUpdate($rhash);
+
       if ($typeNumber > 0) {
         readingsBulkUpdate($rhash, "error", $error ? "1" : "0");
       }
+      
+      readingsBulkUpdate($rhash, "battery", $battery_low ? "low" : "ok");
 
-      # Battery state
-      if (defined ($rhash->{READINGS}{battery2})) {
-        delete $rhash->{READINGS}{battery2}
-      }
-      readingsBulkUpdate($rhash, "battery", $battery_low? "low" : "ok");
-
-      # Calculate dewpoint
-      my $dewpoint;
-      if( AttrVal( $rname, "doDewpoint", 0 ) && $humidity && $humidity <= 99 && $temperature != 0xFFFF ) {
-        $dewpoint = LaCrosse_CalcDewpoint($temperature,$humidity);
-        $dewpoint = int($dewpoint*10 + 0.5) / 10;
-        readingsBulkUpdate($rhash, "dewpoint$channel", $dewpoint);
-      }
-
-      # Round and write temperature and humidity
+      # write temperature, humidity, ...
       if ($temperature != 0xFFFF) {
-        $temperature = int($temperature*10 + 0.5) / 10;
         readingsBulkUpdate($rhash, "temperature$channel", $temperature);
       }
-      if ($humidity && $humidity <= 99) {
-        $humidity = int($humidity*10 + 0.5) / 10;
+      if ($humidity && $humidity <= 100) {
         readingsBulkUpdate($rhash, "humidity$channel", $humidity);
+      }
+      if ($dewpoint) {
+        readingsBulkUpdate($rhash, "dewpoint$channel", $dewpoint);
       }
 
       # STATE
@@ -524,8 +561,32 @@ sub LaCrosse_Parse($$) {
       readingsBulkUpdate($rhash, "windDirectionText", $windDirectionText );
     }
 
-    if ($typeNumber > 0 && $pressure != 0xFFFF) {
+    if ($typeNumber > 1 && $pressure != 0xFFFF) {
       readingsBulkUpdate($rhash, "pressure", $pressure );
+    }
+  
+    if ($typeNumber > 1  && $gas1 != 0xFFFFFF) {
+      readingsBulkUpdate($rhash, "gas1", $gas1 );
+    }
+  
+    if ($typeNumber > 1 && $gas2 != 0xFFFFFF) {
+      readingsBulkUpdate($rhash, "gas2", $gas2 );
+    }
+  
+    if ($typeNumber == 5 && $lux != 0xFFFFFF) {
+      readingsBulkUpdate($rhash, "lux", $lux );
+    }
+  
+    if ($typeNumber == 5 && $version != 0xFF) {
+      readingsBulkUpdate($rhash, "version", $version );
+    }
+  
+    if ($typeNumber = 5 && $voltage != 0xFF) {
+      readingsBulkUpdate($rhash, "voltage", $voltage );
+    }
+    
+    if ($typeNumber > 1 && $debug != 0xFFFFFF) {
+      readingsBulkUpdate($rhash, "debug", $debug );
     }
 
     readingsEndUpdate($rhash,1);
@@ -539,6 +600,8 @@ sub LaCrosse_Parse($$) {
 1;
 
 =pod
+=item summary    LaCrosse Temperature and Humidity sensors
+=item summary_DE LaCrosse Temperature und Luftfeuchtigkeitssensoren
 =begin html
 
 <a name="LaCrosse"></a>

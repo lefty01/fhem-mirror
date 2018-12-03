@@ -45,7 +45,7 @@
 # 4: log unknown protocols
 # 5: log decoding hexlines for debugging
 #
-# $Id$
+# $Id: 43_RFXX10REC.pm 5599 2014-04-22 15:26:46Z wherzig $
 package main;
 
 use strict;

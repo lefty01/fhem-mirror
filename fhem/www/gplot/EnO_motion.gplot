@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_motion.gplot 9541 2015-10-19 19:37:03Z klaus-schauer $
 # Display the on and off values for a Occupancy Sensor 
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device

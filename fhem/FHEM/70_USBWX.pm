@@ -11,7 +11,7 @@
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 #
 ##############################################
-# $Id$
+# $Id: 70_USBWX.pm 3011 2013-04-01 11:35:04Z wherzig $
 package main;
 
 use strict;

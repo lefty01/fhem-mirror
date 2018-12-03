@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 00_NetzerI2C.pm 15021 2017-09-06 19:48:55Z klausw $
 package main;
 
 use strict;
@@ -28,6 +28,7 @@ I2C_BME280
 I2C_BMP180
 I2C_SHT21
 I2C_TSL2561
+I2C_LM.*
 );
 
 sub NetzerI2C_Initialize($) {
@@ -499,6 +500,9 @@ sub NetzerI2C_RemoveInternalTimer($$) {
 1;
 
 =pod
+=item device
+=item summary accesses I2C interface on an Netzer
+=item summary_DE Zugriff auf das I2C-Interface einer Netzer
 =begin html
 
 <a name="NetzerI2C"></a>

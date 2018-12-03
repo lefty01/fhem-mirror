@@ -1,5 +1,5 @@
 ###############################################################################
-# $Id$ 
+# $Id: 70_VolumeLink.pm 12009 2016-08-20 10:17:07Z rapster $ 
 
 package main;
 use strict;
@@ -294,6 +294,9 @@ sub VolumeLink_ReceiveCommand($) {
 1;
 
 =pod
+=item device 
+=item summary    Bind volume of a physical device to a fhem device.
+=item summary_DE Verbindet die Lautstaerke eines physischen Geraets mit einem Fhem Geraet.
 =begin html
 
 <a name="VolumeLink"></a>

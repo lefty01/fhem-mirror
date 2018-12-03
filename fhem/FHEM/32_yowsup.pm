@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 32_yowsup.pm 12219 2016-09-29 10:03:25Z justme1968 $
 
 package main;
 
@@ -406,6 +406,7 @@ yowsup_Parse($$)
     }
 
     $message =~ s/\n$//;
+    $message =~ s/[\b]*$//;
 
     my $chash = $modules{yowsup}{defptr}{$number};
     if( !$chash ) {
@@ -450,7 +451,8 @@ yowsup_Parse($$)
           if( !$accept_from || $last_sender || ",$accept_from," =~/,$last_sender,/ ) {
             Log3 $name, 3, "$cname: received command: $cmd";
 
-            my $ret = AnalyzeCommandChain( $hash, $cmd );
+            $chash->{SNAME} = $cname;
+            my $ret = AnalyzeCommandChain( $chash, $cmd );
 
             Log3 $name, 4, "$cname: command result: $ret";
 
@@ -581,6 +583,8 @@ yowsup_Attr($$$)
 1;
 
 =pod
+=item summary    interface to the yowsup librbary (for whatsapp)
+=item summary_DE Interface zur yowsup Bibliothek (f&uuml;r WhatsApp)
 =begin html
 
 <a name="yowsup"></a>
@@ -631,7 +635,7 @@ yowsup_Attr($$$)
     <li>nickname<br>
       nickname that will be send as sender</li>
 
-    <li>accept_from<br>
+    <li>acceptFrom<br>
       comma separated list of contacts (numbers) from which messages will be accepted</li>
 
     <li>commandPrefix<br>

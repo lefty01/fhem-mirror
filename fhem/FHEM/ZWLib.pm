@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: ZWLib.pm 17186 2018-08-20 20:10:55Z rudolfkoenig $
 package main;
 
 # Known controller function. 
@@ -15,6 +15,7 @@ use vars qw(%zw_type6);
   '06'  => 'SERIAL_API_SET_TIMEOUTS',
   '07'  => 'SERIAL_API_GET_CAPABILITIES',
   '08'  => 'SERIAL_API_SOFT_RESET',
+  '0b'  => 'SERIAL_API_SETUP',
   '10'  => 'ZW_SET_R_F_RECEIVE_MODE',
   '11'  => 'ZW_SET_SLEEP_MODE',
   '12'  => 'ZW_SEND_NODE_INFORMATION',
@@ -36,6 +37,7 @@ use vars qw(%zw_type6);
   '23'  => 'MEMORY_GET_BUFFER',
   '24'  => 'MEMORY_PUT_BUFFER',
   '27'  => 'FLASH_AUTO_PROG_SET',
+  '28'  => 'ZW_NVR_GET_VALUE',
   '29'  => 'NVM_GET_ID',
   '2a'  => 'NVM_EXT_READ_LONG_BUFFER',
   '2b'  => 'NVM_EXT_WRITE_LONG_BUFFER',
@@ -48,6 +50,12 @@ use vars qw(%zw_type6);
   '34'  => 'RTC_TIMER_READ',
   '35'  => 'RTC_TIMER_DELETE',
   '36'  => 'RTC_TIMER_CALL',
+  '37'  => 'ZW_CLEAR_TX_TIMERS',
+  '38'  => 'ZW_GET_TX_TIMERS',
+  '39'  => 'CLEAR_NETWORK_STATS',
+  '3a'  => 'GET_NETWORK_STATS',
+  '3b'  => 'GET_BACKGROUND_RSSI',
+  '3f'  => 'REMOVE_NODEID_FROM_NETWORK',
   '40'  => 'ZW_SET_LEARN_NODE_STATE',
   '41'  => 'ZW_GET_NODE_PROTOCOL_INFO',
   '42'  => 'ZW_SET_DEFAULT',
@@ -62,6 +70,7 @@ use vars qw(%zw_type6);
   '4b'  => 'ZW_REMOVE_NODE_FROM_NETWORK',
   '4c'  => 'ZW_CREATE_NEW_PRIMARY',
   '4d'  => 'ZW_CONTROLLER_CHANGE',
+  '4f'  => 'ZW_ASSIGN_PRIORITY_RETURN_ROUTE',
   '50'  => 'ZW_SET_LEARN_MODE',
   '51'  => 'ZW_ASSIGN_SUC_RETURN_ROUTE',
   '52'  => 'ZW_ENABLE_SUC',
@@ -70,11 +79,13 @@ use vars qw(%zw_type6);
   '55'  => 'ZW_DELETE_SUC_RETURN_ROUTE',
   '56'  => 'ZW_GET_SUC_NODE_ID',
   '57'  => 'ZW_SEND_SUC_ID',
+  '58'  => 'ZW_ASSIGN_PRIORITY_SUC_RETURN_ROUTE',
   '59'  => 'ZW_REDISCOVERY_NEEDED',
   '5b'  => 'ZW_SUPPORT_9600_ONLY', # Appl. Guide
   '5c'  => 'ZW_REQUEST_NEW_ROUTE_DESTINATIONS', # Appl. Guide
   '5d'  => 'ZW_IS_NODE_WIHTIN_DIRECT_RANGE', # Appl. Guide
   '5e'  => 'ZW_EXPLORE_REQUEST_INCLUSION',
+  '5f'  => 'ZW_EXPLORE_REQUEST_EXCLUSION',
   '60'  => 'ZW_REQUEST_NODE_INFO',
   '61'  => 'ZW_REMOVE_FAILED_NODE_ID',
   '62'  => 'ZW_IS_FAILED_NODE',
@@ -83,6 +94,7 @@ use vars qw(%zw_type6);
   '71'  => 'TIMER_RESTART',
   '72'  => 'TIMER_CANCEL',
   '73'  => 'TIMER_CALL',
+  '78'  => 'ZW_FIRMWARE_UPDATE_NVM',
   '80'  => 'GET_ROUTING_TABLE_LINE',
   '81'  => 'GET_T_X_COUNTER',
   '82'  => 'RESET_T_X_COUNTER',
@@ -90,6 +102,8 @@ use vars qw(%zw_type6);
   '84'  => 'STORE_HOME_ID',
   '90'  => 'LOCK_ROUTE_RESPONSE',
   '91'  => 'ZW_SEND_DATA_ROUTE_DEMO',
+  '92'  => 'ZW_GET_PRIORITY_ROUTE',
+  '93'  => 'ZW_SET_PRIORITY_ROUTE',
   '95'  => 'SERIAL_API_TEST',
   'a0'  => 'SERIAL_API_SLAVE_NODE_INFO',
   'a1'  => 'APPLICATION_SLAVE_COMMAND_HANDLER',
@@ -114,10 +128,13 @@ use vars qw(%zw_type6);
   'be'  => 'ZW_SEND_TEST_FRAME',
   'bf'  => 'ZW_GET_PROTOCOL_STATUS',
   'd0'  => 'ZW_SET_PROMISCUOUS_MODE',
+  'd1'  => 'PROMISCUOUS_COMMAND_HANDLER',
   'd2'  => 'WATCHDOG_START',
   'd3'  => 'WATCHDOG_STOP',
+  'd4'  => 'ZW_SET_ROUTING_MAX',
   'f2'  => 'ZME_FREQ_CHANGE',
   'f4'  => 'ZME_BOOTLOADER_FLASH',
+  'f5'  => 'ZME_CAPABILITIES',
 );
 
 %zw_type6 = (
@@ -130,7 +147,7 @@ use vars qw(%zw_type6);
   '07' => 'SENSOR_NOTIFICATION',
   '08' => 'THERMOSTAT',
   '09' => 'WINDOW_COVERING',
-  '0F' => 'REPEATER_SLAVE',
+  '0f' => 'REPEATER_SLAVE',
   '10' => 'SWITCH_BINARY',
   '11' => 'SWITCH_MULTILEVEL',
   '12' => 'SWITCH_REMOTE',
@@ -146,7 +163,7 @@ use vars qw(%zw_type6);
   '31' => 'METER',
   '40' => 'ENTRY_CONTROL',
   '50' => 'SEMI_INTEROPERABLE',
-  'A1' => 'SENSOR_ALARM',
+  'a1' => 'SENSOR_ALARM',
   'ff' => 'NON_INTEROPERABLE',
 );
 
@@ -161,7 +178,7 @@ zwlib_parseNeighborList($$)
 
   my @list;
   my $ioId = ReadingsVal($ioName, "homeId", "");
-  $ioId = $1 if($ioId =~ m/CtrlNodeId:(..)/);
+  $ioId = $1 if($ioId =~ m/CtrlNodeIdHex:(..)/);
   for my $byte (0..28) {
     my $bits = $r[$byte];
     for my $bit (0..7) {
@@ -205,16 +222,39 @@ zwlib_parseNodeInfo(@)
 {
   my @r = @_;
   my @list;
-  my @type5 = qw( CONTROLLER STATIC_CONTROLLER SLAVE ROUTING_SLAVE);
-  push @list, $type5[$r[5]-1] if($r[5]>0 && $r[5] <= @type5);
-  push @list, $zw_type6{$id} if($zw_type6{$id});
+  my @type2   = qw(reserved0 2 SDK5.0x+4.2x SDK4.5x+6.0x reserved4
+                   reserved5 reserved6 reserved7);
+  my @type2_1 = qw(reserved 9.6kbps 40kbps);
+  my @type3   = qw(Security Controller SpecificDev RoutingSlave BeamCap 
+                   FrequentListen250ms FrequentListen1000ms OptFunc);
+  my @type4   = qw(reserved0 100kbps 200kbps);
+  my @type4_1 = qw(N/A CentralStaticController SubStaticController 
+                   PortableController PortableReportingController 
+                   PortableSlave AlwaysOnSlave
+                   SleepingReportingSlave SleepingListeningSlave);
+  my @type5   = qw(CONTROLLER STATIC_CONTROLLER SLAVE ROUTING_SLAVE);
+  push @list, "ProtocolVers:" . $type2[($r[2]&0x7)];
   push @list, ($r[2] & 0x80) ? "listening" : "sleeping";
-  push @list, "frequentListening:" . ($r[3] & ( 0x20 | 0x40 ));
-  push @list, "beaming:" . ($r[3] & 0x10);
-  push @list, "routing"   if($r[2] & 0x40);
-  push @list, "40kBaud"   if(($r[2] & 0x38) == 0x10);
-  push @list, "Vers:" . (($r[2]&0x7)+1);
-  push @list, "Security:" . ($r[3]&0x1);
+  push @list, "routing" 
+                   if($r[2] & 0x40);
+  push @list, "maxBaud:" . $type2_1[($r[2] & 0x38) >> 3] 
+                   if($type2_1[($r[2] & 0x38) >> 3]);
+  for my $bit (0..7) {
+    push @list, $type3[$bit] if(($r[3] & (1<<$bit)) && $bit < @type3);
+  }
+  push @list, "SpeedExt:" . $type4[($r[4] & 0x7)] 
+                   if($type4[($r[4] & 0x7)] !=0);
+  push @list, "Reserved" 
+                   if($r[4] &0x08);
+  push @list, "RoleType:" . $type4_1[(($r[4] & 0x8) & 0xf0) >> 4] 
+                   if($type4_1[(($r[4] & 0x8) & 0xf0) >> 4]);
+  push @list, "BasicDevClass:" . $type5[$r[5]-1]
+                   if($r[5]>0 && $r[5] <= @type5);
+  my $id = sprintf("%02x", $r[6]);
+  push @list, "GenericDevClass:" . $zw_type6{$id}
+                   if($zw_type6{$id});  
+  push @list, "SpecificDevClass:" . sprintf("%02x", $r[7])
+                   if($r[7]);
   return join(" ", @list);
 }
 

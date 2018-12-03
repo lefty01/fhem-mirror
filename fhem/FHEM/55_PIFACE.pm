@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 55_PIFACE.pm 12061 2016-08-23 10:51:08Z klaus-schauer $
 ####################################################################################################
 #
 #	55_PIFACE.pm
@@ -397,6 +397,8 @@ PIFACE_Watchdog($) {
 1;
 
 =pod
+=item summary    Raspberry PiFace Digital Controler
+=item summary_DE Raspberry PiFace Digital Controler
 =begin html
 
 <a name="PIFACE"></a>
@@ -414,17 +416,21 @@ PIFACE_Watchdog($) {
   PIFACE is tested with the Raspbian OS.<br><br>
   
   <b>Preparatory Work</b><br>
-  The use of PIFACE module requires some preparatory work.
+  The use of PIFACE module requires some preparatory work. The module needs the <a href=http://wiringpi.com>Wiring Pi</a> tool.
   <ul>
     <br>
     Raspbian Wheezy<br>
-    <li>Module needs tools from <a href=http://wiringpi.com>Wiring Pi</a>. Install it with<br>
+    <li>Install it with<br>
       <code>git clone git://git.drogon.net/wiringPi<br>
         cd wiringPi<br>
         ./build</code><br>
     </li>
+    Raspbian Jessie<br>
+    <li>Install it with<br>
+      <code>sudo apt-get install wiringpi</code><br>
+    </li>
     <li>PiFace Digital need the SPI pins on the Raspberry Pi to be enabled in order to function.
-    Start <code>sudo raspi-config</code>, select <code>8 Advanced Options</code>
+    Start <code>sudo raspi-config</code>, select <code>Advanced Options</code>
     and set the <code>A5 SPI</code> option to "Yes".
     </li>
     <li>The function of the PiFace Digital can be tested at OS command line. For example:<br>

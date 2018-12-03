@@ -1,6 +1,6 @@
 ################################################################
 #
-#  $Id$
+#  $Id: 98_InfratecPM.pm 8315 2015-03-28 18:46:25Z wzut $
 #
 #  (c) 2015 Copyright: Wzut
 #  forum : http://forum.fhem.de/index.php/topic,34131.0.html

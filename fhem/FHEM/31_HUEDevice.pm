@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 31_HUEDevice.pm 17671 2018-11-04 11:36:40Z justme1968 $
 
 # "Hue Personal Wireless Lighting" is a trademark owned by Koninklijke Philips Electronics N.V.,
 # see www.meethue.com for more information.
@@ -22,42 +22,114 @@ use SetExtensions;
 use vars qw(%FW_webArgs); # all arguments specified in the GET
 
 my %hueModels = (
-  LCT001 => {name => 'Hue Bulb'                 ,type => 'Extended Color light'   ,subType => 'extcolordimmer',},
-  LCT002 => {name => 'Hue Spot BR30'            ,type => 'Extended Color light'   ,subType => 'extcolordimmer',},
-  LCT003 => {name => 'Hue Spot GU10'            ,type => 'Extended Color light'   ,subType => 'extcolordimmer',},
-  LCT007 => {name => 'Hue Bulb V2'              ,type => 'Extended Color light'   ,subType => 'extcolordimmer',},
-  LLC001 => {name => 'Living Colors G2'         ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC005 => {name => 'Living Colors Bloom'      ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC006 => {name => 'Living Colors Gen3 Iris'  ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC007 => {name => 'Living Colors Gen3 Bloom' ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC010 => {name => 'Hue Living Colors Iris'   ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC011 => {name => 'Hue Living Colors Bloom'  ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC012 => {name => 'Hue Living Colors Bloom'  ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC013 => {name => 'Disney Living Colors'     ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC014 => {name => 'Living Colors Aura'       ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLC020 => {name => 'Hue Go'                   ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LLM001 => {name => 'Color Light Module'       ,type => 'Extended Color Light'   ,subType => 'extcolordimmer',},
-  LLM010 => {name => 'Color Temperature Module' ,type => 'Extended Temperature Light'   ,subType => 'ctdimmer',},
-  LLM011 => {name => 'Color Temperature Module' ,type => 'Extended Temperature Light'   ,subType => 'ctdimmer',},
-  LLM012 => {name => 'Color Temperature Module' ,type => 'Extended Temperature Light'   ,subType => 'ctdimmer',},
-  LST001 => {name => 'Hue LightStrips'          ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LST002 => {name => 'Hue LightStrips Plus'     ,type => 'Color Light'            ,subType => 'colordimmer',},
-  LWB001 => {name => 'Living Whites Bulb'       ,type => 'Dimmable light'         ,subType => 'dimmer',},
-  LWB003 => {name => 'Living Whites Bulb'       ,type => 'Dimmable light'         ,subType => 'dimmer',},
-  LWB004 => {name => 'Hue Lux'                  ,type => 'Dimmable light'         ,subType => 'dimmer',},
-  LWB006 => {name => 'Hue White'                ,type => 'Dimmable light'         ,subType => 'dimmer',},
-  LWB007 => {name => 'Hue Lux'                  ,type => 'Dimmable light'         ,subType => 'dimmer',},
-  LWL001 => {name => 'LivingWhites Outlet'      ,type => 'Dimmable plug-in unit'  ,subType => 'dimmer',},
+  LCT001 => {name => 'Hue Bulb'                 ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'B',                      icon => 'hue_filled_white_and_color_e27_b22', },
+  LCT002 => {name => 'Hue Spot BR30'            ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'B',                      icon => 'hue_filled_br30.svg', },
+  LCT003 => {name => 'Hue Spot GU10'            ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'B',                      icon => 'hue_filled_gu10_par16', },
+  LCT007 => {name => 'Hue Bulb V2'              ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'B',                      icon => 'hue_filled_white_and_color_e27_b22', },
+  LCT010 => {name => 'Hue Bulb V3'              ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'C',                      icon => 'hue_filled_white_and_color_e27_b22', },
+  LCT011 => {name => 'Hue BR30'                 ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'C',                      icon => 'hue_filled_br30.svg', },
+  LCT012 => {name => 'Hue color candle'         ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'C', },
+  LCT014 => {name => 'Hue Bulb V3'              ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'C',                      icon => 'hue_filled_white_and_color_e27_b22', },
+  LLC001 => {name => 'Living Colors G2'         ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_iris', },
+  LLC005 => {name => 'Living Colors Bloom'      ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_bloom', },
+  LLC006 => {name => 'Living Colors Gen3 Iris'  ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_iris', },
+  LLC007 => {name => 'Living Colors Gen3 Bloom' ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_bloom', },
+  LLC010 => {name => 'Hue Living Colors Iris'   ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_iris', },
+  LLC011 => {name => 'Hue Living Colors Bloom'  ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_bloom', },
+  LLC012 => {name => 'Hue Living Colors Bloom'  ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_bloom', },
+  LLC013 => {name => 'Disney Living Colors'     ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_storylight', },
+  LLC014 => {name => 'Living Colors Aura'       ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_aura', },
+  LLC020 => {name => 'Hue Go'                   ,type => 'Color light'             ,subType => 'extcolordimmer',
+                                                 gamut => 'C',                      icon => 'hue_filled_go', },
+  LST001 => {name => 'Hue LightStrips'          ,type => 'Color light'             ,subType => 'colordimmer',
+                                                 gamut => 'A',                      icon => 'hue_filled_lightstrip', },
+  LST002 => {name => 'Hue LightStrips Plus'     ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'C',                      icon => 'hue_filled_lightstrip', },
+  LWB001 => {name => 'Living Whites Bulb'       ,type => 'Dimmable light'          ,subType => 'dimmer',
+                                                                                    icon => 'hue_filled_living_whites', },
+  LWB003 => {name => 'Living Whites Bulb'       ,type => 'Dimmable light'          ,subType => 'dimmer',
+                                                                                    icon => 'hue_filled_living_whites', },
+  LWB004 => {name => 'Hue Lux'                  ,type => 'Dimmable light'          ,subType => 'dimmer',
+                                                                                    icon => 'hue_filled_white_and_color_e27_b22', },
+  LWB006 => {name => 'Hue Lux'                  ,type => 'Dimmable light'          ,subType => 'dimmer',
+                                                                                    icon => 'hue_filled_white_and_color_e27_b22', },
+  LWB007 => {name => 'Hue Lux'                  ,type => 'Dimmable light'          ,subType => 'dimmer',
+                                                                                    icon => 'hue_filled_white_and_color_e27_b22', },
+  LWB010 => {name => 'Hue Lux'                  ,type => 'Dimmable light'          ,subType => 'dimmer',
+                                                                                    icon => 'hue_filled_white_and_color_e27_b22', },
+  LWB014 => {name => 'Hue Lux'                  ,type => 'Dimmable light'          ,subType => 'dimmer',
+                                                                                    icon => 'hue_filled_white_and_color_e27_b22', },
+  LTW001 => {name => 'Hue A19 White Ambience'   ,type => 'Color temperature light' ,subType => 'ctdimmer',
+                                                                                    icon => 'hue_filled_white_and_color_e27_b22', },
+  LTW004 => {name => 'Hue A19 White Ambience'   ,type => 'Color temperature light' ,subType => 'ctdimmer', },
 
- 'FLS-H3'  => {name => 'dresden elektronik FLS-H lp'  ,type => 'Color Temperature Light' ,subType => 'ctdimmer',},
- 'FLS-PP3' => {name => 'dresden elektronik FLS-PP lp' ,type => 'Extended Color Light'    ,subType => 'extcolordimmer',},
+  LTW012 => {name => 'Hue ambiance candle'      ,type => 'Color temperature light' ,subType => 'ctdimmer',
+                                                                                    icon => 'hue_filled_gu10_par16', },
+  LTW013 => {name => 'Hue GU10 White Ambience'  ,type => 'Color temperature light' ,subType => 'ctdimmer',
+                                                                                    icon => 'hue_filled_gu10_par16', },
+  LTW014 => {name => 'Hue GU10 White Ambience'  ,type => 'Color temperature light' ,subType => 'ctdimmer',
+                                                                                    icon => 'hue_filled_gu10_par16', },
+  LLM001 => {name => 'Color Light Module'       ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'B', },
+  LLM010 => {name => 'Color Temperature Module' ,type => 'Color temperature light' ,subType => 'ctdimmer', },
+  LLM011 => {name => 'Color Temperature Module' ,type => 'Color temperature light' ,subType => 'ctdimmer', },
+  LLM012 => {name => 'Color Temperature Module' ,type => 'Color temperature light' ,subType => 'ctdimmer', },
+  LWL001 => {name => 'LivingWhites Outlet'      ,type => 'Dimmable plug-in unit'   ,subType => 'dimmer',
+                                                                                    icon => 'hue_filled_outlet', },
 
- 'Flex RGBW'        => {name => 'LIGHTIFY Flex RGBW'                   ,type => 'Extended Color Light'    ,subType => 'extcolordimmer',},
- 'Classic A60 RGBW' => {name => 'LIGHTIFY Classic A60 RGBW'            ,type => 'Extended Color Light'    ,subType => 'extcolordimmer',},
- 'Gardenspot RGB'   => {name => 'LIGHTIFY Gardenspot Mini RGB'         ,type => 'Color Light'             ,subType => 'colordimmer',},
- 'Surface Light TW' => {name => 'LIGHTIFY Surface light tunable white' ,type => 'Color Temperature Light' ,subType => 'ctdimmer',},
- 'Classic A60 TW'   => {name => 'LIGHTIFY Classic A60 tunable white'   ,type => 'Color Temperature Light' ,subType => 'ctdimmer',},
- 'PAR16 50 TW'      => {name => 'LIGHTIFY PAR16 50 tunable white'      ,type => 'Color Temperature Light' ,subType => 'ctdimmer',},
+  RWL020    => {name => 'Hue Dimmer Switch'     ,type => 'ZLLSwitch'               ,subType => 'sensor',
+                                                                                    icon => 'hue_filled_hds', },
+  RWL021    => {name => 'Hue Dimmer Switch'     ,type => 'ZLLSwitch'               ,subType => 'sensor',
+                                                                                    icon => 'hue_filled_hds', },
+  ZGPSWITCH => {name => 'Hue Tap'               ,type => 'ZGPSwitch'               ,subType => 'sensor',
+                                                                                    icon => 'hue_filled_tap', },
+
+ 'FLS-H3'  => {name => 'dresden elektronik FLS-H lp'  ,type => 'Color temperature light' ,subType => 'ctdimmer',},
+ 'FLS-PP3' => {name => 'dresden elektronik FLS-PP lp' ,type => 'Extended color light'    ,subType => 'extcolordimmer', },
+
+ 'Flex RGBW'        => {name => 'LIGHTIFY Flex RGBW'                   ,type => 'Extended color light'    ,subType => 'extcolordimmer', },
+ 'Classic A60 RGBW' => {name => 'LIGHTIFY Classic A60 RGBW'            ,type => 'Extended color light'    ,subType => 'extcolordimmer', },
+ 'CLA60 RGBW OSRAM' => {name => 'SMART+ Classic A60 RGBW'              ,type => 'Extended color light'    ,subType => 'extcolordimmer', },
+ 'Gardenspot RGB'   => {name => 'LIGHTIFY Gardenspot Mini RGB'         ,type => 'Color light'             ,subType => 'colordimmer', },
+ 'Surface Light TW' => {name => 'LIGHTIFY Surface light tunable white' ,type => 'Color temperature light' ,subType => 'ctdimmer', },
+ 'Classic A60 TW'   => {name => 'LIGHTIFY Classic A60 tunable white'   ,type => 'Color temperature light' ,subType => 'ctdimmer', },
+ 'Classic B40 TW'   => {name => 'LIGHTIFY Classic B40 tunable white'   ,type => 'Color temperature light' ,subType => 'ctdimmer', },
+ 'PAR16 50 TW'      => {name => 'LIGHTIFY PAR16 50 tunable white'      ,type => 'Color temperature light' ,subType => 'ctdimmer', },
+ 'Classic A60'      => {name => 'LIGHTIFY Classic A60 dimmable light'  ,type => 'Dimmable Light'          ,subType => 'dimmer', },
+ 'Plug - LIGHTIFY'  => {name => 'LIGHTIFY Plug'                        ,type => 'On/Off plug-in unit '    ,subType => 'switch', },
+ 'Plug 01'          => {name => 'LIGHTIFY Plug'                        ,type => 'On/Off plug-in unit '    ,subType => 'switch', },
+
+ 'RM01' => {name => 'Busch-Jaeger ZigBee Light Link Relais', type => 'On/Off light'   ,subType => 'switch', },
+ 'DM01' => {name => 'Busch-Jaeger ZigBee Light Link Dimmer', type => 'Dimmable light' ,subType => 'dimmer', },
+);
+
+my %gamut = (
+  A => { r => { hue =>   0, x => 0.704,  y => 0.296  },
+         g => { hue => 100, x => 0.2151, y => 0.7106 },
+         b => { hue => 184, x => 0.138,  y => 0.08   }, },
+  B => { r => { hue =>   0, x => 0.675,  y => 0.322  },
+         g => { hue => 100, x => 0.409,  y => 0.518  },
+         b => { hue => 184, x => 0.167,  y => 0.04   }, },
+  C => { r => { hue =>   0, x => 0.692,  y => 0.308  },
+         g => { hue => 100, x => 0.17,   y => 0.7    },
+         b => { hue => 184, x => 0.153,  y => 0.048  }, },
 );
 
 my %dim_values = (
@@ -79,6 +151,7 @@ my %dim_values = (
 );
 
 
+my $HUEDevice_hasDataDumper = 1;
 
 sub HUEDevice_Initialize($)
 {
@@ -91,18 +164,24 @@ sub HUEDevice_Initialize($)
   $hash->{UndefFn}  = "HUEDevice_Undefine";
   $hash->{SetFn}    = "HUEDevice_Set";
   $hash->{GetFn}    = "HUEDevice_Get";
+  $hash->{AttrFn}   = "HUEDevice_Attr";
   $hash->{AttrList} = "IODev ".
                       "delayedUpdate:1 ".
-                      "realtimePicker:1 ".
+                      "ignoreReachable:1,0 ".
+                      "realtimePicker:1,0 ".
                       "color-icons:1,2 ".
                       "transitiontime ".
                       "model:".join(",", sort map { $_ =~ s/ /#/g ;$_} keys %hueModels)." ".
+                      "setList:textField-long ".
                       "subType:extcolordimmer,colordimmer,ctdimmer,dimmer,switch ".
                       $readingFnAttributes;
 
   #$hash->{FW_summaryFn} = "HUEDevice_summaryFn";
 
   FHEM_colorpickerInit();
+
+  eval "use Data::Dumper";
+  $HUEDevice_hasDataDumper = 0 if($@);
 }
 
 sub
@@ -112,27 +191,52 @@ HUEDevice_devStateIcon($)
   $hash = $defs{$hash} if( ref($hash) ne 'HASH' );
 
   return undef if( !$hash );
-  return undef if( $hash->{helper}->{devtype} );
-
   my $name = $hash->{NAME};
 
-  return ".*:light_question" if( !$hash->{helper}{reachable} );
+  if( $hash->{helper}->{devtype} && $hash->{helper}->{devtype} eq 'G' ) {
+    if( $hash->{IODev} ) {
+      my $createGroupReadings = AttrVal($hash->{IODev}{NAME},"createGroupReadings",undef);
+      if( defined($createGroupReadings) ) {
+        return undef if( $createGroupReadings && !AttrVal($hash->{NAME},"createGroupReadings", 1) );
+        return undef if( !$createGroupReadings && !AttrVal($hash->{NAME},"createGroupReadings", undef) );
+
+        return ".*:light_question:toggle" if( !$hash->{helper}{reachable} );
+
+        return ".*:off:toggle" if( ReadingsVal($name,"onoff","0") eq "0" );
+
+        my $pct = ReadingsVal($name,"pct","100");
+        my $s = $dim_values{int($pct/7)};
+        $s="on" if( $pct eq "100" );
+
+        return ".*:$s:toggle";
+      }
+    }
+
+    #return ".*:off:toggle" if( !ReadingsVal($name,'any_on',0) );
+    #return ".*:on:toggle" if( ReadingsVal($name,'any_on',0) );
+
+    return undef;
+  }
+
+  return undef if( $hash->{helper}->{devtype} );
+
+  return ".*:light_question:toggle" if( !$hash->{helper}{reachable} );
 
   return ".*:off:toggle" if( ReadingsVal($name,"state","off") eq "off" );
 
-  my $percent = ReadingsVal($name,"pct","100");
-  my $s = $dim_values{int($percent/7)};
-  $s="on" if( $percent eq "100" );
+  my $pct = ReadingsVal($name,"pct","100");
+  my $s = $dim_values{int($pct/7)};
+  $s="on" if( $pct eq "100" );
 
-  return ".*:$s:toggle" if( $attr{$name}{subType} eq "dimmer" );
   return ".*:$s:toggle" if( AttrVal($name, "model", "") eq "LWL001" );
+  return ".*:$s:toggle" if( AttrVal($name, "subType", "") eq "dimmer" );
 
   #return ".*:$s:toggle" if( AttrVal($name, "model", "") eq "LWB001" );
   #return ".*:$s:toggle" if( AttrVal($name, "model", "") eq "LWB003" );
   #return ".*:$s:toggle" if( AttrVal($name, "model", "") eq "LWB004" );
 
 
-  return ".*:$s@#".CommandGet("","$name RGB").":toggle" if( $percent < 100 && AttrVal($name, "color-icons", 0) == 2 );
+  return ".*:$s@#".CommandGet("","$name RGB").":toggle" if( $pct < 100 && AttrVal($name, "color-icons", 0) == 2 );
   return ".*:on@#".CommandGet("","$name rgb").":toggle" if( AttrVal($name, "color-icons", 0) != 0 );
 
   return '<div style="width:32px;height:19px;'.
@@ -166,7 +270,7 @@ sub HUEDevice_Define($$)
   my $iodev;
   my $i = 0;
   foreach my $param ( @args ) {
-    if( $param =~ m/IODev=(.*)/ ) {
+    if( $param =~ m/IODev=([^\s]*)/ ) {
       $iodev = $1;
       splice( @args, $i, 1 );
       last;
@@ -184,34 +288,36 @@ sub HUEDevice_Define($$)
   $hash->{ID} = $hash->{helper}->{devtype}.$id;
 
   AssignIoPort($hash,$iodev) if( !$hash->{IODev} );
-  if(defined($hash->{IODev}->{NAME})) {
+  if(defined($hash->{IODev})) {
     Log3 $name, 3, "$name: I/O device is " . $hash->{IODev}->{NAME};
   } else {
     Log3 $name, 1, "$name: no I/O device";
   }
+  $iodev = $hash->{IODev}->{NAME} if( defined($hash->{IODev}) );
 
   my $code = $hash->{ID};
-  $code = $hash->{IODev}->{NAME} ."-". $code if( defined($hash->{IODev}->{NAME}) );
+  $code = $iodev ."-". $code if( defined($iodev) );
   my $d = $modules{HUEDevice}{defptr}{$code};
-  return "HUEDevice device $hash->{ID} on HUEBridge $d->{IODev}->{NAME} already defined as $d->{NAME}."
+  return "HUEDevice device $hash->{ID} on HUEBridge $iodev already defined as $d->{NAME}."
          if( defined($d)
-             && $d->{IODev} == $hash->{IODev}
+             && $d->{IODev} && $hash->{IODev} && $d->{IODev} == $hash->{IODev}
              && $d->{NAME} ne $name );
 
   $modules{HUEDevice}{defptr}{$code} = $hash;
 
-  if( AttrVal($hash->{IODev}->{NAME}, "pollDevices", undef) ) {
-    $interval = 0 unless defined($interval);
-  } else {
-    $interval = 60 unless defined($interval);
-  }
+  if( AttrVal($iodev, "pollDevices", 1) ) {
+    $interval = undef unless defined($interval);
 
-  $interval = 60 if( $interval && $interval < 10 );
+  } elsif( !$hash->{helper}->{devtype} ||  $hash->{helper}->{devtype} ne 'G' ) {
+    $interval = 60 unless defined($interval);
+
+  }
 
   $args[3] = "" if( !defined( $args[3] ) );
   if( !$hash->{helper}->{devtype} ) {
-    $hash->{DEF} = "$id $args[3]";
+    $hash->{DEF} = "$id $args[3] IODev=$iodev" if( $iodev );
 
+    $interval = 60 if( defined($interval) && $interval < 10 );
     $hash->{INTERVAL} = $interval;
 
     $hash->{helper}{on} = -1;
@@ -225,7 +331,7 @@ sub HUEDevice_Define($$)
     $hash->{helper}{alert} = '';
     $hash->{helper}{effect} = '';
 
-    $hash->{helper}{percent} = -1;
+    $hash->{helper}{pct} = -1;
     $hash->{helper}{rgb} = "";
 
     $attr{$name}{devStateIcon} = '{(HUEDevice_devStateIcon($name),"toggle")}' if( !defined( $attr{$name}{devStateIcon} ) );
@@ -234,11 +340,28 @@ sub HUEDevice_Define($$)
     $attr{$name}{'color-icons'} = 2 if( !defined( $attr{$name}{'color-icons'} ) && $icon_path =~ m/openautomation/ );
 
   } elsif( $hash->{helper}->{devtype} eq 'G' ) {
-    $hash->{DEF} = "group $id $args[3]";
+    $hash->{DEF} = "group $id $args[3] IODev=$iodev" if( $iodev );
+
+    $interval = 60 if( defined($interval) && $interval < 10 );
+    $hash->{INTERVAL} = $interval;
+
+    $hash->{helper}{all_on} = -1;
+    $hash->{helper}{any_on} = -1;
+
     $attr{$name}{delayedUpdate} = 1 if( !defined( $attr{$name}{delayedUpdate} ) );
 
+    $attr{$name}{devStateIcon} = '{(HUEDevice_devStateIcon($name),"toggle")}' if( !defined( $attr{$name}{devStateIcon} ) );
+
+    my $icon_path = AttrVal("WEB", "iconPath", "default:fhemSVG:openautomation" );
+    $attr{$name}{'color-icons'} = 2 if( !defined( $attr{$name}{'color-icons'} ) && $icon_path =~ m/openautomation/ );
+
+    addToDevAttrList($name, "createActionReadings:1,0");
+    addToDevAttrList($name, "createGroupReadings:1,0");
+
   } elsif( $hash->{helper}->{devtype} eq 'S' ) {
-    $hash->{DEF} = "sensor $id $args[3]";
+    $hash->{DEF} = "sensor $id $args[3] IODev=$iodev" if( $iodev );
+
+    $interval = 60 if( defined($interval) && $interval < 1 );
     $hash->{INTERVAL} = $interval;
 
   }
@@ -276,7 +399,7 @@ HUEDevice_SetParam($$@)
     $value = int(1000000/$value);
     $cmd = 'ct';
   } elsif( $name && $cmd eq "toggle" ) {
-    $cmd = ReadingsVal($name,"state","on") eq "off" ? "on" :"off";
+    $cmd = ReadingsVal($name,"onoff",1) ? "off" :"on";
   } elsif( $cmd =~ m/^dim(\d+)/ ) {
     $value2 = $value;
     $value = $1;
@@ -291,11 +414,16 @@ HUEDevice_SetParam($$@)
     $cmd = 'bri';
   }
 
-  $cmd = "off" if($cmd eq "pct" && $value == 0 );
+  if($cmd eq "pct" && $value == 0 ) {
+    $cmd = "off";
+    $value = $value2;
+  }
 
   if($cmd eq 'on') {
     $obj->{'on'}  = JSON::true;
-    $obj->{'bri'} = 254 if( $name && ReadingsVal($name,"bri","0") eq 0 );
+    # temporary disablea for everything. hast do be disabled for groups.
+    # see https://forum.fhem.de/index.php/topic,11020.msg497825.html#msg497825
+    #$obj->{'bri'} = 254 if( $name && ReadingsVal($name,"bri","0") eq 0 && AttrVal($name, 'subType', 'dimmer') ne 'switch'  );
     $obj->{'transitiontime'} = $value * 10 if( defined($value) );
 
   } elsif($cmd eq 'off') {
@@ -407,7 +535,8 @@ HUEDevice_SetParam($$@)
   } elsif( $cmd eq "rgb" && $value =~ m/^(..)(..)(..)/) {
     my( $r, $g, $b ) = (hex($1)/255.0, hex($2)/255.0, hex($3)/255.0);
 
-    if( $name && !defined( AttrVal($name, "model", undef) ) ) {
+    if( $name && ( !defined( AttrVal($name, "model", undef) )
+                   || AttrVal($name, "model", undef) eq 'LLC020') ) {
       my( $h, $s, $v ) = Color::rgb2hsv($r,$g,$b);
 
       $obj->{'on'}  = JSON::true;
@@ -431,6 +560,11 @@ HUEDevice_SetParam($$@)
         #Log3 $name, 3, "xyY:". $x . " " . $y ." ". $Y;
 
         $Y = 1 if( $Y > 1 );
+
+        $x = 0 if( $x < 0);
+        $x = 1 if( $x > 1);
+        $y = 0 if( $y < 0);
+        $y = 1 if( $y > 1);
 
         my $bri  = maxNum($r,$g,$b);
         #my $bri  = $Y;
@@ -497,14 +631,27 @@ HUEDevice_Set($@)
       return undef;
 
     } elsif( $cmd eq 'savescene' ) {
-      return "usage: savescene <id>" if( @args != 1 );
+      if( $defs{$name}->{IODev}->{helper}{apiversion} && $defs{$name}->{IODev}->{helper}{apiversion} >= (1<<16) + (11<<8) ) {
+        return "usage: savescene <name>" if( @args < 1 );
 
-      return fhem( "set $hash->{IODev}{NAME} savescene $aa[1] $aa[1] $hash->{NAME}" );
+        return fhem( "set $hash->{IODev}{NAME} savescene ". join( ' ', @aa[1..@aa-1]). " $hash->{NAME}" );
+
+      } else {
+        return "usage: savescene <id>" if( @args != 1 );
+
+        return fhem( "set $hash->{IODev}{NAME} savescene $aa[1] $aa[1] $hash->{NAME}" );
+
+      }
+
+    } elsif( $cmd eq 'deletescene' ) {
+      return "usage: deletescene <id>" if( @args != 1 );
+
+      return fhem( "set $hash->{IODev}{NAME} deletescene $aa[1]" );
 
     } elsif( $cmd eq 'scene' ) {
       return "usage: scene <id>" if( @args != 1 );
 
-      my $obj = { 'scene' => $aa[1] };
+      my $obj = {'scene' => $aa[1]};
       $hash->{helper}->{update} = 1;
       my $result = HUEDevice_ReadFromServer($hash,"$hash->{ID}/action",$obj);
       return $result->{error}{description} if( $result->{error} );
@@ -528,14 +675,54 @@ HUEDevice_Set($@)
     }
 
   } elsif( $hash->{helper}->{devtype} eq 'S' ) {
+    my $shash = $defs{$name}->{IODev};
+
+    my $id = $hash->{ID};
+    $id = $1 if( $id =~ m/^S(\d.*)/ );
+
+    $hash->{".triggerUsed"} = 1;
 
     if( $cmd eq "statusRequest" ) {
       RemoveInternalTimer($hash);
       HUEDevice_GetUpdate($hash);
       return undef;
+
+    } elsif( $cmd eq 'json' ) {
+      return HUEBridge_Set( $shash, $shash->{NAME}, 'setsensor', $id, @args );
+
+      return undef;
+
+    } elsif( my @match = grep { $cmd eq $_ } keys %{($hash->{helper}{setList}{cmds}?$hash->{helper}{setList}{cmds}:{})} ) {
+      return HUEBridge_Set( $shash, $shash->{NAME}, 'setsensor', $id, $hash->{helper}{setList}{cmds}{$match[0]} );
+
+    } elsif( my $entries = $hash->{helper}{setList}{regex} ) {
+      foreach my $entry (@{$entries}) {
+        if( join(' ', @aa) =~ /$entry->{regex}/ ) {
+          my $VALUE1 = $1;
+          my $VALUE2 = $2;
+          my $VALUE3 = $3;
+          my $json = $entry->{json};
+          $json =~ s/\$1/$VALUE1/;
+          $json =~ s/\$2/$VALUE2/;
+          $json =~ s/\$3/$VALUE3/;
+          return HUEBridge_Set( $shash, $shash->{NAME}, 'setsensor', $id, $json );
+
+        }
+      }
     }
 
-    return "Unknown argument $cmd, choose one of statusRequest:noArg";
+    my $list = 'statusRequest:noArg';
+    $list .= ' json' if( $hash->{type} && $hash->{type} =~ /^CLIP/ );
+    $list .= ' '. join( ':noArg ', keys %{$hash->{helper}{setList}{cmds}} ) if( $hash->{helper}{setList}{cmds} );
+    $list .= ':noArg' if( $hash->{helper}{setList}{cmds} );
+    if( my $entries = $hash->{helper}{setList}{regex} ) {
+      foreach my $entry (@{$entries}) {
+        $list .= ' ';
+        $list .= (split( ' ', $entry->{regex} ))[0];
+      }
+    }
+
+    return SetExtensions($hash, $list, $name, @aa);
   }
 
   if( $cmd eq 'rename' ) {
@@ -555,6 +742,7 @@ HUEDevice_Set($@)
   }
 
   if( (my $joined = join(" ", @aa)) =~ /:/ ) {
+    $joined =~ s/on-till\s+[^\s]+//g; #bad workaround for: https://forum.fhem.de/index.php/topic,61636.msg728557.html#msg728557
     my @cmds = split(":", $joined);
     for( my $i = 0; $i <= $#cmds; ++$i ) {
       HUEDevice_SetParam($name, \%obj, split(" ", $cmds[$i]) );
@@ -571,10 +759,16 @@ HUEDevice_Set($@)
     HUEDevice_SetParam($name, \%obj, $cmd, $value, $value2);
   }
 
-  if( %obj && !defined($obj{transitiontime} ) ) {
-    my $transitiontime = AttrVal($name, "transitiontime", undef);
+  if( %obj ) {
+    if( defined($obj{on}) ) {
+      $hash->{desired} = $obj{on}?1:0;
+    }
 
-    $obj{transitiontime} = 0 + $transitiontime if( defined( $transitiontime ) );
+    if( !defined($obj{transitiontime}) ) {
+      my $transitiontime = AttrVal($name, "transitiontime", undef);
+
+      $obj{transitiontime} = 0 + $transitiontime if( defined( $transitiontime ) );
+    }
   }
 
 #  if( $hash->{helper}->{update_timeout} == -1 ) {
@@ -599,15 +793,14 @@ HUEDevice_Set($@)
       $result = HUEDevice_ReadFromServer($hash,"$hash->{ID}/state",\%obj);
     }
 
-    RemoveInternalTimer("SE $name on-for-timer");
-    #RemoveInternalTimer("SE $name off-for-timer");
+    SetExtensionsCancel($hash);
 
     if( defined($result) && $result->{'error'} ) {
       $hash->{STATE} = $result->{'error'}->{'description'};
       return undef;
     }
 
-    $hash->{".triggerUsed"} = 1 if( $hash->{helper}->{devtype} ne 'G' );
+    $hash->{".triggerUsed"} = 1;
     return undef if( !defined($result) );
 
     if( $hash->{helper}->{update_timeout} == -1 ) {
@@ -625,18 +818,25 @@ HUEDevice_Set($@)
   my $subtype = AttrVal($name, "subType", "extcolordimmer");
 
   my $list = "off:noArg on:noArg toggle:noArg statusRequest:noArg";
-  $list .= " pct:slider,0,1,100 bri:slider,0,1,254" if( $subtype =~ m/dimmer/ );
-  $list .= " dimUp:noArg dimDown:noArg" if( !$hash->{helper}->{devtype} && $subtype =~ m/dimmer/ );
-  $list .= " satUp:noArg satDown:noArg hueUp:noArg hueDown:noArg ctUp:noArg ctDown:noArg " if( $defs{$name}->{IODev}->{helper}{apiversion} && $defs{$name}->{IODev}->{helper}{apiversion} >= (1<<16) + (7<<8) );
+  $list .= " pct:colorpicker,BRI,0,1,100 bri:colorpicker,BRI,0,1,254" if( $subtype =~ m/dimmer/ );
   $list .= " rgb:colorpicker,RGB" if( $subtype =~ m/color/ );
   $list .= " color:colorpicker,CT,2000,1,6500 ct:colorpicker,CT,154,1,500" if( $subtype =~ m/ct|ext/ );
   $list .= " hue:colorpicker,HUE,0,1,65535 sat:slider,0,1,254 xy effect:none,colorloop" if( $subtype =~ m/color/ );
+
+  if( $defs{$name}->{IODev}->{helper}{apiversion} && $defs{$name}->{IODev}->{helper}{apiversion} >= (1<<16) + (7<<8) ) {
+    $list .= " dimUp:noArg dimDown:noArg" if( $subtype =~ m/dimmer/ );
+    $list .= " ctUp:noArg ctDown:noArg" if( $subtype =~ m/ct|ext/ );
+    $list .= " hueUp:noArg hueDown:noArg satUp:noArg satDown:noArg" if( $subtype =~ m/color/ );
+  } elsif( !$hash->{helper}->{devtype} && $subtype =~ m/dimmer/ ) {
+    $list .= " dimUp:noArg dimDown:noArg";
+  }
+
   $list .= " alert:none,select,lselect";
 
   #$list .= " dim06% dim12% dim18% dim25% dim31% dim37% dim43% dim50% dim56% dim62% dim68% dim75% dim81% dim87% dim93% dim100%" if( $subtype =~ m/dimmer/ );
 
   $list .= " lights" if( $hash->{helper}->{devtype} eq 'G' );
-  $list .= " savescene scene" if( $hash->{helper}->{devtype} eq 'G' );
+  $list .= " savescene deletescene scene" if( $hash->{helper}->{devtype} eq 'G' );
   $list .= " rename";
 
   return SetExtensions($hash, $list, $name, @aa);
@@ -804,29 +1004,15 @@ sub
 HUEDevice_ReadFromServer($@)
 {
   my ($hash,@a) = @_;
-
   my $name = $hash->{NAME};
+
+  #return if(IsDummy($name) || IsIgnored($name));
+
   no strict "refs";
   my $ret;
   unshift(@a,$name);
   #$ret = IOWrite($hash, @a);
   $ret = IOWrite($hash,$hash,@a);
-  use strict "refs";
-  return $ret;
-  return if(IsDummy($name) || IsIgnored($name));
-  my $iohash = $hash->{IODev};
-  if(!$iohash ||
-     !$iohash->{TYPE} ||
-     !$modules{$iohash->{TYPE}} ||
-     !$modules{$iohash->{TYPE}}{ReadFn}) {
-    Log3 $name, 5, "No I/O device or ReadFn found for $name";
-    return;
-  }
-
-  no strict "refs";
-  #my $ret;
-  unshift(@a,$name);
-  $ret = &{$modules{$iohash->{TYPE}}{ReadFn}}($iohash, @a);
   use strict "refs";
   return $ret;
 }
@@ -850,7 +1036,6 @@ HUEDevice_GetUpdate($)
 
     HUEDevice_Parse($hash,$result);
 
-    return undef;
   } elsif( $hash->{helper}->{devtype} eq 'S' ) {
   }
 
@@ -859,10 +1044,12 @@ HUEDevice_GetUpdate($)
     InternalTimer(gettimeofday()+$hash->{INTERVAL}, "HUEDevice_GetUpdate", $hash, 0) if( $hash->{INTERVAL} );
   }
 
+  return undef if( $hash->{helper}->{devtype} eq 'G' );
+
   my $result = HUEDevice_ReadFromServer($hash,$hash->{ID});
   if( !defined($result) ) {
     $hash->{helper}{reachable} = 0;
-    $hash->{STATE} = "unknown";
+    #$hash->{STATE} = "unknown";
     return;
   } elsif( $result->{'error'} ) {
     $hash->{helper}{reachable} = 0;
@@ -871,8 +1058,35 @@ HUEDevice_GetUpdate($)
   }
 
   HUEDevice_Parse($hash,$result);
+  HUEBridge_updateGroups($hash->{IODev}, $hash->{ID}) if( $hash->{IODev}{TYPE} eq 'HUEBridge' );
 }
 
+sub
+HUEDeviceSetIcon($;$)
+{
+  my ($hash,$force) = @_;
+  $hash = $defs{$hash} if( ref($hash) ne 'HASH' );
+
+  return undef if( !$hash );
+  my $name = $hash->{NAME};
+
+  return if( defined($attr{$name}{icon}) && !$force );
+
+  if( $hash->{modelid} ) {
+    my $model = $hueModels{$hash->{modelid}};
+    return undef if( !$model );
+
+    my $icon = $model->{icon};
+    return undef if( !$icon );
+
+    $attr{$name}{icon} = $icon;
+  } elsif( $hash->{class} ) {
+    my $class = lc( $hash->{class} );
+    $class =~ s/ room//;
+
+    $attr{$name}{icon} = "hue_room_$class";
+  }
+}
 sub
 HUEDevice_Parse($$)
 {
@@ -880,20 +1094,94 @@ HUEDevice_Parse($$)
   my $name = $hash->{NAME};
 
   if( ref($result) ne "HASH" ) {
-    Log3 $name, 2, "$name: got wrong status message for $name: $result";
+    if( ref($result) && $HUEDevice_hasDataDumper) {
+      Log3 $name, 2, "$name: got wrong status message for $name: ". Dumper $result;
+    } else {
+      Log3 $name, 2, "$name: got wrong status message for $name: $result";
+    }
     return undef;
   }
 
   Log3 $name, 4, "parse status message for $name";
-  #Log3 $name, 5, Dumper $result;
+  Log3 $name, 5, Dumper $result if($HUEDevice_hasDataDumper);
 
   $hash->{name} = $result->{name} if( defined($result->{name}) );
   $hash->{type} = $result->{type} if( defined($result->{type}) );
+  $hash->{class} = $result->{class} if( defined($result->{class}) );
   $hash->{uniqueid} = $result->{uniqueid} if( defined($result->{uniqueid}) );
 
   if( $hash->{helper}->{devtype} eq 'G' ) {
-    $hash->{STATE} = 'Initialized';
-    $hash->{lights} = join( ",", @{$result->{lights}} ) if( $result->{lights} );
+    if( $result->{lights} ) {
+      $hash->{lights} = join( ",", sort { $a <=> $b } @{$result->{lights}} );
+    } else {
+      $hash->{lights} = '';
+    }
+
+    if( ref($result->{state}) eq 'HASH' ) {
+      my %readings;
+
+      if( $result->{state} ) {
+        $readings{all_on} = $result->{state}{all_on};
+        $readings{any_on} = $result->{state}{any_on};
+      }
+      if( AttrVal($name, 'createActionReadings', 0) ) {
+      if( my $state = $result->{action} ) {
+        $readings{ct} = $state->{ct}; $readings{ct} .= " (".int(1000000/$readings{ct})."K)" if( $readings{ct} );
+        $readings{hue} = $state->{hue};
+        $readings{sat} = $state->{sat};
+        $readings{bri} = $state->{bri}; $readings{bri} = $hash->{helper}{bri} if( !defined($readings{bri}) );
+        $readings{xy} = $state->{'xy'}->[0] .",". $state->{'xy'}->[1] if( defined($state->{'xy'}) );
+        $readings{colormode} = $state->{colormode};
+
+        $readings{alert} = $state->{alert};
+        $readings{effect} = $state->{effect};
+
+        $readings{reachable} = $state->{reachable}?1:0 if( defined($state->{reachable}) );
+
+        my $s = '';
+        my $pct = -1;
+        my $on = $state->{on}; $readings{on} = $hash->{helper}{onoff} if( !defined($on) );
+        if( $on ) {
+          $s = 'on';
+          $readings{onoff} = 1;
+
+          if( !defined($readings{bri}) || AttrVal($name, 'subType', 'dimmer') eq 'switch' ) {
+            $pct = 100;
+
+          } else {
+            $pct = int($readings{bri} * 99 / 254 + 1);
+            if( $pct > 0
+                && $pct < 100  ) {
+              $s = $dim_values{int($pct/7)};
+            }
+            $s = 'off' if( $pct == 0 );
+          }
+        } else {
+          $on = 0;
+          $s = 'off';
+          $pct = 0;
+
+          $readings{onoff} = 0;
+        }
+
+        $readings{pct} = $pct;
+
+        $s = 'unreachable' if( defined($readings{reachable}) && !$readings{reachable} );
+        #$readings{state} = $s;
+
+      }
+      }
+
+      readingsBeginUpdate($hash);
+      foreach my $key ( keys %readings ) {
+        if( defined($readings{$key}) ) {
+          readingsBulkUpdate($hash, $key, $readings{$key}, 1) if( !defined($hash->{helper}{$key}) || $hash->{helper}{$key} ne $readings{$key} );
+          $hash->{helper}{$key} = $readings{$key};
+        }
+      }
+      readingsEndUpdate($hash,1);
+
+    }
 
     if( defined($hash->{helper}->{update}) ) {
       delete $hash->{helper}->{update};
@@ -905,26 +1193,110 @@ HUEDevice_Parse($$)
   }
 
   $hash->{modelid} = $result->{modelid} if( defined($result->{modelid}) );
+  $hash->{productid} = $result->{productid} if( defined($result->{productid}) );
+  $hash->{swversion} = $result->{swversion} if( defined($result->{swversion}) );
+  $hash->{swconfigid} = $result->{swconfigid} if( defined($result->{swconfigid}) );
   $hash->{manufacturername} = $result->{manufacturername} if( defined($result->{manufacturername}) );
   $hash->{luminaireuniqueid} = $result->{luminaireuniqueid} if( defined($result->{luminaireuniqueid}) );
-  $hash->{swversion} = $result->{swversion} if( defined($result->{swversion}) );
 
   if( $hash->{helper}->{devtype} eq 'S' ) {
+    my %readings;
 
-    if( $result->{state} ) {
-      if( $result->{state}{lastupdated} ne 'none' ) {
-        substr( $result->{state}{lastupdated}, 10, 1, ' ' );
-        if( $result->{state}{buttonevent}
-            && ReadingsTimestamp($name,"state","") ne $result->{state}{lastupdated} ) {
-          readingsBeginUpdate($hash);
-          $hash->{".updateTimestamp"} = $result->{state}{lastupdated};
-          $hash->{CHANGETIME}[0] = $result->{state}{lastupdated};
-          readingsBulkUpdate($hash, "state", $result->{state}{buttonevent}, 1);
-          readingsEndUpdate($hash,1);
-          delete $hash->{CHANGETIME};
-        }
-      }
+    if( my $config = $result->{config} ) {
+      $hash->{on} = $config->{on}?1:0 if( defined($config->{on}) );
+      $hash->{reachable} = $config->{reachable}?1:0 if( defined($config->{reachable}) );
+
+      $hash->{url} = $config->{url} if( defined($config->{url}) );
+
+      $hash->{lat} = $config->{lat} if( defined($config->{lat}) );
+      $hash->{long} = $config->{long} if( defined($config->{long}) );
+      $hash->{sunriseoffset} = $config->{sunriseoffset} if( defined($config->{sunriseoffset}) );
+      $hash->{sunsetoffset} = $config->{sunsetoffset} if( defined($config->{sunsetoffset}) );
+
+      $hash->{tholddark} = $config->{tholddark} if( defined($config->{tholddark}) );
+      $hash->{sensitivity} = $config->{sensitivity} if( defined($config->{sensitivity}) );
+
+      $readings{battery} = $config->{battery} if( defined($config->{battery}) );
+      $readings{reachable} = $config->{reachable} if( defined($config->{reachable}) );
     }
+
+    my $lastupdated;
+    if( my $state = $result->{state} ) {
+      $lastupdated = $state->{lastupdated};
+
+      return undef if( !$lastupdated );
+      return undef if( $lastupdated eq 'none' );
+
+      substr( $lastupdated, 10, 1, ' ' ) if($lastupdated);
+
+      my $offset = 0;
+      if( my $iohash = $hash->{IODev} ) {
+        substr( $lastupdated, 10, 1, '_' );
+        my $sec = SVG_time_to_sec($lastupdated);
+
+        if( my $offset = $iohash->{helper}{offsetUTC} ) {
+          $sec += $offset;
+          Log3 $name, 4, "$name: offsetUTC: $offset";
+        }
+
+        $lastupdated = FmtDateTime($sec);
+      }
+
+      $hash->{lastupdated} = ReadingsVal( $name, '.lastupdated', undef ) if( !$hash->{lastupdated} );
+      return undef if( $hash->{lastupdated} && $hash->{lastupdated} eq $lastupdated );
+
+      Log3 $name, 4, "$name: lastupdated: $lastupdated, hash->{lastupdated}:  $hash->{lastupdated}";
+      Log3 $name, 5, "$name: ". Dumper $result if($HUEDevice_hasDataDumper);
+
+      $hash->{lastupdated} = $lastupdated;
+
+      $readings{state} = $state->{status} if( defined($state->{status}) );
+      $readings{state} = $state->{flag}?'1':'0' if( defined($state->{flag}) );
+      $readings{state} = $state->{open}?'open':'closed' if( defined($state->{open}) );
+      $readings{state} = $state->{lightlevel} if( defined($state->{lightlevel}) && !defined($state->{lux}) );
+      $readings{state} = $state->{buttonevent} if( defined($state->{buttonevent}) );
+      $readings{state} = $state->{presence}?'motion':'nomotion' if( defined($state->{presence}) );
+
+      $readings{dark} = $state->{dark}?'1':'0' if( defined($state->{dark}) );
+      $readings{humidity} = $state->{humidity} * 0.01 if( defined($state->{humidity}) );
+      $readings{daylight} = $state->{daylight}?'1':'0' if( defined($state->{daylight}) );
+      $readings{temperature} = $state->{temperature} * 0.01 if( defined($state->{temperature}) );
+      $readings{pressure} = $state->{pressure} if( defined($state->{pressure}) );
+      $readings{lightlevel} = $state->{lightlevel} if( defined($state->{lightlevel}) );
+      $readings{lux} = $state->{lux} if( defined($state->{lux}) );
+      $readings{power} = $state->{power} if( defined($state->{power}) );
+      $readings{voltage} = $state->{voltage} if( defined($state->{voltage}) );
+      $readings{current} = $state->{current} if( defined($state->{current}) );
+      $readings{consumption} = $state->{consumption} if( defined($state->{consumption}) );
+      $readings{water} = $state->{water} if( defined($state->{water}) );
+    }
+
+    if( scalar keys %readings ) {
+       readingsBeginUpdate($hash);
+
+       my $i = 0;
+       foreach my $key ( keys %readings ) {
+         if( defined($readings{$key}) ) {
+           if( $lastupdated ) {
+             $hash->{'.updateTimestamp'} = $lastupdated;
+             $hash->{CHANGETIME}[$i] = $lastupdated;
+           }
+
+           readingsBulkUpdate($hash, $key, $readings{$key}, 1);
+
+           ++$i;
+         }
+       }
+
+       if( $lastupdated ) {
+         $hash->{'.updateTimestamp'} = $lastupdated;
+         $hash->{CHANGETIME}[$i] = $lastupdated;
+         readingsBulkUpdate($hash, '.lastupdated', $lastupdated, 0);
+       }
+
+       readingsEndUpdate($hash,1);
+       delete $hash->{CHANGETIME};
+     }
 
     return undef;
 
@@ -938,6 +1310,8 @@ HUEDevice_Parse($$)
       if( defined($hueModels{$attr{$name}{model}}{subType}) ) {
         $attr{$name}{subType} = $hueModels{$attr{$name}{model}}{subType};
 
+        HUEDeviceSetIcon($hash) if( $hash->{helper}{fromAutocreate} );
+
       } elsif( $attr{$name}{model} =~ m/TW$/ ) {
         $attr{$name}{subType} = 'ctdimmer';
 
@@ -949,21 +1323,24 @@ HUEDevice_Parse($$)
 
       }
 
-    } elsif( $hash->{type} ) {
+      delete $hash->{helper}{fromAutocreate};
+    }
+
+    if( !defined($attr{$name}{subType}) && $hash->{type} ) {
       if( $hash->{type} eq "Extended color light" ) {
         $attr{$name}{subType} = 'extcolordimmer';
 
       } elsif( $hash->{type} eq "Color light" ) {
         $attr{$name}{subType} = 'colordimmer';
 
-      } elsif( $hash->{type} eq "Color Temperature Light" ) {
+      } elsif( $hash->{type} eq "Color temperature light" ) {
         $attr{$name}{subType} = 'ctdimmer';
 
-      } elsif( $hash->{type} eq "Dimmable light" ) {
+      } elsif( $hash->{type} =~ m/Dimmable/ ) {
         $attr{$name}{subType} = 'dimmer';
 
-      } elsif( $hash->{type} eq "Dimmable plug-in unit" ) {
-        $attr{$name}{subType} = 'dimmer';
+      } elsif( $hash->{type} =~ m/On.Off/ ) {
+        $attr{$name}{subType} = 'switch';
 
       }
 
@@ -998,6 +1375,7 @@ HUEDevice_Parse($$)
      $on = $hash->{helper}{on} if( !defined($on) );
   my $reachable = $state->{reachable}?1:0;
      $reachable = $hash->{helper}{reachable} if( !defined($state->{reachable}) );
+     $reachable = 1 if( !$reachable && AttrVal($name, 'ignoreReachable', 0) );
   my $colormode = $state->{'colormode'};
   my $bri       = $state->{'bri'};
      $bri = $hash->{helper}{bri} if( !defined($bri) );
@@ -1027,29 +1405,35 @@ HUEDevice_Parse($$)
   if( defined($effect) && $effect ne $hash->{helper}{effect} ) {readingsBulkUpdate($hash,"effect",$effect);}
 
   my $s = '';
-  my $percent;
+  my $pct = -1;
   if( $on )
     {
       $s = 'on';
       if( $on != $hash->{helper}{on} ) {readingsBulkUpdate($hash,"onoff",1);}
 
-      $percent = int($bri * 99 / 254 + 1);
-      if( $percent > 0
-          && $percent < 100  ) {
-        $s = $dim_values{int($percent/7)};
+      if( $bri < 0 || AttrVal($name, 'subType', 'dimmer') eq 'switch' ) {
+          $pct = 100;
+
+      } else {
+        $pct = int($bri * 99 / 254 + 1);
+        if( $pct > 0
+            && $pct < 100  ) {
+          $s = $dim_values{int($pct/7)};
+        }
+        $s = 'off' if( $pct == 0 );
+
       }
-      $s = 'off' if( $percent == 0 );
     }
   else
     {
       $on = 0;
       $s = 'off';
-      $percent = 0;
+      $pct = 0;
       if( $on != $hash->{helper}{on} ) {readingsBulkUpdate($hash,"onoff",0);}
     }
 
-  if( $percent != $hash->{helper}{percent} ) {readingsBulkUpdate($hash,"pct", $percent);}
-  #if( $percent != $hash->{helper}{percent} ) {readingsBulkUpdate($hash,"level", $percent . ' %');}
+  if( $pct != $hash->{helper}{pct} ) {readingsBulkUpdate($hash,"pct", $pct);}
+  #if( $pct != $hash->{helper}{pct} ) {readingsBulkUpdate($hash,"level", $pct . ' %');}
 
   $s = 'unreachable' if( !$reachable );
 
@@ -1064,23 +1448,58 @@ HUEDevice_Parse($$)
   $hash->{helper}{alert} = $alert if( defined($alert) );
   $hash->{helper}{effect} = $effect if( defined($effect) );
 
-  $hash->{helper}{percent} = $percent;
+  $hash->{helper}{pct} = $pct;
+
+  my $changed = $hash->{CHANGED}?1:0;
 
   if( $s ne $hash->{STATE} ) {readingsBulkUpdate($hash,"state",$s);}
 
   readingsEndUpdate($hash,1);
 
-  my $rgb = CommandGet("","$name rgb");
-  if( $rgb ne $hash->{helper}{rgb} ) { readingsSingleUpdate($hash,"rgb", $rgb,1); };
-  $hash->{helper}{rgb} = $rgb;
+  if( defined($colormode) ) {
+    my $rgb = CommandGet("","$name rgb");
+    if( $rgb ne $hash->{helper}{rgb} ) { readingsSingleUpdate($hash,"rgb", $rgb,1); };
+    $hash->{helper}{rgb} = $rgb;
+  }
 
   $hash->{helper}->{update_timeout} = -1;
   RemoveInternalTimer($hash);
+
+  return $changed;
+}
+
+sub
+HUEDevice_Attr($$$;$)
+{
+  my ($cmd, $name, $attrName, $attrVal) = @_;
+
+  if( $attrName eq "setList" ) {
+    my $hash = $defs{$name};
+    delete $hash->{helper}{setList};
+    return "$name is not a sensor device" if( $hash->{helper}->{devtype} ne 'S' );
+    return "$name is not a CLIP sensor device" if( $hash->{type} && $hash->{type} !~ m/^CLIP/ );
+    if( $cmd eq "set" && $attrVal ) {
+      foreach my $line ( split( "\n", $attrVal ) ) {
+        my($cmd,$json) = split( ":", $line,2 );
+        if( $cmd =~ m'^/(.*)/$' ) {
+          my $regex = $1;
+          $hash->{helper}{setList}{'regex'} = [] if( !$hash->{helper}{setList}{':regex'} );
+          push @{$hash->{helper}{setList}{'regex'}}, { regex => $regex, json => $json };
+        } else {
+          $hash->{helper}{setList}{cmds}{$cmd} = $json;
+        }
+      }
+    }
+  }
+
+  return;
 }
 
 1;
 
 =pod
+=item summary    devices connected to a phillips hue bridge or a osram lightify gateway
+=item summary_DE Geräte an einer Philips HUE Bridge oder einem Osram LIGHTIFY Gateway
 =begin html
 
 <a name="HUEDevice"></a>
@@ -1121,7 +1540,7 @@ HUEDevice_Parse($$)
     the colortemperature in mireds and kelvin</li>
     <li>hue<br>
     the current hue</li>
-    <li>level<br>
+    <li>pct<br>
     the current brightness in percent</li>
     <li>onoff<br>
     the current on/off state as 0 or 1</li>
@@ -1134,7 +1553,8 @@ HUEDevice_Parse($$)
     <br>
     Notes:
       <ul>
-      <li>groups have no readings.</li>
+      <li>with current bridge firware versions groups have <code>all_on</code> and <code>any_on</code> readings,
+          with older firmware versions groups have no readings.</li>
       <li>not all readings show the actual device state. all readings not related to the current colormode have to be ignored.</li>
       <li>the actual state of a device controlled by a living colors or living whites remote can be different and will
           be updated after some time.</li>
@@ -1159,13 +1579,13 @@ HUEDevice_Parse($$)
       <li>dimUp [delta]</li>
       <li>dimDown [delta]</li>
       <li>ct &lt;value&gt; [&lt;ramp-time&gt;]<br>
-        set colortemperature to &lt;value&gt; in mireds (range is 154-500) or kelvin (rankge is 2000-6493).</li>
+        set colortemperature to &lt;value&gt; in mireds (range is 154-500) or kelvin (range is 2000-6493).</li>
       <li>ctUp [delta]</li>
       <li>ctDown [delta]</li>
       <li>hue &lt;value&gt; [&lt;ramp-time&gt;]<br>
         set hue to &lt;value&gt;; range is 0-65535.</li>
-      <li>humUp [delta]</li>
-      <li>humDown [delta]</li>
+      <li>hueUp [delta]</li>
+      <li>hueDown [delta]</li>
       <li>sat &lt;value&gt; [&lt;ramp-time&gt;]<br>
         set saturation to &lt;value&gt;; range is 0-254.</li>
       <li>satUp [delta]</li>
@@ -1183,6 +1603,7 @@ HUEDevice_Parse($$)
       <li>immediateUpdate</li>
       <br>
       <li>savescene &lt;id&gt;</li>
+      <li>deletescene &lt;id&gt;</li>
       <li>scene</li>
       <br>
       <li>lights &lt;lights&gt;<br>
@@ -1218,6 +1639,16 @@ HUEDevice_Parse($$)
     <li>color-icon<br>
       1 -> use lamp color as icon color and 100% shape as icon shape<br>
       2 -> use lamp color scaled to full brightness as icon color and dim state as icon shape</li>
+    <li>createActionReadings<br>
+      create readings for the last action in group devices</li>
+    <li>createGroupReadings<br>
+      create 'artificial' readings for group devices. default depends on the createGroupReadings setting in the bridge device.</li>
+    <li>ignoreReachable<br>
+      ignore the reachable state that is reported by the hue bridge. assume the device is allways reachable.</li>
+    <li>setList<br>
+      The list of know set commands for sensor type devices. one command per line, eg.: <code><br>
+   attr mySensor setList present:{&lt;json&gt;}\<br>
+absent:{&lt;json&gt;}</code></li>
     <li>subType<br>
       extcolordimmer -> device has rgb and color temperatur control<br>
       colordimmer -> device has rgb controll<br>

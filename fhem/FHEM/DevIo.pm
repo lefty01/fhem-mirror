@@ -1,15 +1,15 @@
 ##############################################
-# $Id$
+# $Id: DevIo.pm 17702 2018-11-07 19:02:28Z rudolfkoenig $
 package main;
 
 sub DevIo_CloseDev($@);
 sub DevIo_Disconnected($);
 sub DevIo_Expect($$$);
-sub DevIo_OpenDev($$$);
+sub DevIo_OpenDev($$$;$);
 sub DevIo_SetHwHandshake($);
 sub DevIo_SimpleRead($);
 sub DevIo_SimpleReadWithTimeout($$);
-sub DevIo_SimpleWrite($$$);
+sub DevIo_SimpleWrite($$$;$);
 sub DevIo_TimeoutRead($$);
 
 sub
@@ -21,6 +21,8 @@ DevIo_setStates($$)
 }
 
 ########################
+# Try to read once from the device.
+# "private" function
 sub
 DevIo_DoSimpleRead($)
 {
@@ -39,16 +41,24 @@ DevIo_DoSimpleRead($)
     $buf = "" if(!defined($res));
 
   } elsif($hash->{IODev}) {
-    $buf = $hash->{IODevRxBuffer};
-    $hash->{IODevRxBuffer} = "";
-    $buf = "" if(!defined($buf));
+
+    if($hash->{IOReadFn}) {
+      $buf = CallFn($hash->{IODev}{NAME},"IOReadFn",$hash);
+
+    } else {
+      $buf = $hash->{IODevRxBuffer};
+      $hash->{IODevRxBuffer} = "";
+      $buf = "" if(!defined($buf));
+    }
 
   }
   return $buf;
 }
 
 ########################
-# If called directly after a select, it should not block.
+# This is the function to read data, to be called in ReadFn.
+# If there is no data, sets the device to disconnected, which results in
+# polling via ReadyFn, trying to open it.
 sub
 DevIo_SimpleRead($)
 {
@@ -58,7 +68,7 @@ DevIo_SimpleRead($)
   ###########
   # Lets' try again: Some drivers return len(0) on the first read...
   if(defined($buf) && length($buf) == 0) {
-    $buf = DevIo_SimpleReadWithTimeout($hash, 1);
+    $buf = DevIo_SimpleReadWithTimeout($hash, 0.01); # Forum #57806
   }
 
   if(!defined($buf) || length($buf) == 0) {
@@ -71,7 +81,7 @@ DevIo_SimpleRead($)
 ########################
 # wait at most timeout seconds until the file handle gets ready
 # for reading; returns undef on timeout
-# NOTE1: FHEM can be blocked for $timeout seconds!
+# NOTE1: FHEM can be blocked for $timeout seconds, DO NOT USE IT!
 # NOTE2: This works on Windows only for TCP connections
 sub
 DevIo_SimpleReadWithTimeout($$)
@@ -86,8 +96,9 @@ DevIo_SimpleReadWithTimeout($$)
 }
 
 ########################
-# Read until you get the timeout. Use it with care since it waits _at least_
-# timeout seconds, and it works on Windows only for TCP/IP connections
+# Read until the timeout occures
+# NOTE1: FHEM WILL be blocked for $timeout seconds, DO NOT USE IT!
+# NOTE2: This works on Windows only for TCP connections
 sub
 DevIo_TimeoutRead($$)
 {
@@ -107,25 +118,30 @@ DevIo_TimeoutRead($$)
 }
 
 ########################
-# Input is HEX, with header and CRC
+# Function to write data
 sub
-DevIo_SimpleWrite($$$)
+DevIo_SimpleWrite($$$;$)
 {
-  my ($hash, $msg, $ishex) = @_;
+  my ($hash, $msg, $type, $addnl) = @_; # Type: 0:binary, 1:hex, 2:ASCII
   return if(!$hash);
 
   my $name = $hash->{NAME};
-  Log3 ($name, 5, $ishex ? "SW: $msg" : "SW: ".unpack("H*",$msg));
+  Log3 ($name, 5, $type ? "SW: $msg" : "SW: ".unpack("H*",$msg));
 
-  $msg = pack('H*', $msg) if($ishex);
-  if($hash->{USBDev}) {
+  $msg = pack('H*', $msg) if($type && $type == 1);
+  $msg .= "\n" if($addnl);
+  if($hash->{USBDev}){
     $hash->{USBDev}->write($msg);
+
   } elsif($hash->{TCPDev}) {
     syswrite($hash->{TCPDev}, $msg);
-  } elsif($hash->{DIODev}) {
+
+  } elsif($hash->{DIODev}) { 
     syswrite($hash->{DIODev}, $msg);
-  } elsif($hash->{IODev}) {
-    CallFn($hash->{IODev}{NAME}, "IOWriteFn", $hash, $msg);
+
+  } elsif($hash->{IODev}) { 
+    CallFn($hash->{IODev}{NAME},"IOWriteFn",$hash,$msg);
+
   }
   select(undef, undef, undef, 0.001);
 }
@@ -133,6 +149,7 @@ DevIo_SimpleWrite($$$)
 ########################
 # Write something, then read something
 # reopen device if timeout occurs and write again, then read again
+# NOTE1: FHEM can be blocked for $timeout seconds, DO NOT USE IT!
 sub
 DevIo_Expect($$$)
 {
@@ -183,35 +200,73 @@ DevIo_Expect($$$)
   return undef; # undef means ultimate failure
 }
 
+
 ########################
+# Open a device for reading/writing data.
+# Possible values for $hash->{DeviceName}:
+# - device@baud[78][NEO][012] => open device, set serial-line parameters
+# - hostname:port => TCP/IP client connection
+# - device@directio => open device without additional "magic"
+# - UNIX:(SEQPACKET|STREAM):filename => Open filename as a UNIX socket
+# - FHEM:DEVIO:IoDev[:IoPort] => Cascade I/O over another FHEM Device
 #
-# device descriptors:
-#   a) "UNIX:[SEQPACKET|STREAM]:<peerName>"
-#           file descriptor of stream will be saved to client->{FD}
-#   b) "FHEM:DEVIO:<devName>[:<devPort>][@<baudrate>]" 
-#           device implements IOOpenFn, IOCloseFn, optionally IOWriteFn for writing to device
-#           client implements optionally ReadFn for reading from device
-#           device will use client->{IODevRxBuffer} when receiving data
-#   c) "<host>:<port>"
-#           file descriptor of stream will be saved to client->{FD}
-#   d) "<fileName>@DIRECTIO"
-#           if not Windows: file descriptor of stream will be saved to client->{FD}
-#   e) "<serialDeviceName>[@<baudrate>]" 
-#           if not Windows: file descriptor of stream will be saved to client->{FD}
-#
-# optional serial interface parameters:
-#   "...@<baudrate>[,<dataBits>[,<parity>[,<stopBits>]]]"
-#
+# callback is only meaningful for TCP/IP (in which case a nonblocking connect
+# is executed) every cases. It will be called with $hash and a (potential)
+# error message. If $hash->{SSL} is set, SSL encryption is activated.
 sub
-DevIo_OpenDev($$$)
+DevIo_OpenDev($$$;$)
 {
-  my ($hash, $reopen, $initfn) = @_;
+  my ($hash, $reopen, $initfn, $callback) = @_;
   my $dev = $hash->{DeviceName};
   my $name = $hash->{NAME};
   my $po;
   my $baudrate;
   ($dev, $baudrate) = split("@", $dev);
   my ($databits, $parity, $stopbits) = (8, 'none', 1);
+  my $nextOpenDelay = ($hash->{nextOpenDelay} ? $hash->{nextOpenDelay} : 60);
+
+  # Call the callback if specified, simply return in other cases
+  my $doCb = sub ($) {
+    my ($r) = @_;
+    Log3 $name, 1, "$name: Can't connect to $dev: $r" if(!$reopen && $r);
+    $callback->($hash,$r) if($callback);
+    return $r;
+  };
+
+  # Call initFn
+  # if fails: disconnect, schedule the next polltime for reopen
+  # if ok: log message, trigger CONNECTED on reopen
+  my $doTailWork = sub {
+    DevIo_setStates($hash, "opened");
+
+    my $ret;
+    if($initfn) {
+      my $hadFD = defined($hash->{FD});
+      $ret = &$initfn($hash);
+      if($ret) {
+        if($hadFD && !defined($hash->{FD})) { # Forum #54732 / ser2net
+          DevIo_Disconnected($hash);
+          $hash->{NEXT_OPEN} = time() + $nextOpenDelay;
+
+        } else {
+          DevIo_CloseDev($hash);
+          Log3 $name, 1, "Cannot init $dev, ignoring it ($name)";
+        }
+      }
+    }
+
+    if(!$ret) {
+      my $l = $hash->{devioLoglevel}; # Forum #61970
+      if($reopen) {
+        Log3 $name, ($l ? $l:1), "$dev reappeared ($name)";
+      } else {
+        Log3 $name, ($l ? $l:3), "$name device opened" if(!$hash->{DevioText});
+      }
+    }
+
+    DoTrigger($name, "CONNECTED") if($reopen && !$ret);
+    return undef;
+  };
   
   if($baudrate =~ m/(\d+)(,([78])(,([NEO])(,([012]))?)?)?/) {
     $baudrate = $1 if(defined($1));
@@ -223,7 +278,7 @@ DevIo_OpenDev($$$)
 
   if($hash->{DevIoJustClosed}) {
     delete $hash->{DevIoJustClosed};
-    return;
+    return &$doCb(undef);
   }
 
   $hash->{PARTIAL} = "";
@@ -240,21 +295,21 @@ DevIo_OpenDev($$$)
     };
     if($@) {
       Log3 $name, 1, $@;
-      return $@;
+      return &$doCb($@);
     }
 
     if(!$conn) {
-      Log3 $name, 3, "Can't connect to $dev: $!" if(!$reopen);
+      Log3 $name, 1, "$name: Can't connect to $dev: $!" if(!$reopen);
       $readyfnlist{"$name.$dev"} = $hash;
       DevIo_setStates($hash, "disconnected");
-      return "";
+      return &$doCb("");
     }
     $hash->{TCPDev} = $conn;
     $hash->{FD} = $conn->fileno();
     delete($readyfnlist{"$name.$dev"});
     $selectlist{"$name.$dev"} = $hash;
 
-  } elsif($dev =~ m/^FHEM:DEVIO:(.*)(:(.*))/) {      # FHEM
+  } elsif($dev =~ m/^FHEM:DEVIO:(.*)(:(.*))/) {      # Forum #46276
     my ($devName, $devPort) = ($1, $3);
     AssignIoPort($hash, $devName);
     if (defined($hash->{IODev})) {
@@ -262,13 +317,13 @@ DevIo_OpenDev($$$)
       $hash->{IODevPort} = $devPort if (defined($devPort));
       $hash->{IODevParameters} = $baudrate if (defined($baudrate));
       if (!CallFn($devName, "IOOpenFn", $hash)) {
-        Log3 $name, 3, "Can't open $dev!";
+        Log3 $name, 1, "$name: Can't open $dev!";
         DevIo_setStates($hash, "disconnected");
-        return "";
+        return &$doCb("");
       }
     } else {
       DevIo_setStates($hash, "disconnected");
-      return "";
+      return &$doCb("");
     }
   } elsif($dev =~ m/^(.+):([0-9]+)$/) {       # host:port
 
@@ -277,36 +332,68 @@ DevIo_OpenDev($$$)
     # for non-existent devices has a delay of 3 sec, we are sitting all the
     # time in this connect. NEXT_OPEN tries to avoid this problem.
     if($hash->{NEXT_OPEN} && time() < $hash->{NEXT_OPEN}) {
-      return;
+      return &$doCb(undef); # Forum 53309
     }
 
-    my $timeout = $hash->{TIMEOUT} ? $hash->{TIMEOUT} : 3;
-    my $conn = IO::Socket::INET->new(PeerAddr => $dev, Timeout => $timeout);
-    if($conn) {
-      delete($hash->{NEXT_OPEN});
-      $conn->setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1) if(defined($conn));
-
-    } else {
-      Log3 $name, 3, "Can't connect to $dev: $!" if(!$reopen);
-      $readyfnlist{"$name.$dev"} = $hash;
-      DevIo_setStates($hash, "disconnected");
-      $hash->{NEXT_OPEN} = time()+60;
-      return "";
-    }
-
-    $hash->{TCPDev} = $conn;
-    $hash->{FD} = $conn->fileno();
     delete($readyfnlist{"$name.$dev"});
-    $selectlist{"$name.$dev"} = $hash;
+    my $timeout = $hash->{TIMEOUT} ? $hash->{TIMEOUT} : 3;
+
+    
+    # Do common TCP/IP "afterwork":
+    # if connected: set keepalive, fill selectlist, FD, TCPDev.
+    # if not: report the error and schedule reconnect
+    my $doTcpTail = sub($) {
+      my ($conn) = @_;
+      if($conn) {
+        delete($hash->{NEXT_OPEN});
+        $conn->setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1) if(defined($conn));
+
+      } else {
+        Log3 $name, 1, "$name: Can't connect to $dev: $!" if(!$reopen && $!);
+        $readyfnlist{"$name.$dev"} = $hash;
+        DevIo_setStates($hash, "disconnected");
+        $hash->{NEXT_OPEN} = time() + $nextOpenDelay;
+        return 0;
+      }
+
+      $hash->{TCPDev} = $conn;
+      $hash->{FD} = $conn->fileno();
+      $hash->{CD} = $conn;
+      $selectlist{"$name.$dev"} = $hash;
+      return 1;
+    };
+
+    if($callback) { # reuse the nonblocking connect from HttpUtils.
+      use HttpUtils;
+      my $err = HttpUtils_Connect({     # Nonblocking
+        timeout => $timeout,
+        url     => $hash->{SSL} ? "https://$dev/" : "http://$dev/",
+        NAME    => $hash->{NAME},
+        noConn2 => 1,
+        callback=> sub() {
+          my ($h, $err, undef) = @_;
+          &$doTcpTail($err ? undef : $h->{conn});
+          return &$doCb($err ? $err : &$doTailWork());
+        }
+      });
+      return &$doCb($err) if($err);
+      return undef;     # no double callback: connect is running in bg now
+
+    } else {    # blocking connect
+      my $conn = $haveInet6 ? 
+          IO::Socket::INET6->new(PeerAddr => $dev, Timeout => $timeout) :
+          IO::Socket::INET ->new(PeerAddr => $dev, Timeout => $timeout);
+      return "" if(!&$doTcpTail($conn)); # no callback: no doCb
+    }
 
   } elsif($baudrate && lc($baudrate) eq "directio") { # w/o Device::SerialPort
 
     if(!open($po, "+<$dev")) {
-      return undef if($reopen);
-      Log3 $name, 3, "Can't open $dev: $!";
+      return &$doCb(undef) if($reopen);
+      Log3 $name, 1, "$name: Can't open $dev: $!";
       $readyfnlist{"$name.$dev"} = $hash;
       DevIo_setStates($hash, "disconnected");
-      return "";
+      return &$doCb("");
     }
 
     $hash->{DIODev} = $po;
@@ -335,15 +422,15 @@ DevIo_OpenDev($$$)
     }
     if($@) {
       Log3 $name,  1, $@;
-      return $@;
+      return &$doCb($@);
     }
 
     if(!$po) {
-      return undef if($reopen);
-      Log3 $name, 3, "Can't open $dev: $!";
+      return &$doCb(undef) if($reopen);
+      Log3 $name, 1, "$name: Can't open $dev: $!";
       $readyfnlist{"$name.$dev"} = $hash;
       DevIo_setStates($hash, "disconnected");
-      return "";
+      return &$doCb("");
     }
     $hash->{USBDev} = $po;
     if( $^O =~ /Win/ ) {
@@ -387,25 +474,7 @@ DevIo_OpenDev($$$)
     $po->write_settings;
   }
 
-  if($reopen) {
-    Log3 $name, 1, "$dev reappeared ($name)";
-  } else {
-    Log3 $name, 3, "$name device opened" if(!$hash->{DevioText});
-  }
-
-  DevIo_setStates($hash, "opened");
-
-  my $ret;
-  if($initfn) {
-    my $ret  = &$initfn($hash);
-    if($ret) {
-      DevIo_CloseDev($hash);
-      Log3 $name, 1, "Cannot init $dev, ignoring it ($name)";
-    }
-  }
-
-  DoTrigger($name, "CONNECTED") if($reopen);
-  return $ret;
+  return &$doCb(&$doTailWork());
 }
 
 sub
@@ -417,6 +486,8 @@ DevIo_SetHwHandshake($)
 }
 
 ########################
+# close the device, remove it from selectlist, 
+# delete DevIo specific internals from $hash
 sub
 DevIo_CloseDev($@)
 {
@@ -457,15 +528,22 @@ DevIo_CloseDev($@)
   delete($readyfnlist{"$name.$dev"});
   delete($hash->{FD});
   delete($hash->{EXCEPT_FD});
+  delete($hash->{PARTIAL});
+  delete($hash->{NEXT_OPEN});
 }
 
 sub
 DevIo_IsOpen($)
 {
   my ($hash) = @_;
-  return ($hash->{TCPDev} || $hash->{USBDev} || $hash->{DIODev} || $hash->{IODevPort});
+  return ($hash->{TCPDev} || 
+          $hash->{USBDev} || 
+          $hash->{DIODev} || 
+          $hash->{IODevPort});
 }
 
+
+# Close the device, schedule the reopen via ReadyFn, trigger DISCONNECTED
 sub
 DevIo_Disconnected($)
 {
@@ -477,7 +555,8 @@ DevIo_Disconnected($)
 
   return if(!defined($hash->{FD}));                 # Already deleted or RFR
 
-  Log3 $name, 1, "$dev disconnected, waiting to reappear ($name)";
+  my $l = $hash->{devioLoglevel}; # Forum #61970
+  Log3 $name, ($l ? $l:1), "$dev disconnected, waiting to reappear ($name)";
   DevIo_CloseDev($hash);
   $readyfnlist{"$name.$dev"} = $hash;               # Start polling
   DevIo_setStates($hash, "disconnected");
@@ -485,6 +564,5 @@ DevIo_Disconnected($)
 
   DoTrigger($name, "DISCONNECTED");
 }
-
 
 1;

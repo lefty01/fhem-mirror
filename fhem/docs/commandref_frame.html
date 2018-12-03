@@ -4,74 +4,78 @@
 
 <head>
   <title>FHEM reference</title>
-  <script type="text/javascript" src="fhemdoc.js"></script>
-  <noscript>
-    <link rel="stylesheet" type="text/css" href="../www/pgm2/style.css" />
-  </noscript>
+  <link rel="stylesheet" type="text/css" href="../www/pgm2/style.css" />
   <meta http-equiv="Content-type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="initial-scale=1.0,user-scalable=1">
   <link rel="shortcut icon" href="/fhem/icons/favicon.ico"/>
 </head>
 
 
-<body style="word-wrap: break-word;">
+<body style="word-wrap: break-word;" class="commandref">
   <div id="menuScrollArea">
     <div id="logo"></div>
     <div id="menu">
       <h3>fhem.pl reference</h3>
-      Version: <b>EN</b>&nbsp;<a href="commandref_DE.html">DE</a>
+      <br><br>
+      <a href="#">Scroll to top</a>
+      <br><br>
+      <a style="display:none" href="#" name="loadAll">Load everything</a>
+      <br><br>
+      <a id="otherLang" style="display:none" href="#" name="otherLang">
+        Load <span style="display:none" lang="DE">german</span> 
+             <span style="display:none" lang="EN">english</span>
+        doc for <span class="mod"></span>
+      </a>
     </div>
   </div>
 
   <div id="right">
-
 <h3>Contents</h3>
 <ul>
   <a href="#intro">Introduction</a><br>
-  <a href="#command">Fhem command types</a><br>
+  <a href="#command">FHEM command types</a><br>
   <a href="#devspec">Device specification</a><br>
   <a href="#attributes">Attributes</a><br>
 
   <br>
-  <b>Fhem commands</b>
+  <b>FHEM commands</b>
   <ul>
       <!-- header:command -->
-      <a href="#apptime">apptime</a> &nbsp;
-      <a href="#attr">attr</a> &nbsp;
-      <a href="#cancel">cancel</a> &nbsp;
-      <a href="#createlog">createlog</a> &nbsp;
-      <a href="#define">define</a> &nbsp;
-      <a href="#defmod">defmod</a> &nbsp;
-      <a href="#delete">delete</a> &nbsp;
-      <a href="#deleteattr">deleteattr</a> &nbsp;
-      <a href="#deletereading">deletereading</a> &nbsp;
-      <a href="#displayattr">displayattr</a> &nbsp;
-      <a href="#fheminfo">fheminfo</a> &nbsp;
-      <a href="#get">get</a> &nbsp;
-      <a href="#getstate">getstate</a> &nbsp;
-      <a href="#IF">IF</a> &nbsp;
-      <a href="#include">include</a> &nbsp;
-      <a href="#inform">inform</a> &nbsp;
-      <a href="#list">list</a> &nbsp;
-      <a href="#modify">modify</a> &nbsp;
-      <a href="#notice">notice</a> &nbsp;
-      <a href="#quit">quit</a> &nbsp;
-      <a href="#reload">reload</a> &nbsp;
-      <a href="#rename">rename</a> &nbsp;
-      <a href="#rereadcfg">rereadcfg</a> &nbsp;
-      <a href="#save">save</a> &nbsp;
-      <a href="#set">set</a> &nbsp;
-      <a href="#setdefaultattr">setdefaultattr</a> &nbsp;
-      <a href="#setreading">setreading</a> &nbsp;
-      <a href="#setstate">setstate</a> &nbsp;
-      <a href="#shutdown">shutdown</a> &nbsp;
-      <a href="#sleep">sleep</a> &nbsp;
-      <a href="#trigger">trigger</a> &nbsp;
-      <a href="#usb">usb</a> &nbsp;
+      <a href="#apptime">apptime</a> &nbsp; <!-- provides information about execution times -->
+      <a href="#attr">attr</a> &nbsp;       <!-- set an attribute for a FHEM device -->
+      <a href="#cancel">cancel</a> &nbsp;   <!-- cancel sleep -->
+      <a href="#createlog">createlog</a> &nbsp; <!-- add a FileLog and an SVG to an existing device -->
+      <a href="#define">define</a> &nbsp;   <!-- define/create a FHEM device -->
+      <a href="#defmod">defmod</a> &nbsp;   <!-- define or modify a FHEM device -->
+      <a href="#delete">delete</a> &nbsp;   <!-- delete a FHEM device -->
+      <a href="#deleteattr">deleteattr</a> &nbsp; <!-- delete an attribute -->
+      <a href="#deletereading">deletereading</a> &nbsp; <!-- delete a reading -->
+      <a href="#displayattr">displayattr</a> &nbsp;  <!-- show attributes -->
+      <a href="#get">get</a> &nbsp;         <!-- retrieve a value from a FHEM device -->
+      <a href="#IF">IF</a> &nbsp;           <!-- conditionally execute FHEM commands -->
+      <a href="#include">include</a> &nbsp; <!-- read in a file with FHEM commands -->
+      <a href="#inform">inform</a> &nbsp;   <!-- show events in a telnet connection -->
+      <a href="#list">list</a> &nbsp;       <!-- display definition,readings and attributes of a FHEM device -->
+      <a href="#modify">modify</a> &nbsp;   <!-- change the definition of a FHEM device -->
+      <a href="#notice">notice</a> &nbsp;   <!-- view and confirm of system messages -->
+      <a href="#quit">quit</a> &nbsp;       <!-- end a telnet connection to FHEM -->
+      <a href="#reload">reload</a> &nbsp;   <!-- reload a FHEM module (program definition) -->
+      <a href="#rename">rename</a> &nbsp;   <!-- rename a FHEM device -->
+      <a href="#rereadcfg">rereadcfg</a> &nbsp; <!-- reread the FHEM configuration -->
+      <a href="#save">save</a> &nbsp;       <!-- save the FHEM configuration -->
+      <a href="#set">set</a> &nbsp;         <!-- set a value in a FHEM device -->
+      <a href="#setdefaultattr">setdefaultattr</a> &nbsp; <!-- define a default attribute -->
+      <a href="#setreading">setreading</a> &nbsp; <!-- set a reading for a FHEM device -->
+      <a href="#setstate">setstate</a> &nbsp; <!-- set the main state of a FHEM device -->
+      <a href="#shutdown">shutdown</a> &nbsp; <!-- shut down (terminate) FHEM -->
+      <a href="#sleep">sleep</a> &nbsp;     <!-- sleep (delay execution) for a while -->
+      <a href="#trigger">trigger</a> &nbsp; <!-- generate a FHEM event -->
+      <a href="#usb">usb</a> &nbsp;         <!-- discover USB devices -->
 
   </ul>
 
   <br>
-  <b>Devices</b>
+  <b>Device modules</b>
   <ul>
       <a href="#global">global</a><br>
       <!-- header:device -->
@@ -85,7 +89,6 @@
     <a href="#CustomReadings">CustomReadings</a> &nbsp;
     <a href="#DOIF">DOIF</a> &nbsp;
     <a href="#Dashboard">Dashboard</a> &nbsp;
-    <a href="#DbLog">DbLog</a> &nbsp;
     <a href="#dewpoint">dewpoint</a> &nbsp;
     <a href="#FLOORPLAN">FLOORPLAN</a> &nbsp;
     <a href="#HCS">HCS</a> &nbsp;
@@ -100,7 +103,6 @@
     <a href="#statistics">statistics</a> &nbsp;
     <a href="#Twilight">Twilight</a> &nbsp;
     <a href="#THRESHOLD">THRESHOLD</a> &nbsp;
-    <a href="#Utils">Utils</a> &nbsp;
     <a href="#WeekdayTimer">WeekdayTimer</a> &nbsp;
     <a href="#WOL">WOL</a> &nbsp;
       <!-- header end -->
@@ -115,7 +117,7 @@
 <a name="intro"></a>
 <h3>Introduction</h3>
 <ul>
-Fhem is mainly used for home automation, but it is suitable for other tasks
+FHEM is mainly used for home automation, but it is suitable for other tasks
 too, where notification, timers and logging plays an important role.<br>
 <br>
 
@@ -125,13 +127,13 @@ devices like FS20 or FHT to digest the messages for a certain device type using
 this protocol.<br>
 <br>
 
-Fhem is modular. The different devices are represented through modules which
+FHEM is modular. The different devices are represented through modules which
 implement certain functions (e.g. define, get, set). Even seemingly integral
-parts of fhem like triggers (<a href="#notify">notify</a>) and timers (<a
+parts of FHEM like triggers (<a href="#notify">notify</a>) and timers (<a
 href="#at">at</a>) are implemented this way, giving the possibility to
 replace/extend this functionality.<br> <br>
 
-Fhem is controlled through readable / ascii commands, which are specified in
+FHEM is controlled through readable / ascii commands, which are specified in
 files (e.g. the configuration file), or issued over a TCP/IP connection, either
 directly in a telnet session, with a fhem.pl in client mode or from one of the
 web frontends.<br> <br>
@@ -142,11 +144,10 @@ When starting the server you have to specify a configuration file:<br>
 </ul>
 <br>
 
-A minimal configuration file looks like: <pre>
+A reasonable minimal configuration file looks like: <pre>
     attr global <a href="#logfile">logfile</a> log/fhem.log
     attr global <a href="#modpath">modpath</a> .
     attr global <a href="#statefile">statefile</a> log/fhem.save
-    attr global <a href="#verbose">verbose</a> 3
     define telnetPort <a href="#telnet">telnet</a> 7072 global
     define WEB <a href="#FHEMWEB">FHEMWEB</a> 8083 global</pre>
 
@@ -160,7 +161,7 @@ The web interface can be reached at
 </ul>
 <br>
 
-TCP/IP communication with fhem can either happen in a "session" (via
+TCP/IP communication with FHEM can either happen in a "session" (via
 telnet) or single client command (via fhem.pl). Example:
 <ul>
     <code>telnet &lt;fhemhost&gt; 7072<br>
@@ -172,12 +173,15 @@ telnet) or single client command (via fhem.pl). Example:
 <ul>
     <code>fhem.pl &lt;fhemhost&gt;:7072 "&lt;fhem-command&gt" "..."</code>
 </ul>
+<br>
+If a OS-user called fhem exists, and FHEM is started as root, FHEM will
+automatically change to to this user via setuid. <br>
 </ul>
 <!-- intro end - diese Zeile nicht entfernen! -->
 
 
 <a name="command"></a>
-<h3>Fhem command types</h3>
+<h3>FHEM command types</h3>
 <ul>
 There are three types of commands: "fhem" commands (described in this
 document), shell commands (they must be enclosed in double quotes ") and perl
@@ -195,14 +199,14 @@ prompt:<br>
 <br>
 
 Shell commands will be executed in the background, perl expressions and
-fhem commands will be executed in the main "thread".  In order to make perl
+FHEM commands will be executed in the main "thread".  In order to make perl
 expressions easier to write, some special functions and variables are
 available. See the section <a href="#perl">Perl special</a> for a description.
-To trigger fhem commands from a shell script (this is the "other way round"),
+To trigger FHEM commands from a shell script (this is the "other way round"),
 use the client form of fhem.pl (described above).<br>
 <br>
 
-Multiple fhem commands are separated by semicolon (;). In order to use semicolon
+Multiple FHEM commands are separated by semicolon (;). In order to use semicolon
 in perl code or shell programs, they have to be escaped by the double semicolon
 (;;). See the <b>Notes</b> section of the <a href="#notify">notify</a>
 chapter on command parameters and escape rules.<br>
@@ -229,7 +233,7 @@ Don't dispair, the previous example can also be written as
 Commands can be either typed in plain, or read from a file (e.g. the
 configuration file at startup). The commands are either executed directly, or
 later if they are arguments to the <a href="#at">at</a> and <a
-href="#notify">notify</a> fhem commands.<br>
+href="#notify">notify</a> FHEM commands.<br>
 <br>
 
 A line ending with \ will be concatenated with the next one, so long lines
@@ -263,8 +267,9 @@ A line ending with \ will be concatenated with the next one, so long lines
   <li>a NAME=VALUE pair, where NAME can be an internal value like TYPE, a
         Reading-Name or an attribute. VALUE is a regexp. To negate the
         comparison, use NAME!=VALUE. To restrict the search, use i: as prefix
-        for internal values, r: for readings and a: for attributes. See the
-        example below.</li>
+        for internal values, r: for readings and a: for attributes. 
+        See the example below.
+        Case sensitivity is being ignored using ~ or !~. </li>
   <li>if the spec is followed by the expression :FILTER=NAME=VALUE, then the
       values found in the first round are filtered by the second expression.
   </ul>
@@ -277,6 +282,7 @@ A line ending with \ will be concatenated with the next one, so long lines
     <code>set room=kitchen:FILTER=STATE=on off</code><br>
     <code>set room=kitchen:FILTER=STATE!=off off</code><br>
     <code>list disabled=</code><br>
+    <code>list room~office</code><br>
     <code>list TYPE=FS20 STATE</code><br>
     <code>list i:TYPE=FS20 STATE</code><br>
   </ul>
@@ -333,65 +339,17 @@ Device specific attributes are documented in the corresponding device section.
  
 <ul>
 
-    <a name="verbose"></a>
-    <li>verbose<br>
-        Set the verbosity level. Possible values:
-        <ul>
-          <li>0 - server start/stop
-          <li>1 - error messages or unknown packets
-          <li>2 - major events/alarms.
-          <li>3 - commands sent out will be logged.
-          <li>4 - you'll see whats received by the different devices.
-          <li>5 - debugging.</li>
-        </ul>
-        The value for the <a href="#global">global</a> device is a default for
-        other devices without own verbose attribute set.
-    </li>
-
-    <a name="comment"></a>
-    <li>comment<br>
-        Add an arbitrary comment.
-        
     <a name="alias"></a>
     <li>alias<br>
         Used by FHEMWEB to display a device with another name e.g. when using
         special characters/spaces not accepted by device definition.
+        </li><br>
         
-    <a name="room"></a>
-    <li>room<br>
-        Filter/group devices. Recognized by web-pgm2 and web-pgm3.  A device
-        can appear in more than one room, in this case the rooms have to be
-        specified comma-separated.<br>
-        Devices in the room hidden will not appear in the web output, or set
-        the <a href="#hiddenroom"> FHEMWEB attribute to selectively disable
-        rooms for certain FHEMWEB instances.
-        </li>
-
-    <a name="genericDisplayType"></a>
-    <li>genericDisplayType<br>
-        used by some frontends (but not FHEMWEB) to offer a default image or
-        appropriate commands for this device. Currently the following values
-        are supported: switch,outlet,light,blind,speaker,thermostat
-        </li>
-
-    <a name="group"></a>
-    <li>group<br>
-        Group devices. Recognized by web-pgm2 (module <a href="#FHEMWEB">FHEMWEB</a>), it makes
-        devices in the same group appear in the same box).
-        This is used to further group
-        devices together. A device can appear in more than one group, in this
-        case the groups have to be specified comma-separated.<br>
-        If this attribute is not set then the device type is used as the
-        grouping attribute.
-        </li>
-
-    <a name="showtime"></a>
-    <li>showtime<br>
-        Used in the webfrontend pgm2 to show the time of last activity
-        instead of the state in the summary view. Useful e.g. for FS20 PIRI
-        devices.
-    </li>
-    
+    <a name="comment"></a>
+    <li>comment<br>
+        Add an arbitrary comment.
+        </li><br>
+        
     <a name="eventMap"></a>
     <li>eventMap<br>
         Replace event names and set arguments. The value of this attribute
@@ -399,6 +357,9 @@ Device specific attributes are documented in the corresponding device section.
         separated pair. The first part specifies the "old" value, the second
         the new/desired value. If the first character is slash(/) or comma(,)
         then split not by space but by this character, enabling to embed spaces.
+        You can specify a widgetOverride after an additional colon (e.g.
+        on-for-timer:OnFor:texField), the default widget is :noArg to avoid
+        extra input fields in cmdList.
         Examples:<ul><code>
         attr store eventMap on:open off:closed<br>
         attr store eventMap /on-for-timer 10:open/off:closed/<br>
@@ -406,10 +367,10 @@ Device specific attributes are documented in the corresponding device section.
         </code></ul>
         The explicit variant of this attribute has the following syntax:
         <ul><code>
-        attr store eventMap { dev=>{"on"=>"open"}, usr=>{"open"=>"on"} }<br>
-        attr store eventMap { dev=>{"^on(-for-timer)?(.*)"=>"open$2"},
-                              usr=>{"^open(.*)"=>"on$1"},
-                              fw=>{"^open(.*)"=>"open"} }
+        attr store eventMap { dev=>{'on'=>'open'}, usr=>{'open'=>'on'} }<br>
+        attr store eventMap { dev=>{'^on(-for-timer)?(.*)'=>'open$2'},
+                              usr=>{'^open(.*)'=>'on$1'},
+                              fw=>{'^open(.*)'=>'open'} }
         </code></ul>
         This variant must be used, if the mapping is not symmetrical, the first
         part (dev) representing the device to user mapping, i.e. if the device
@@ -421,10 +382,65 @@ Device specific attributes are documented in the corresponding device section.
         part with wildcards, the fw part must be filled with the exact same
         keys to enable a correct display in the FHEMWEB set dropdown list in
         the detail view.
-
         </li><br>
     
+    <a name="genericDisplayType"></a>
+    <li>genericDisplayType<br>
+        used by some frontends (but not FHEMWEB) to offer a default image or
+        appropriate commands for this device. Currently the following values
+        are supported: switch,outlet,light,blind,speaker,thermostat
+        </li><br>
 
+    <a name="group"></a>
+    <li>group<br>
+        Group devices. Recognized by web-pgm2 (module <a
+        href="#FHEMWEB">FHEMWEB</a>), it makes
+        devices in the same group appear in the same box).
+        This is used to further group
+        devices together. A device can appear in more than one group, in this
+        case the groups have to be specified comma-separated.<br>
+        If this attribute is not set then the device type is used as the
+        grouping attribute.
+        </li><br>
+
+    <a name="room"></a>
+    <li>room<br>
+        Filter/group devices in frontends. A device can appear in more than one
+        room, in this case the rooms have to be specified comma-separated.<br>
+        Devices in the room hidden will not appear in the web output, or set
+        the FHEMWEB attribute <a href="#hiddenroom">hiddenroom</a> to
+        selectively disable rooms for certain FHEMWEB instances.
+        The -&gt; string is considered as a structure separator for rooms, e.g.
+        "1st. floor-&gt;Master bedroom".
+        </li><br>
+
+    <a name="suppressReading"></a>
+    <li>suppressReading<br>
+        Used to eliminate unwanted readings. The value is a regular expression,
+        with ^ and $ added. Only necessary in exceptional cases.
+        </li><br>
+    
+    <a name="showtime"></a>
+    <li>showtime<br>
+        Used in the webfrontend pgm2 to show the time of last activity
+        instead of the state in the summary view. Useful e.g. for FS20 PIRI
+        devices.
+        </li><br>
+    
+    <a name="verbose"></a>
+    <li>verbose<br>
+        Set the verbosity level. Possible values:
+        <ul>
+          <li>0 - server start/stop</li>
+          <li>1 - error messages or unknown packets</li>
+          <li>2 - major events/alarms.</li>
+          <li>3 - commands sent out will be logged.</li>
+          <li>4 - you'll see whats received by the different devices.</li>
+          <li>5 - debugging.</li>
+        </ul>
+        The value for the <a href="#global">global</a> device is a default for
+        other devices without own verbose attribute set.
+        </li></br>
 </ul>
 
 <a name="readingFnAttributes"></a>
@@ -443,7 +459,8 @@ attribute list if you want to know if a device supports these attributes.  <br>
     If set, then every word in the argument is replaced by the value of the
     reading if such a reading for the current device exists. If the value of
     this attribute is enclused in {}, then it is evaluated. This attribute is
-    evaluated each time a reading is updated.
+    evaluated each time a reading is updated.<br>
+    The "set magic" described <a href="#set">here</a> is also applied.
     </li>
     <p>
 
@@ -478,6 +495,15 @@ attribute list if you want to know if a device supports these attributes.  <br>
     </ol>
     <p>
     
+    <a name="timestamp-on-change-reading"></a>
+    <li>timestamp-on-change-reading<br>
+    The attribute takes a comma-separated list of readings. You may use regular
+    expressions in that list. If set, the timestamps of the listed readings will
+    not be changed if event-on-change-reading is also set and it would not create
+    an event for this reading.
+    </li>
+    <p>
+
     <a name="event-aggregator"></a>
     <li>event-aggregator</li>
     The primary uses of this attribute are to calculate (time-weighted) averages of 
@@ -549,9 +575,16 @@ attribute list if you want to know if a device supports these attributes.  <br>
     This attribute takes a comma-separated list of reading:minInterval pairs.
     You may use regular expressions for reading. Events will only be
     generated, if at least minInterval seconds elapsed since the last reading
-    of the matched type.
+    of the matched type. If event-on-change-reading is also specified, they are
+    combined with OR: if one of them is true, the event is generated.
     </li>
-    <p>
+
+    <a name="oldreadings"></a>
+    <li>oldreadings<br>
+    This attribute takes a comma-separated list of readings. You may use
+    regular expressions in that list. For each reading in the list FHEM will
+    internaly store the previous value if the readings value changes. To access
+    the storead value use the OldReadings.* functions.</li>
 
     <a name="userReadings"></a>
     <li>userReadings<br>
@@ -575,8 +608,8 @@ attribute list if you want to know if a device supports these attributes.  <br>
         attr myEnergyMeter userReadings energy
           { ReadingsVal("myEnergyMeter","counters.A",0)/1250.0;; }<br>
         attr myMultiMeter userReadings
-          energy1:counters.A { ReadingsVal("myMultiMeter","counters.A",0)/1250.0;; },
-          energy2:counters.B { ReadingsVal("myMultiMeter","counters.B",0)/1250.0;; }
+          energy1:counters.A.* { ReadingsVal("myMultiMeter","counters.A",0)/1250.0;; },
+          energy2:counters.B.* { ReadingsVal("myMultiMeter","counters.B",0)/1250.0;; }
       </code></ul>
       <code>&lt;modifier&gt;</code> can take one of these values:
       <ul>
@@ -647,9 +680,10 @@ The following local attributes are used by a wider range of devices:
 <a name="attr"></a>
 <h3>attr</h3>
 <ul>
-  <code>attr &lt;devspec&gt; &lt;attrname&gt; [&lt;value&gt;] </code><br>
+  <code>attr [-a|-r] &lt;devspec&gt; &lt;attrname&gt; [&lt;value&gt;]</code><br>
 
   <br>Set an attribute for a device defined by <a href="#define">define</a>.
+  The value is optional, and is set to 1 if missing.
   You can define your own <a href="#attributes">attributes</a> too to use them
   in other applications.
 
@@ -657,52 +691,32 @@ The following local attributes are used by a wider range of devices:
   See the <a href="#devspec">Device specification</a> section for details on
   &lt;devspec&gt;.
   After setting the attribute, the global event "ATTR" will be generated.
-  <br><br>
+  <br>
+  If the option -a is specified, append the given value to the currently
+  existing value. Note: if the value does not start with a comma (,), then a
+  space will be added automatically to the old value before appending the
+  new.<br>
+  With the -r option one can remove a part of an attribute value.<br>
+  <br>
 
   Examples:
-  <ul>
-    <code>attr global verbose 3</code><br>
-    <code>attr lamp room kitchen</code><br>
-    <code>attr lamp group lights</code><br>
-    <code>attr lamp loglevel 6</code><br>
-    <code>attr weatherstation event-on-update-reading wind,temperature,humidity</code><br>
-    <code>attr weatherstation event-on-change-reading israining</code><br>
-    <code>attr weatherstation event-on-change-reading israining,state</code><br>
-    <code>attr heating stateFormat Temp:measured-temp, Valve:actuator</code><br>
-  </ul>
+  <ul><code>
+    attr global verbose 3<br>
+    attr lamp room kitchen<br>
+    attr lamp group lights<br>
+    attr lamp loglevel 6<br>
+    attr weatherstation event-on-update-reading wind,temperature,humidity<br>
+    attr weatherstation event-on-change-reading israining<br>
+    attr weatherstation event-on-change-reading israining,state<br>
+    attr heating stateFormat Temp:measured-temp, Valve:actuator<br>
+    attr -a TYPE=SVG room ,SvgRoom</br>
+    attr -r TYPE=SVG room ,SvgRoom</br>
+  </code></ul>
   <br>
 
   Notes:<br>
   <ul>
     <li>See <a href="#deleteattr">deleteattr</a> to delete attributes.</li>
-  </ul>
-</ul>
-
-<a name="setdefaultattr"></a>
-<h3>setdefaultattr</h3>
-<ul>
-  <code>setdefaultattr [&lt;attrname&gt; [&lt;value&gt;]] </code><br>
-
-  <br>Add a default attribute. Each device defined from now on will receive
-  this attribute.<br> If no attrname is specified, then the default attribute
-  list will be deleted.
-  <br><br>
-
-  Example to set the attribute "room kitchen" and "loglevel 4" to
-  each of the lamps:
-  <ul>
-    <code>setdefaultattr room kitchen</code><br>
-    <code>setdefaultattr loglevel 4</code><br>
-    <code>define lamp1 FS20 1234 11</code><br>
-    <code>define lamp2 FS20 1234 12</code><br>
-    <code>define lamp3 FS20 1234 13</code><br>
-    <code>setdefaultattr</code><br>
-  </ul>
-  <br>
-
-  Notes:<br>
-  <ul>
-    <li>There is no way to delete a single default-attribute from the list</li>
   </ul>
 </ul>
 
@@ -714,6 +728,7 @@ The following local attributes are used by a wider range of devices:
   Cancels a named <a href="#sleep">sleep</a>.
 
 </ul>
+<!-- cancel end -->
 
 <a name="define"></a>
 <h3>define</h3>
@@ -744,11 +759,12 @@ The following local attributes are used by a wider range of devices:
   </ul>
 
 </ul>
+<!-- define end -->
 
 <a name="defmod"></a>
 <h3>defmod</h3>
 <ul>
-  <code>defmod &lt;name&gt; &lt;type&gt; &lt;type-specific&gt;</code><br>
+  <code>defmod [-temporary] &lt;name&gt; &lt;type&gt; &lt;type-specific&gt;</code><br>
   <br>
   Define a device or modify it, if it already exists. E.g. to switch off a lamp
   10 Minutes after the last message from the motion detector, you may use
@@ -760,6 +776,7 @@ The following local attributes are used by a wider range of devices:
   definition still exists.
   <br>
 </ul>
+<!-- defmod end -->
 
 
 <a name="delete"></a>
@@ -778,6 +795,7 @@ The following local attributes are used by a wider range of devices:
   </ul>
   <br>
 </ul>
+<!-- delete end -->
 
 <a name="deleteattr"></a>
 <h3>deleteattr</h3>
@@ -798,6 +816,7 @@ The following local attributes are used by a wider range of devices:
   </ul>
   <br>
 </ul>
+<!-- deleteattr end -->
 
 <a name="deletereading"></a>
 <h3>deletereading</h3>
@@ -818,6 +837,7 @@ The following local attributes are used by a wider range of devices:
   </ul>
   <br>
 </ul>
+<!-- deletereading end -->
 
 <a name="displayattr"></a>
 <h3>displayattr</h3>
@@ -844,6 +864,7 @@ The following local attributes are used by a wider range of devices:
   </ul>
   <br>
 </ul>
+<!-- displayattr end -->
 
 <a name="get"></a>
 <h3>get</h3>
@@ -863,57 +884,54 @@ The following local attributes are used by a wider range of devices:
   <br>
 
 </ul>
+<!-- get end -->
 
-<a name="getstate"></a>
-<h3>getstate</h3>
-<ul>
-  <code>getstate &lt;devspec&gt;</code>
-  <br><br>
-  Output a short space seperated status for &lt;devspec&gt;. It is useful for
-  monitoring the device in e.g. Cacti.<br>
-  Examples:
-  <ul><code>
-  getstate lamp<br>
-  state:1<br>
-  <br>
-  getstate fl<br>
-  ack:0 actuator:2 day-temp:21.5 desired-temp:22.5 [...] measured-temp:22.9 [...]
-  </code></ul>
-  Note: to use this command copy the file contrib/getstate/99_getstate.pm into
-  your FHEM directory.
-  <br>
-
-</ul>
 
 <a name="include"></a>
 <h3>include</h3>
 <ul>
   <code>include &lt;filename&gt;</code> <br>
   <br>
-  Read in the file, and process every line as a fhem command. Makes
-  configuration files more modular and enables to reread them.
+  Read in the file, and process every line as a FHEM command. 
+  Note: only experts should use this command.
   <br>
 </ul>
+<!-- include end -->
 
 <a name="inform"></a>
 <h3>inform</h3>
 <ul>
-  <code>inform {on|off|timer|raw} [regexp]</code> <br>
+  <code>inform {on|onWithState|off|raw|timer|log|status} [regexp]</code> <br>
   <br>
-  If set to on, and a device state changes, send a notification to the current
-  client. This command can be used by other programs/modules to receive a
-  notification.<br>
-  The option timer prepends a timerstamp to the line. Note: this command is
-  a nice way to check which events are generated, to help you when creating
-  <a href="#notify">notify</a> or <a href="#FileLog">FileLog</a> entries.
-
+  Monitor events via a telnet client.  This command is the telnet equivalent of
+  the FHEMWEB Event monitor, but can also be used by other programs/modules to
+  receive a notification. Options:<br>
+  <ul>
+    <li>on<br>
+      switch the inform mechanism on</li>
+    <li>onWithState<br>
+      show the additional state event too</li>
+    <li>off<br>
+      switch the inform mechanism off (both events and logs, see below)</li>
+    <li>raw<br>
+      show only raw events from physical devices</li>
+    <li>timer<br>
+      prepend a timestamp to each event</li>
+    <li>log<br>
+      show messages written by the FHEM Log interface</li>
+    <li>status<br>
+      show the current status</li>
+  </ul>
   <br>
 </ul>
+<!-- inform end -->
 
 <a name="list"></a>
 <h3>list</h3>
 <ul>
-  <code>list [devspec] [value]</code>
+  <code>list [devspec] [value]</code><br>
+  or<br>
+  <code>list {-r|-R} devspec</code><br>
   <br><br>
   Output a list of all definitions, all notify settings and all at
   entries. This is one of the few commands which return a string in a
@@ -974,7 +992,12 @@ The following local attributes are used by a wider range of devices:
     2006-11-02 09:45:56   actuator        19%
     [...]
   </code></pre>
+  With the -r (raw) option output the device definition in a format suitable
+  for inclusion in fhem.cfg and fhem.state. -R returns the definition of the
+  device itself, together with the definition of probably associated devices.
+  Note: the algorithm to select associated devices is known to be imperfect.
 </ul>
+<!-- list end -->
 
 <a name="modify"></a>
 <h3>modify</h3>
@@ -996,6 +1019,7 @@ The following local attributes are used by a wider range of devices:
     <code>modify lampon 19:00 set lamp on-for-timer 16</code><br>
   </ul>
 </ul>
+<!-- modify end -->
 
 <a name="quit"></a>
 <h3>quit</h3>
@@ -1010,6 +1034,7 @@ The following local attributes are used by a wider range of devices:
     <code>quit</code>
   </ul>
 </ul>
+<!-- quit end -->
 
 <a name="reload"></a>
 <h3>reload</h3>
@@ -1024,6 +1049,7 @@ The following local attributes are used by a wider range of devices:
     <code>reload 99_PRIV</code>
   </ul>
 </ul>
+<!-- reload end -->
 
 <a name="rename"></a>
 <h3>rename</h3>
@@ -1039,6 +1065,7 @@ The following local attributes are used by a wider range of devices:
     <code>rename FHT_1234 fht.kitchen</code>
   </ul>
 </ul>
+<!-- rename end -->
 
 <a name="rereadcfg"></a>
 <h3>rereadcfg</h3>
@@ -1059,6 +1086,7 @@ The following local attributes are used by a wider range of devices:
     <code>rereadcfg</code>
   </ul>
 </ul>
+<!-- rereadcfg end -->
 
 <a name="save"></a>
 <h3>save</h3>
@@ -1080,8 +1108,12 @@ The following local attributes are used by a wider range of devices:
     structures, but it won't work correctly if some of these files are not
     writeable.</li>
 
+    <li>before overwriting the files, the old version will be saved, see the <a
+    href="#restoreDirs">restoreDirs</a> global attribute for details.
+
   </ul>
 </ul>
+<!-- save end -->
 
 <a name="set"></a>
 <h3>set</h3>
@@ -1099,13 +1131,35 @@ The following local attributes are used by a wider range of devices:
   Each device has different set parameters, see the corresponding device
   section for details.<br>
   <br><br>
-  From featurelevel 5.7 on the set (and setreading) command replaces:
+  From featurelevel 5.7 on the set and setreading command replaces:
   <ul>
-  <li>[device:reading] with the corresponding reading of device, if both device
-    and reading exists.</li>
-  <li>{(perlExpression)} with the result of perlExpression, if the expression
-    does not generates an error.</li>
+  <li>[device:name] with the reading, internal or attribute of the device, if
+    both device and the reading, internal or attribute exists.
+    <ul>
+      <li>You can use the r:, i: or a: prefix to restrict the search to one
+          type, analogue to the devspec filtering.</li>
+      <li>The suffix :d retrieves the first number</li>
+      <li>The suffix :i retrieves the integer part of the first number.</li>
+      <li>The suffix :r&lt;n&gt; retrieves the first number and rounds it to
+          &lt;n&gt; decimal places. If &lt;n&gt; is missing, then rounds it to
+          one decimal place.</li>
+      <li>The suffix :t returns the timestamp (works only for readings)</li>
+      <li>The suffix :sec returns the number of seconds since the reading was
+          set.</li>
+    </ul>
+    Example:
+    <ul>
+      set Lamp blink [blinkDummy:number] [r:blinkDummy:duration:d]
+    </ul>
+  </li>
+  <li>[device:name:d] same as above, but only the number is retrieved</li>
+  <li>[device:name:sec] same as above, but only the number is retrieved</li>
+  <li>{(perlExpression)} with the result of perlExpression.
+    The $DEV variable is additionally available, designating the set device
+    name.
+    </li>
   </ul>
+  These replacements are also known as "set magic".
   <br><br>
 
   <a name="setExtensions"></a>
@@ -1150,6 +1204,9 @@ The following local attributes are used by a wider range of devices:
         </br>
         set the device on for the specified intervals, which are all timespecs
         in the form HH:MM[:SS]. The intervals are space separated.</li>
+    <li>toggle<br>
+        Issue the off command, if the current STATE is on, else the on command.
+        dim XX is also interpreted as on, if XX is not 0.</li>
   </ul>
   Examples:
   <ul>
@@ -1160,7 +1217,46 @@ The following local attributes are used by a wider range of devices:
     set switch intervals 08:00-12:00 13:00-18:00<br>
     </code>
   </ul>
+  <br><br>
+
+  <a name="attrTemplate"></a>
+  attrTemplate<br>
+    with this command a set of predefined attributes may be set at once. The
+    template files containing the entries are in FHEM/lib/AttrTemplate
+    directory. Template entries can be module specific, and may require further
+    parameters to be specified.
+
 </ul>
+<!-- set end -->
+
+<a name="setdefaultattr"></a>
+<h3>setdefaultattr</h3>
+<ul>
+  <code>setdefaultattr [&lt;attrname&gt; [&lt;value&gt;]] </code><br>
+
+  <br>Add a default attribute. Each device defined from now on will receive
+  this attribute.<br> If no attrname is specified, then the default attribute
+  list will be deleted.
+  <br><br>
+
+  Example to set the attribute "room kitchen" and "loglevel 4" to
+  each of the lamps:
+  <ul>
+    <code>setdefaultattr room kitchen</code><br>
+    <code>setdefaultattr loglevel 4</code><br>
+    <code>define lamp1 FS20 1234 11</code><br>
+    <code>define lamp2 FS20 1234 12</code><br>
+    <code>define lamp3 FS20 1234 13</code><br>
+    <code>setdefaultattr</code><br>
+  </ul>
+  <br>
+
+  Notes:<br>
+  <ul>
+    <li>There is no way to delete a single default-attribute from the list</li>
+  </ul>
+</ul>
+<!-- setdefaultattr end -->
 
 <a name="setreading"></a>
 <h3>setreading</h3>
@@ -1179,6 +1275,7 @@ The following local attributes are used by a wider range of devices:
   Note: setreading won't generate an event for device X, if it is called from a
   notify for device X. Use "sleep 0.1; setreading X Y Z" in this case.
 </ul>
+<!-- setreading end -->
 
 <a name="setstate"></a>
 <h3>setstate</h3>
@@ -1198,6 +1295,7 @@ The following local attributes are used by a wider range of devices:
     setstate lamp on
   </ul>
 </ul>
+<!-- setstate end -->
 
 <a name="shutdown"></a>
 <h3>shutdown</h3>
@@ -1206,7 +1304,7 @@ The following local attributes are used by a wider range of devices:
   <br><br>
   Shut down the server (after saving the <a href="#statefile">state information
   </a>). It triggers the global:SHUTDOWN event.  If the optional restart
-  parameter is specified, fhem tries to restart itself. exitValue may be
+  parameter is specified, FHEM tries to restart itself. exitValue may be
   important for start scripts.
   <br><br>
   Example:
@@ -1216,22 +1314,7 @@ The following local attributes are used by a wider range of devices:
     <code>shutdown 1</code><br>
   </ul>
 </ul>
-
-<a name="trigger"></a>
-<h3>trigger</h3>
-<ul>
-  <code>trigger &lt;devspec&gt; &lt;state&gt;</code>
-  <br><br>
-  Trigger a <a href="#notify">notify</a> definition.
-  See the <a href="#devspec">Device specification</a> section for details on
-  &lt;devspec&gt;.
-
-  <br><br>
-  Example:
-  <ul>
-    <code>trigger btn3 on</code>
-  </ul>
-</ul>
+<!-- shutdown end -->
 
 <a name="sleep"></a>
 <h3>sleep</h3>
@@ -1243,7 +1326,7 @@ The following local attributes are used by a wider range of devices:
   specified time. The unit is seconds, with millisecond accuracy, as you can
   specify decimal places.<br><br>
 
-  A sleep with an &lt;id&lt; will replace a sleep with the same &lt;id&lt;
+  A sleep with an &lt;id&gt; will replace a sleep with the same &lt;id&gt;
   and can be canceled by <a href="#cancel">cancel</a>.
 
   When called in a notify/at/etc, then nonempty return values of the following
@@ -1261,6 +1344,24 @@ The following local attributes are used by a wider range of devices:
   it issues a WARNING in the FHEM log.
   <br>
 </ul>
+<!-- sleep end -->
+
+<a name="trigger"></a>
+<h3>trigger</h3>
+<ul>
+  <code>trigger &lt;devspec&gt; &lt;state&gt;</code>
+  <br><br>
+  Trigger a <a href="#notify">notify</a> definition.
+  See the <a href="#devspec">Device specification</a> section for details on
+  &lt;devspec&gt;.
+
+  <br><br>
+  Example:
+  <ul>
+    <code>trigger btn3 on</code>
+  </ul>
+</ul>
+<!-- trigger end -->
 
 <!-- commands end - diese Zeile nicht entfernen! -->
 
@@ -1282,15 +1383,27 @@ The following local attributes are used by a wider range of devices:
   <ul>
     <li><a href="#archivedir">archivedir</a></li>
     <li><a href="#archivecmd">archivecmd</a></li>
-    <li><a href="#nrarchive">nrarchive</a></li><br>
+    <li><a href="#nrarchive">nrarchive</a></li>
+    <a name="archivesort"></a>
+    <li>archivesort<br>
+        archivesort may be set to the (default) alphanum or timestamp, and
+        specifies how the last files are computed for the nrarchive attribute.
+    </li><br>
 
     <a name="autoload_undefined_devices"></a>
     <li>autoload_undefined_devices<br>
         If set, automatically load the corresponding module when a message
         of this type is received. This is used by the <a href="#autocreate">
-        autocreate</a> device, to automatically create a fhem device upon
+        autocreate</a> device, to automatically create a FHEM device upon
         receiving a corresponding message.
     </li><br>
+
+    <a name="autosave"></a>
+    <li>autosave<br>
+        enable some modules to automatically trigger save after a configuration
+        change, e.g. after a new device was created. Default is 1 (true), you
+        can deactivate this feature by setting the value to 0.
+    </li>
 
     <a name="backupcmd"></a>
     <li>backupcmd<br>
@@ -1305,7 +1418,7 @@ The following local attributes are used by a wider range of devices:
                 /usr/share/fhem/www"</code>
         </ul>
         Note: Your command / script has to return the string "backup done" or
-        everything else to report errors, to work properly with updatefhem!<br>
+        everything else to report errors, to work properly with update!<br>
         This Attribute is used by the <a href="#backup">backup</a> command.<br>
         Example:<br>
         <ul>
@@ -1325,9 +1438,9 @@ The following local attributes are used by a wider range of devices:
 
     <a name="backupsymlink"></a>
     <li>backupsymlink<br>
-        If this attribute is set to everything else as "no", the archive command tar
-        will support symlinks in your backup. Otherwise, if this attribute is set to
-        "no" symlinks are ignored by tar.
+        If this attribute is set to everything else as "no", the archive
+        command tar will support symlinks in your backup. Otherwise, if this
+        attribute is set to "no" symlinks are ignored by tar.
         This Attribute is used by the <a href="#backup">backup</a> command.<br>
         Example:<br>
         <ul>
@@ -1335,22 +1448,42 @@ The following local attributes are used by a wider range of devices:
         </ul>
     </li><br>
 
+    <a name="blockingCallMax"></a>
+    <li>blockingCallMax<br>
+        Limit the number of parallel running processes started by the
+        BlockingCall FHEM helper routine. Useful on limited hardware.
+    </li><br>
+
     <a name="configfile"></a>
     <li>configfile<br>
-        Contains the name of the fhem configuration file. If <a
+        Contains the name of the FHEM configuration file. If <a
         href="#save">save</a> is called without argument, then the output will
         be written to this file.
     </li><br>
 
-    <a name="holiday2we"></a>
-    <li>holiday2we<br>
-        If this attribute is set, then the <a href="#perl">$we</a> variable
-        will be true, if the value of the <a href="#holiday">holiday</a>
-        variable referenced by this attribute is not none.<br>
-        Example:<br>
-        <ul>
-          attr global holiday2we hessen
-        </ul>
+    <a name="commandref"></a>
+    <li>commandref<br>
+        If set to "full" (default), then a full commandref will be generated
+        after each update. If set to modular, there is only a short description
+        at the beginning, and the module documentation is loaded from FHEM
+        dynamically.
+    </li><br>
+
+    <a name="dnsHostsFile"></a>
+    <li>dnsHostsFile<br>
+        If dnsServer is set, check the contents of the file specified as
+        argument. To use the system hosts file, set it to /etc/hosts on
+        Linux/Unix/OSX and C:\windows\system32\drivers\etc\hosts on Windows.
+        Note: only IPv4 is supported.
+    </li><br>
+
+    <a name="dnsServer"></a>
+    <li>dnsServer<br>
+        Contains the IP address of the DNS Server. If some of the modules or
+        user code calls the HttpUtils_NonblockingGet function, and this
+        attribute is set, then FHEM specific nonblocking code will be used to
+        resolve the given address. If this attribute is not set, the blocking
+        OS implementation (inet_aton and gethostbyname) will be used.
     </li><br>
 
     <a name="featurelevel"></a>
@@ -1360,16 +1493,40 @@ The following local attributes are used by a wider range of devices:
         as it is deprecated, use the Value() function instead.
     </li><br>
 
-    <a name="lastinclude"></a>
-    <li>lastinclude<br>
-        If this attribute is set, then the last command of the generated
-        configfile (see the <a href="#save">save</a> command) will be<br>
-        include &lt;lastinclude-value&gt;<br>
-        This attribute is DEPRECATED and valid for featurelevel up to 5.6, use
-        <a href="#notify">notify</a>, with the INITIALIZED event to execute
-        commands after initialization.
+    <a name="holiday2we"></a>
+    <li>holiday2we<br>
+        If this attribute is set, then the <a href="#perl">$we</a> variable
+        will be true, if the value of the <a href="#holiday">holiday</a>
+        variable referenced by this attribute is not none.<br>
+        If it is a comma separated list, then it is true, if one of the
+        referenced entities is not none.<br>
+        Example:<br>
+        <ul>
+          attr global holiday2we he
+        </ul>
     </li><br>
 
+    <a name="httpcompress"></a>
+    <li>httpcompress<br>
+        the HttpUtils module is used by a lot of FHEM modules, and enables
+        compression by default. Set httpcompress to 0 to disable this feature.
+    </li><br>
+
+    <a name="keyFileName"></a>
+    <li>keyFileName<br>
+        FHEM modules store passwords and unique IDs in the file
+        FHEM/FhemUtils/uniqueID. In order to start multiple FHEM instances from
+        the same directory, you may set this attribute, whose value will
+        appended to FHEM/FhemUtils/
+    </li><br>
+
+    <a name="logdir"></a>
+    <li>logdir<br>
+        If set, the %L attribute in the logfile attribute (or in the FileLog
+        modules file definition) is replaced wth the value of the attribute.
+        Note: changing the value won't result in moving the files and may cause
+        other problems.
+    </li><br>
 
     <a name="logfile"></a>
     <li>logfile<br>
@@ -1403,7 +1560,7 @@ The following local attributes are used by a wider range of devices:
         or directly after the telnet logon, before displaying the fhem> prompt.
         SecurityCheck is setting motd if it is not defined upon startup, to
         avoid this set the motd value to none.  motd is also used to show
-        collected error messages upon fhem start.
+        collected error messages upon FHEM start.
     </li><br>
 
     <a name="mseclog"></a>
@@ -1418,13 +1575,40 @@ The following local attributes are used by a wider range of devices:
         Windows.
     </li><br>
 
-    <a name="pidfilename="></a>
+    <a name="pidfilename"></a>
     <li>pidfilename<br>
         Write the process id of the perl process to the specified file. The
         server runs as a daemon, and some distributions would like to check by
         the pid if we are still running. The file will be deleted upon
         shutdown.
     </li><br>
+
+    <a name="proxy"></a>
+    <li>proxy<br>
+        IP:PORT of the proxy server to be used by HttpUtils.
+    </li><br>
+    <a name="proxyAuth"></a>
+    <li>proxyAuth<br>
+        Base64 encoded username:password
+    </li><br>
+    <a name="proxyExclude"></a>
+    <li>proxyExclude<br>
+        regexp for hosts to exclude when using a proxy
+    </li><br>
+
+    <a name="restoreDirs"></a>
+    <li>restoreDirs<br>
+        update saves each file before overwriting it with the new version from
+        the Web. For this purpose update creates a directory restoreDir/update
+        in the global modpath directory, then a subdirectory with the current
+        date, where the old version of the currently replaced file is stored.
+        The default value of this attribute is 3, meaning that 3 old versions
+        (i.e. date-directories) are kept, and the older ones are deleted.<br>
+        fhem.cfg and fhem.state will be also copied with this method before
+        executing save into restoreDir/save/YYYY-MM-DD.  To restore the files,
+        you can use the restore FHEM command.<br><br>
+        If the attribute is set to 0, the feature is deactivated.
+        </li><br>
 
     <li><a href="#fheminfo">sendStatistics</a><br>
 
@@ -1437,7 +1621,12 @@ The following local attributes are used by a wider range of devices:
 
     <li><a href="#title">title</a><br>
 
-    <li><a href="#fheminfo">uniqueID</a><br>
+    <a name="useInet6"></a>
+    <li>useInet6<br>
+        try to use IPv6 in HttpUtils for communication. If the server does not
+        have an IPv6 address, fall back to IPv4. Note: IO::Socket::INET6 is
+        required.
+    </li><br>
 
     <a name="userattr"></a>
     <li>userattr<br>
@@ -1480,30 +1669,40 @@ The following local attributes are used by a wider range of devices:
     <li>restartDelay<br>
         set the delay for shutdown restart, default is 2 (seconds).
     </li><br>
-
-    <a name="autosave"></a>
-    <li>autosave<br>
-        enable some modules to automatically trigger save after a configuration
-        change, e.g. after a new device was created. Default is 1 (true), you
-        can deactivate this feature by setting the value to 0.
-    </li>
-
   </ul>
+
+  <br>
+  <b>Events:</b>
+  <ul>
+    <li>INITIALIZED<br>after initialization is finished.</li>
+    <li>REREADCFG<br>after the configuration is reread.</li>
+    <li>SAVE<br>before the configuration is saved.</li>
+    <li>SHUTDOWN<br>before FHEM is shut down.</li>
+    <li>DEFINED &lt;devname&gt;<br>after a device is defined.</li>
+    <li>DELETED &lt;devname&gt;<br>after a device was deleted.</li>
+    <li>RENAMED &lt;old&gt; &lt;new&gt;<br>after a device was renamed.</li>
+    <li>UNDEFINED &lt;defspec&gt;<br>upon reception of a message for an
+    undefined device.</li>
+    <li>MODIFIED &lt;defspec&gt;</br> after a device modification.</li>
+    <li>UPDATE</br> after an update is completed.</li>
+  </ul>
+
+
 </ul>
 <!-- global end - do not remove this line! -->
 
 
 <a name="perl"></a>
 <h3>Perl specials</h3>
-  If you want to automate some tasks via fhem, then you'll probably use <a
+  If you want to automate some tasks via FHEM, then you'll probably use <a
   href="#at">at</a> or <a href="#notify">notify</a>. For more complex tasks
   you'll use either a shell-script or a perl "oneliner" as the at/notify
   argument. This chapter gives some tips in using the perl oneliners.<br><br>
 
-  <li>To test perl oneliners, type them on the telnet prompt (or FHEMWEB text
-    input) by enclosing it in {}, one line at once.  The last line will only
-    write something in the logfile, the output of the other lines is directly
-    visible.
+  <li>To test the following perl oneliners, type them on the telnet prompt (or
+    FHEMWEB text input) by enclosing it in {}, one line at once.  The last line
+    will only write something in the logfile, the output of the other lines is
+    directly visible.
     <ul>
       { "Hello" }<br>
       { 1+3*4 }<br>
@@ -1513,23 +1712,23 @@ The following local attributes are used by a wider range of devices:
     <br>
 
   <li>
-    Perl expressions are separated by ;, in fhem oneliners they have to
+    Perl expressions are separated by ;, in FHEM oneliners they have to
     escaped with ;;<br>
     <ul>
       { my $a = 1+1;; Log 1, "Hello $a" }
     </ul>
     <br>
 
-  <li>To use fhem commands from the perl expression, use the function fhem(),
-    which takes a string argument, this string will be evaluated as a fhem
+  <li>To use FHEM commands from the perl expression, use the function fhem(),
+    which takes a string argument, this string will be evaluated as a FHEM
     command:<br>
     <ul>
       { fhem "set light on" }<br>
       define n1 notify piri:on { fhem "set light on" }
     </ul>
     Note: if this function returns a value, it will also be logged into the
-    global fhem log. Use 1 as a second argument to disable this logging, this
-    makes sense when obtainig some values via fhem "get...".
+    global FHEM log. Use 1 as a second argument to disable this logging, this
+    makes sense when obtainig some values via FHEM "get...".
     <br>
     <br>
 
@@ -1548,7 +1747,8 @@ The following local attributes are used by a wider range of devices:
     $mday, $month, $year, $wday, $yday, $isdst are available in the perl
     oneliners (see also perldoc -f localtime). Exceptions: $month is in the
     range of 1 to 12, and $year is corrected by 1900 (as I would expect).
-    Additionally the variable $hms contains the time in the HH:MM:SS format.
+    Additionally the variable $hms contains the time in the HH:MM:SS format and
+    $today the current date in YYYY-MM-DD format.
     <br>
     Additionally the variabe $we is 1 if it is weekend (i.e $wday == 0 or
     $wday == 6), and 0 otherwise. If the <a href="#holiday2we">holida2we</a>
@@ -1591,9 +1791,33 @@ The following local attributes are used by a wider range of devices:
         Return the reading (the value in the Readings section of "list device")
         </li><br>
       <li>
-        ReadingsNum(&lt;devicename&gt;,&lt;reading&gt;,&lt;defaultvalue&gt;)<br>
-        Return the reading as a number, i.e. delete non-numerical values.
+        ReadingsNum(&lt;devicename&gt;,&lt;reading&gt;,
+                    &lt;defaultvalue&gt;,&lt;round&gt;)<br>
+        Return the first number from a reading value.
+        Round id to &lt;round&gt; devimal places (optional parameter).
         </li><br>
+      <li>ReadingsTimestamp(&lt;devicename&gt;,&lt;reading&gt;,&lt;
+        defaultvalue&gt;)<br>
+        returns the timestamp of the reading.
+        </li><br>
+      <li>ReadingsAge(&lt;devicename&gt;,&lt;reading&gt;,&lt;defaultvalue&gt;)
+        <br>
+        returns the age of the reading in seconds.
+        </li><br>
+
+      <li>
+        OldReadingsVal(&lt;devicename&gt;,&lt;reading&gt;,
+                        &lt;defaultvalue&gt;)<br>
+        OldReadingsNum(&lt;devicename&gt;,&lt;reading&gt;,
+                        &lt;defaultvalue&gt;,&lt;round&gt;)<br>
+        OldReadingsTimestamp(&lt;devicename&gt;,&lt;
+                        reading&gt;,&lt;defaultvalue&gt;)<br>
+        OldReadingsAge(&lt;devicename&gt;,&lt;reading&gt;,
+                        &lt;defaultvalue&gt;)<br>
+        similar to the above functions, but used to access the previous values.
+        see: <a href="#oldreadings">oldreadings</a>
+        </li><br>
+
       <li>
         AttrVal(&lt;devicename&gt;,&lt;attribute&gt;,&lt;defaultvalue&gt;)<br>
         Return the attribute of the device
@@ -1606,10 +1830,22 @@ The following local attributes are used by a wider range of devices:
         { AttrVal("wz", "room", "none") }<br>
         </li><br>
       <li>
+        AttrNum(&lt;devicename&gt;,&lt;attribute&gt;,
+                    &lt;defaultvalue&gt;,&lt;round&gt;)<br>
+        Return the first number from an attribute value.
+        Round id to &lt;round&gt; devimal places (optional parameter).
+        </li><br>
+      <li>
         InternalVal(&lt;devicename&gt;,&lt;property&gt;,&lt;defaultvalue&gt;)
         <br>
         Return the internal value (the value in the Internals section of "list
         device").
+        </li><br>
+      <li>
+        InternalNum(&lt;devicename&gt;,&lt;property&gt;,
+                    &lt;defaultvalue&gt;,&lt;round&gt;)<br>
+        Return the first number from an internal value.
+        Round id to &lt;round&gt; devimal places (optional parameter).
         </li><br>
       </ul>
 
@@ -1637,7 +1873,7 @@ The .gplot files are also used by the <a href="#FHEMWEB">FHEMWEB</a>/SVG module
 when the <a href="#plotmode">plotmode</a> attribute is set to SVG. In this case
 only a subset of the .gnuplot attributes are used, and some lines have special
 meanings: the difference will be explained in this chapter. See also <a
-href="http://fhemwiki.de/wiki/Creating_Plots">this</a> fhemwiki entry on
+href="http://wiki.fhem.de/wiki/Creating_Plots">this</a> FHEM Wiki entry on
 creating logs.<br>
 Following is a minimal .gplot definition (valid only for plotmode SVG):<br>
 <pre>
@@ -1735,5 +1971,6 @@ The .gnuplot file consists of 3 parts:
 </ul>
 </li>
 
+</div> <!-- right -->
 </body>
 </html>

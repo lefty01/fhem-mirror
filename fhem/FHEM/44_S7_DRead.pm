@@ -1,12 +1,11 @@
-# $Id$
+# $Id: 44_S7_DRead.pm 15539 2017-12-01 21:52:13Z charlie71 $
 ##############################################
 package main;
 
 use strict;
 use warnings;
+use Time::HiRes qw(gettimeofday);
 
-#use Switch;
-#use 44_S7_Client;
 
 my %gets = (
 
@@ -56,10 +55,11 @@ sub S7_DRead_Define($$) {
 
 		if ( uc $a[2] =~ m/^Q(\d*)/ ) {
 			$startposition = 1;
-			if ( $hash->{IODev}{S7TYPE} eq "LOGO7" ) {
+			
+			if ( defined($hash->{IODev}{S7TYPE}) && $hash->{IODev}{S7TYPE} eq "LOGO7" ) {
 				$Offset = 942;
 			}
-			elsif ( $hash->{IODev}{S7TYPE} eq "LOGO8" ) {
+			elsif ( defined($hash->{IODev}{S7TYPE}) && $hash->{IODev}{S7TYPE} eq "LOGO8" ) {
 				$Offset = 1064;
 			}
 			else {
@@ -263,15 +263,43 @@ sub S7_DRead_Parse_new($$) {
 			#aktualisierung des wertes
 
 			my $s = int( $h->{POSITION} / 8 ) - $start;
-			my $myI = $hash->{S7TCPClient}->ByteAt( \@Writebuffer, $s );
+			my $myI = $hash->{S7PLCClient}->ByteAt( \@Writebuffer, $s );
 
 			Log3 $name, 6, "$name S7_DRead_Parse update $n ";
-
-			if ( ( int($myI) & ( 1 << ( $h->{POSITION} % 8 ) ) ) > 0 ) {
-				main::readingsSingleUpdate( $h, "state", "on", 1 );
+			
+			my $valueText = "";
+			
+			if ( ( int($myI) & ( 1 << ( $h->{POSITION} % 8 ) ) ) > 0 ) {				
+				$valueText = "on";
 			}
 			else {
-				main::readingsSingleUpdate( $h, "state", "off", 1 );
+				$valueText = "off";
+			}
+
+			
+			if (ReadingsVal($h->{NAME},"state","") ne $valueText) {				
+				main::readingsSingleUpdate( $h, "state", $valueText, 1 );
+			} else {
+				my $reading="state";
+				#value not changed check event-min-interval attribute
+				my $attrminint = AttrVal($name, "event-min-interval", undef);
+				if($attrminint) {
+						my @a = split(/,/,$attrminint);
+				}			
+				my @v = grep { my $l = $_;
+							   $l =~ s/:.*//;
+							   ($reading=~ m/^$l$/) ? $_ : undef} @a;
+				if(@v) {
+				  my (undef, $minInt) = split(":", $v[0]);
+				  
+				  my $now = gettimeofday();
+				  my $le = $hash->{".lastTime$reading"};
+
+				  if($le && $now-$le >= $minInt) {
+						main::readingsSingleUpdate( $h, $reading, $valueText, 1 );
+				  }
+				} 
+			
 			}
 		}
 	}
@@ -328,6 +356,7 @@ sub S7_DRead_Parse($$) {
 		my @Writebuffer = unpack( "C" x $length,
 			pack( "H2" x $length, split( ",", $hexbuffer ) ) );
 
+		my $now = gettimeofday();
 		foreach my $clientName (@clientList) {
 
 			my $h = $defs{$clientName};
@@ -346,19 +375,95 @@ sub S7_DRead_Parse($$) {
 				#aktualisierung des wertes
 				my $s = int( $h->{POSITION} / 8 ) - $start;
 
-				my $myI = $hash->{S7TCPClient}->ByteAt( \@Writebuffer, $s );
+				my $myI = $hash->{S7PLCClient}->ByteAt( \@Writebuffer, $s );
 
 				Log3 $name, 6, "$name S7_DRead_Parse update $clientName ";
 
-				if ( ( int($myI) & ( 1 << ( $h->{POSITION} % 8 ) ) ) > 0 ) {
-
-					main::readingsSingleUpdate( $h, "state", "on", 1 );
-
+#				if ( ( int($myI) & ( 1 << ( $h->{POSITION} % 8 ) ) ) > 0 ) {
+#					main::readingsSingleUpdate( $h, "state", "on", 1 );
+#				}
+#				else {
+#					main::readingsSingleUpdate( $h, "state", "off", 1 );
+#				}
+				
+				my $valueText = "";
+				my $reading="state";
+				
+				if ( ( int($myI) & ( 1 << ( $h->{POSITION} % 8 ) ) ) > 0 ) {				
+					$valueText = "on";
 				}
 				else {
-					main::readingsSingleUpdate( $h, "state", "off", 1 );
-
+					$valueText = "off";
 				}
+
+				#check event-onchange-reading
+				#code wurde der datei fhem.pl funktion readingsBulkUpdate entnommen und adaptiert
+				my $attreocr= AttrVal($h->{NAME}, "event-on-change-reading", undef);
+				my @a;
+				if($attreocr) {
+					@a = split(/,/,$attreocr);
+					$h->{".attreocr"} = \@a;
+				}
+				# determine whether the reading is listed in any of the attributes
+				my @eocrv;
+				my $eocr = $attreocr &&
+					( @eocrv = grep { my $l = $_; $l =~ s/:.*//;
+										($reading=~ m/^$l$/) ? $_ : undef} @a);
+			
+
+			  # check if threshold is given
+				my $eocrExists = $eocr;
+				if( $eocr
+					&& $eocrv[0] =~ m/.*:(.*)/ ) {
+				  my $threshold = $1;
+
+				  if($valueText =~ m/([\d\.\-eE]+)/ && looks_like_number($1)) { #41083, #62190
+					my $mv = $1;
+					my $last_value = $h->{".attreocr-threshold$reading"};
+					if( !defined($last_value) ) {
+					  # $h->{".attreocr-threshold$reading"} = $mv;
+					} elsif( abs($mv - $last_value) < $threshold ) {
+					  $eocr = 0;
+					} else {
+					  # $h->{".attreocr-threshold$reading"} = $mv;
+					}
+				  }
+				}
+				
+				my $changed = !($attreocr)
+					  || ($eocr && ($valueText ne ReadingsVal($h->{NAME},$reading,"")));				
+								
+
+				my $attrminint = AttrVal($h->{NAME}, "event-min-interval", undef);
+				my @aa;
+				if($attrminint) {
+						@aa = split(/,/,$attrminint);
+				}								
+					
+				my @v = grep { my $l = $_;
+							   $l =~ s/:.*//;
+							   ($reading=~ m/^$l$/) ? $_ : undef
+							  } @aa;
+				if(@v) {
+				  my (undef, $minInt) = split(":", $v[0]);
+				  my $le = $h->{".lastTime$reading"};
+				  if($le && $now-$le < $minInt) {
+					if(!$eocr || ($eocr && $valueText eq ReadingsVal($h->{NAME},$reading,""))){
+					  $changed = 0;
+					#} else {
+					#  $hash->{".lastTime$reading"} = $now;
+					}
+				  } else {
+					#$hash->{".lastTime$reading"} = $now;
+					$changed = 1 if($eocrExists);
+				  }
+				}				
+
+				if ($changed == 1) {				
+					main::readingsSingleUpdate( $h, $reading, $valueText, 1 );
+				}
+				
+				
 			}
 
 			#			}
@@ -390,7 +495,7 @@ sub S7_DRead_Parse($$) {
 						#my $b = pack( "C" x $length, @Writebuffer );
 
 						my $myI =
-						  $hash->{S7TCPClient}->ByteAt( \@Writebuffer, $s );
+						  $hash->{S7PLCClient}->ByteAt( \@Writebuffer, $s );
 
 						Log3 $name, 6, "$name S7_DRead_Parse update $n ";
 
@@ -452,30 +557,30 @@ sub S7_DRead_Attr(@) {
 1;
 
 =pod
+=item summary logical device for a digital reading from a S7/S5
+=item summary_DE logisches Device für einen binären Nur Lese Datenpunkt von einer S5 / S7
 =begin html
 
 <a name="S7_DRead"></a>
 <h3>S7_DRead</h3>
 <ul>
-	This module is a logical module of the physical module S7.<br />
-	This module provides digital data (ON/OFF).<br />
-	Note: you have to configure a PLC reading at the physical modul (S7) first.<br />
-	<br />
-	<br />
-	<b>Define</b>
+This module is a logical module of the physical module S7. <br>
+This module provides digital data (ON/OFF).<br>
+Note: you have to configure a PLC reading at the physical modul (S7) first.<br>
+<br><br>
+<b>Define</b>
+<ul>
+<code>define &lt;name&gt; S7_DRead {inputs|outputs|flags|db} &lt;DB&gt; &lt;address&gt;</code>
 
-	<ul>
-		<li><code>define &lt;name&gt; S7_DRead {inputs|outputs|flags|db} &lt;DB&gt; &lt;address&gt;</code>
-
-		<ul>
-			<li>inputs|outputs|flags|db &hellip; defines where to read.</li>
-			<li>DB &hellip; Number of the DB</li>
-			<li>address &hellip; address you want to read. bit number to read. Example: 10.3</li>
-		</ul>
-		Note: the required memory area need to be with in the configured PLC reading of the physical module.</li>
-	</ul>
+<ul>
+<li>inputs|outputs|flags|db … defines where to read.</li>
+<li>DB … Number of the DB</li>
+<li>address … address you want to read. bit number to read. Example: 10.3</li>
+</ul>
+Note: the required memory area need to be with in the configured PLC reading of the physical module.
 </ul>
 
+</ul>
 =end html
 
 =begin html_DE
@@ -483,26 +588,23 @@ sub S7_DRead_Attr(@) {
 <a name="S7_DRead"></a>
 <h3>S7_DRead</h3>
 <ul>
-	This module is a logical module of the physical module S7.<br />
-	This module provides digital data (ON/OFF).<br />
-	Note: you have to configure a PLC reading at the physical modul (S7) first.<br />
-	<br />
-	<br />
-	<b>Define</b>
 
-	<ul>
-		<li><code>define &lt;name&gt; S7_DRead {inputs|outputs|flags|db} &lt;DB&gt; &lt;address&gt;</code>
+This module is a logical module of the physical module S7. <br>
+This module provides digital data (ON/OFF).<br>
+Note: you have to configure a PLC reading at the physical modul (S7) first.<br>
+<br><br>
+<b>Define</b>
+<ul>
+<code>define &lt;name&gt; S7_DRead {inputs|outputs|flags|db} &lt;DB&gt; &lt;address&gt;</code>
 
-		<ul>
-			<li>inputs|outputs|flags|db &hellip; defines where to read.</li>
-			<li>DB &hellip; Number of the DB</li>
-			<li>address &hellip; address you want to read. bit number to read. Example: 10.3</li>
-		</ul>
-		Note: the required memory area need to be with in the configured PLC reading of the physical module.</li>
-	</ul>
+<ul>
+<li>inputs|outputs|flags|db … defines where to read.</li>
+<li>DB … Number of the DB</li>
+<li>address … address you want to read. bit number to read. Example: 10.3</li>
 </ul>
-
+Note: the required memory area need to be with in the configured PLC reading of the physical module.
+</ul>
+</ul>
 =end html_DE
 
 =cut
-

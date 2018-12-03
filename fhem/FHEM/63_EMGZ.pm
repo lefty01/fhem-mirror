@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 63_EMGZ.pm 11984 2016-08-19 12:47:50Z rudolfkoenig $
 package main;
 
 use strict;
@@ -172,6 +172,8 @@ EMGZ_Define($$)
 1;
 
 =pod
+=item summary    EM1000GZ devices communicating over the EM1010PC
+=item summary_DE EM1000GZ Ger&auml;te angebunden &uuml;ber ein EM1010PC
 =begin html
 
 <a name="EMGZ"></a>

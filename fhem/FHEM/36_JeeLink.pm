@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 36_JeeLink.pm 14707 2017-07-13 18:08:33Z justme1968 $
 
 package main;
 
@@ -699,6 +699,7 @@ JeeLink_Parse($$$$)
   return if($dmsg =~ m/^Available commands:/ );    # ignore startup messages
   return if($dmsg =~ m/^  / );                     # ignore startup messages
   return if($dmsg =~ m/^-> ack/ );                 # ignore send ack
+  return if($dmsg =~ m/^LGW/);                     # ignore LGW communication
 
   if( $dmsg =~ /^INIT / ) {
     $hash->{initMessages} .= "\n" if( $hash->{initMessages} );
@@ -707,7 +708,17 @@ JeeLink_Parse($$$$)
   }
 
   if($dmsg =~ m/^\[/ ) {
-    $hash->{model} = $dmsg;
+    if($dmsg =~ m/^\[LaCrosseITPlusReader/) {
+      my $model = "";
+      my $settings = "";
+      ($model, $settings) = split(/ /, $dmsg, 2);
+      chop($settings);
+      $hash->{model} = substr($model, 1);
+      $hash->{settings} = $settings;
+    }
+    else {
+      $hash->{model} = $dmsg;
+    }
 
     if( ReadingsVal($name,"state","" ) eq "opened" ) {
       if( my $initCommandsString = AttrVal($name, "initCommands", undef) ) {
@@ -1021,6 +1032,8 @@ sub JeeLink_getIndexOfArray($@) {
 1;
 
 =pod
+=item summary    connect JeeLink/Arduino based RF devices
+=item summary_DE Anbindung von JeeLink/Arduino basierten RF Ger&auml;ten
 =begin html
 
 <a name="JeeLink"></a>

@@ -1,11 +1,11 @@
 
 ##############################################
-# $Id$
+# $Id: 98_Text2Speech.pm 16849 2018-06-11 08:50:38Z Tobias.Faust $
 #
 # 98_Text2Speech.pm
 #
 # written by Tobias Faust 2013-10-23
-# e-mail: tobias dot faust at online dot de
+# e-mail: tobias dot faust at gmx dot net
 #
 ##############################################
 
@@ -84,7 +84,8 @@ my %language        = ("Google"     =>  {"Deutsch"        => "de",
                                          "France"         => "fr",
                                          "Spain"          => "es",
                                          "Italian"        => "it",
-                                         "Chinese"        => "cn"
+                                         "Chinese"        => "cn",
+                                         "Dutch"          => "nl"
                                          },
                        "VoiceRSS"   =>  {"Deutsch"        => "de-de",
                                          "English-US"     => "en-us",
@@ -160,8 +161,10 @@ sub Text2Speech_Initialize($)
                        " TTS_SentenceAppendix".
                        " TTS_FileMapping".
                        " TTS_FileTemplateDir".
-		                   " TTS_VolumeAdjust".
+                       " TTS_VolumeAdjust".
+                       " TTS_noStatisticsLog:1,0".
                        " TTS_Language:".join(",", sort keys %{$language{"Google"}}).
+                       " TTS_SpeakAsFastAsPossible:1,0".
                        " ".$readingFnAttributes;
 }
 
@@ -203,6 +206,10 @@ sub Text2Speech_Define($$)
     $hash->{portpassword} = $a[3] if(@a == 4); 
 
     $hash->{MODE} = "REMOTE";
+  } elsif (lc($dev) eq "none") {
+    # Ein DummyDevice, Serverdevice. Nur Generierung der mp3 TTS Dateien
+    $hash->{MODE} = "SERVER";
+    undef $hash->{ALSADEVICE};
   } else {
     # Ein Alsadevice ist angegeben
     # pruefen, ob Alsa-Device in /etc/asound.conf definiert ist
@@ -253,21 +260,24 @@ sub Text2Speech_Attr(@) {
     return "wrong delemiter syntax: [+-]a[lfn]. \n".
            "  Example 1: +an~\n".
            "  Example 2: +al." if($value !~ m/^([+-]a[lfn]){0,1}(.){1}$/i);
-    return "This Attribute is only available in direct mode" if($hash->{MODE} ne "DIRECT");
+    return "This Attribute is only available in direct or server mode" if($hash->{MODE} !~ m/(DIRECT|SERVER)/ );
 
   } elsif ($a[2] eq "TTS_Ressource") {
-    return "This Attribute is only available in direct mode" if($hash->{MODE} ne "DIRECT");
+    return "This Attribute is only available in direct or server mode" if($hash->{MODE} !~ m/(DIRECT|SERVER)/ );
   
   } elsif ($a[2] eq "TTS_CacheFileDir") {
-    return "This Attribute is only available in direct mode" if($hash->{MODE} ne "DIRECT");
+    return "This Attribute is only available in direct or server mode" if($hash->{MODE} !~ m/(DIRECT|SERVER)/ );
  
+  } elsif ($a[2] eq "TTS_SpeakAsFastAsPossible") {
+    return "This Attribute is only available in direct or server mode" if($hash->{MODE} !~ m/(DIRECT|SERVER)/ );
+
   } elsif ($a[2] eq "TTS_UseMP3Wrap") {
-    return "This Attribute is only available in direct mode" if($hash->{MODE} ne "DIRECT");
+    return "This Attribute is only available in direct or server mode" if($hash->{MODE} !~ m/(DIRECT|SERVER)/ );
     return "Attribute TTS_UseMP3Wrap is required by Attribute TTS_SentenceAppendix! Please delete it first." 
       if(($a[0] eq "del") && (AttrVal($hash->{NAME}, "TTS_SentenceAppendix", undef)));
 
   } elsif ($a[2] eq "TTS_SentenceAppendix") { 
-    return "This Attribute is only available in direct mode" if($hash->{MODE} ne "DIRECT");
+    return "This Attribute is only available in direct or server mode" if($hash->{MODE} !~ m/(DIRECT|SERVER)/ );
     return "Attribute TTS_UseMP3Wrap is required!" unless(AttrVal($hash->{NAME}, "TTS_UseMP3Wrap", undef));
     
     my $file = $TTS_CacheFileDir ."/". $value;
@@ -328,9 +338,9 @@ sub Text2Speech_OpenDev($) {
   if($hash->{SSL}) {
     eval "use IO::Socket::SSL";
     Log3 $name, 1, $@ if($@);
-    $conn = IO::Socket::SSL->new(PeerAddr => "$dev") if(!$@);
+    $conn = IO::Socket::SSL->new(PeerAddr => "$dev", MultiHomed => 1) if(!$@);
   } else {
-    $conn = IO::Socket::INET->new(PeerAddr => $dev);
+    $conn = IO::Socket::INET->new(PeerAddr => $dev, MultiHomed => 1);
   } 
 
   if(!$conn) {
@@ -377,9 +387,32 @@ sub Text2Speech_Write($$) {
   #my $call = "set tts tts Das ist ein Test.";
   my $call = "set $name $msg"; 
 
-  Text2Speech_OpenDev($hash) if(!$hash->{TCPDev});
-  #lets try again
-  Text2Speech_OpenDev($hash) if(!$hash->{TCPDev});
+  #Prüfen ob PRESENCE vorhanden und present
+  my $isPresent = 0;
+  my $hasPRESENCE = 0;
+  my $devname="";
+  if ($hash->{MODE}  eq "REMOTE") {
+    foreach $devname (devspec2array("TYPE=PRESENCE")) {
+      if (defined $defs{$devname}->{ADDRESS} && $dev) {
+        if ($dev =~ $defs{$devname}->{ADDRESS}) {
+          $hasPRESENCE = 1;
+          $isPresent = 1 if (ReadingsVal($devname,"presence","unknown") eq "present");
+          last;
+        }
+      }
+    }
+  }
+  if ($hasPRESENCE) {
+    Log3 $hash, 4, "Text2Speech($name): found PRESENCE Device $devname for host: $dev, it\'s state is: ".($isPresent ? "present" : "absent");
+    Text2Speech_OpenDev($hash) if(!$hash->{TCPDev} && $isPresent);
+    #lets try again
+    Text2Speech_OpenDev($hash) if(!$hash->{TCPDev} && $isPresent);
+  } else {
+    Log3 $hash, 4, "Text2Speech($name): no proper PRESENCE Device for host: $dev";
+    Text2Speech_OpenDev($hash) if(!$hash->{TCPDev});
+    #lets try again
+    Text2Speech_OpenDev($hash) if(!$hash->{TCPDev});
+  }
 
   if($hash->{TCPDev}) {
     Log3 $hash, 4, "Text2Speech: Write remote message to $dev: $call";
@@ -420,11 +453,12 @@ sub Text2Speech_Set($@)
   }
 
   # Abbruch falls Disabled
-  return undef if(AttrVal($hash->{NAME}, "disable", "0") eq "1");
+  return "no set cmd on a disabled device !" if(IsDisabled($me));
 
   if($cmd eq "tts") {
-    readingsSingleUpdate($hash, "playing", "1", 1);
-    if($hash->{MODE} eq "DIRECT") {
+    
+    if($hash->{MODE} eq "DIRECT" || $hash->{MODE} eq "SERVER") {
+      readingsSingleUpdate($hash, "playing", "1", 1);
       Text2Speech_PrepareSpeech($hash, join(" ", @a));
       $hash->{helper}{RUNNING_PID} = BlockingCall("Text2Speech_DoIt", $hash, "Text2Speech_Done", $TTS_TimeOut, "Text2Speech_AbortFn", $hash) unless(exists($hash->{helper}{RUNNING_PID}));
     } elsif ($hash->{MODE} eq "REMOTE") {
@@ -433,7 +467,7 @@ sub Text2Speech_Set($@)
   } elsif($cmd eq "volume") {
     my $vol = join(" ", @a);
     return "volume level expects 0..100 percent" if($vol !~ m/^([0-9]{1,3})$/ or $vol > 100);
-    
+
     if($hash->{MODE} eq "DIRECT") {
       $hash->{VOLUME} = $vol  if($vol <= 100);
       delete($hash->{VOLUME}) if($vol > 100);
@@ -559,12 +593,12 @@ sub Text2Speech_PrepareSpeech($$) {
 # Ist "AddDelemiter" angegeben, so wird der Delemiter an den 
 # String wieder angefügt
 #####################################
-sub Text2Speech_SplitString(@$$$$){
-  my @text          = @{$_[0]};
-  my $MaxChar       = $_[1];
-  my $Delemiter     = $_[2];
-  my $ForceSplit    = $_[3];
-  my $AddDelemiter  = $_[4];
+sub Text2Speech_SplitString($$$$$){
+  my @text          = @{shift()};
+  my $MaxChar       = shift;
+  my $Delemiter     = shift;
+  my $ForceSplit    = shift;
+  my $AddDelemiter  = shift;
   my @newText;
 
   for(my $i=0; $i<(@text); $i++) {
@@ -603,9 +637,17 @@ sub Text2Speech_BuildMplayerCmdString($$) {
   }
 
   my $AlsaDevice = $hash->{ALSADEVICE};
-  if($AlsaDevice eq "none") {
+  if($AlsaDevice eq "default") {
     $AlsaDevice = "";
     $mplayerAudioOpts = "";
+  }
+
+  # anstatt  mplayer wird ein anderer Player verwendet
+  if ($TTS_MplayerCall !~ m/mplayer/) {
+    $AlsaDevice = "";
+    $mplayerAudioOpts = "";
+    $mplayerNoDebug = "";
+    $mplayerOpts = "";
   }
 
   my $NoDebug = $mplayerNoDebug;
@@ -619,6 +661,10 @@ sub Text2Speech_BuildMplayerCmdString($$) {
   return $cmd;
 }
 
+#####################################
+# Benutzt um Infos aus dem Blockingprozess
+# in die Readings zu schreiben
+#####################################
 sub Text2Speech_readingsSingleUpdateByName($$$) {
   my ($devName, $readingName, $readingVal) = @_;
   my $hash = $defs{$devName};
@@ -765,73 +811,88 @@ sub Text2Speech_DoIt($) {
     return undef;
   }
 
-  if(AttrVal($hash->{NAME}, "TTS_UseMP3Wrap", 0)) {
-    # benutze das Tool MP3Wrap um bereits einzelne vorhandene Sprachdateien
-    # zusammenzuführen. Ziel: sauberer Sprachfluss
-    my @Mp3WrapFiles;
-    my @Mp3WrapText;
-    
-    $TTS_SentenceAppendix = $myFileTemplateDir ."/". $TTS_SentenceAppendix if($TTS_SentenceAppendix);
-    undef($TTS_SentenceAppendix) if($TTS_SentenceAppendix && (! -e $TTS_SentenceAppendix));
+  my @Mp3WrapFiles;
+  my @Mp3WrapText;
+  
+  $TTS_SentenceAppendix = $myFileTemplateDir ."/". $TTS_SentenceAppendix if($TTS_SentenceAppendix);
+  undef($TTS_SentenceAppendix) if($TTS_SentenceAppendix && (! -e $TTS_SentenceAppendix));
 
-    #Abspielliste erstellen
-    foreach my $t (@{$hash->{helper}{Text2Speech}}) {
-      if(-e $TTS_CacheFileDir."/".$t) { $filename = $t;} else {$filename = md5_hex($language{$TTS_Ressource}{$TTS_Language} ."|". $t) . ".mp3";} # falls eine bestimmte mp3-Datei gespielt werden soll
+  #Abspielliste erstellen
+  foreach my $t (@{$hash->{helper}{Text2Speech}}) {
+    if(-e $t) {
+      # falls eine bestimmte mp3-Datei mit absolutem Pfad gespielt werden soll
+      $filename = $t;
+      $file = $filename;
+      Log3 $hash->{NAME}, 4, "Text2Speech: $filename als direkte MP3 Datei erkannt!";
+    } elsif(-e $TTS_CacheFileDir."/".$t) { 
+      # falls eine bestimmte mp3-Datei mit relativem Pfad gespielt werden soll
+      $filename = $t;
       $file = $TTS_CacheFileDir."/".$filename;
-      if(-e $file) {
-        push(@Mp3WrapFiles, $file);
-        push(@Mp3WrapText, $t);
-        #Text2Speech_WriteStats($hash, 0, $file, $t);
-      } else {last;}
+      Log3 $hash->{NAME}, 4, "Text2Speech: $filename als direkte MP3 Datei erkannt!";
+    } else {
+      $filename = md5_hex($language{$TTS_Ressource}{$TTS_Language} ."|". $t) . ".mp3";
+      $file = $TTS_CacheFileDir."/".$filename;
+      Log3 $hash->{NAME}, 4, "Text2Speech: Textbaustein ist keine direkte MP3 Datei, ermittle MD5 CacheNamen: $filename";
+    } 
+    
+    if(-e $file) {
+      push(@Mp3WrapFiles, $file);
+      push(@Mp3WrapText, $t);
+    } else {
+      # es befindet sich noch Text zum Download in der Queue
+      if (AttrVal($hash->{NAME}, "TTS_SpeakAsFastAsPossible", 0) == 0) {
+        Text2Speech_Download($hash, $file, $t);
+        if(-e $file) {
+          push(@Mp3WrapFiles, $file);
+          push(@Mp3WrapText, $t);
+        }
+      } else {
+        last;
+      }
     }
 
-    push(@Mp3WrapFiles, $TTS_SentenceAppendix) if($TTS_SentenceAppendix);
+    last if (AttrVal($hash->{NAME}, "TTS_UseMP3Wrap", 0) == 0);
+    # ohne mp3wrap darf nur ein Textbaustein verarbeitet werden
+  }
 
-    if(scalar(@Mp3WrapFiles) >= 2) {
-      Log3 $hash->{NAME}, 4, "Text2Speech: Bearbeite per MP3Wrap jetzt den Text: ". join(" ", @Mp3WrapText);
+  push(@Mp3WrapFiles, $TTS_SentenceAppendix) if($TTS_SentenceAppendix);
+    
+  if(scalar(@Mp3WrapFiles) >= 2 && AttrVal($hash->{NAME}, "TTS_UseMP3Wrap", 0) == 1) {
+    # benutze das Tool MP3Wrap um bereits einzelne vorhandene Sprachdateien
+    # zusammenzuführen. Ziel: sauberer Sprachfluss
+    Log3 $hash->{NAME}, 4, "Text2Speech: Bearbeite per MP3Wrap jetzt den Text: ". join(" ", @Mp3WrapText);
 
-      my $Mp3WrapPrefix = md5_hex(join("|", @Mp3WrapFiles));
-      my $Mp3WrapFile = $TTS_CacheFileDir ."/". $Mp3WrapPrefix . "_MP3WRAP.mp3"; 
+    my $Mp3WrapPrefix = md5_hex(join("|", @Mp3WrapFiles));
+    my $Mp3WrapFile = $TTS_CacheFileDir ."/". $Mp3WrapPrefix . "_MP3WRAP.mp3"; 
 
-      if(! -e $Mp3WrapFile) {
-        $cmd = "mp3wrap " .$TTS_CacheFileDir. "/" .$Mp3WrapPrefix. ".mp3 " .join(" ", @Mp3WrapFiles);
-        $cmd .= " >/dev/null" if($verbose < 5);;
+    if(! -e $Mp3WrapFile) {
+      $cmd = "mp3wrap " .$TTS_CacheFileDir. "/" .$Mp3WrapPrefix. ".mp3 " .join(" ", @Mp3WrapFiles);
+      $cmd .= " >/dev/null" if($verbose < 5);
 
-        Log3 $hash->{NAME}, 4, "Text2Speech: " .$cmd;
-        system($cmd);
-      }
+      Log3 $hash->{NAME}, 4, "Text2Speech: " .$cmd;
+      system($cmd);
+    }
+    
+    if ($hash->{MODE} ne "SERVER") {
+    # im Falls Server, nicht die Datei abspielen
       if(-e $Mp3WrapFile) {
         $cmd = Text2Speech_BuildMplayerCmdString($hash, $Mp3WrapFile);
+        $cmd .= " >/dev/null" if($verbose < 5);
+
         Log3 $hash->{NAME}, 4, "Text2Speech:" .$cmd;
         system($cmd);
-        #Text2Speech_WriteStats($hash, 1, $Mp3WrapFile, join(" ", @Mp3WrapText));
       } else {
         Log3 $hash->{NAME}, 2, "Text2Speech: Mp3Wrap Datei konnte nicht angelegt werden.";
       }
-      
-      return $hash->{NAME} ."|". 
-             ($TTS_SentenceAppendix ? scalar(@Mp3WrapFiles)-1: scalar(@Mp3WrapFiles)) ."|". 
-             $Mp3WrapFile;
     }
+
+    return $hash->{NAME} ."|". 
+           ($TTS_SentenceAppendix ? scalar(@Mp3WrapFiles)-1: scalar(@Mp3WrapFiles)) ."|". 
+           $Mp3WrapFile;
   }
 
-  Log3 $hash->{NAME}, 4, "Text2Speech: Bearbeite jetzt den Text: ". $hash->{helper}{Text2Speech}[0];
 
-  if(-e $hash->{helper}{Text2Speech}[0]) {
-    # falls eine bestimmte mp3-Datei mit absolutem Pfad gespielt werden soll
-    $filename = $hash->{helper}{Text2Speech}[0];
-    $file = $filename;
-    Log3 $hash->{NAME}, 4, "Text2Speech: $filename als direkte MP3 Datei erkannt!";
-  } elsif(-e $TTS_CacheFileDir."/".$hash->{helper}{Text2Speech}[0]) { 
-    # falls eine bestimmte mp3-Datei mit relativem Pfad gespielt werden soll
-    $filename = $hash->{helper}{Text2Speech}[0];
-    $file = $TTS_CacheFileDir."/".$filename;
-    Log3 $hash->{NAME}, 4, "Text2Speech: $filename als direkte MP3 Datei erkannt!";
-  } else {
-    $filename = md5_hex($language{$TTS_Ressource}{$TTS_Language} ."|". $hash->{helper}{Text2Speech}[0]) . ".mp3";
-    $file = $TTS_CacheFileDir."/".$filename;
-    Log3 $hash->{NAME}, 4, "Text2Speech: Textbaustein ist keine direkte MP3 Datei, ermittle MD5 CacheNamen: $filename";
-  } 
+  Log3 $hash->{NAME}, 4, "Text2Speech: Bearbeite jetzt den Text: ". $hash->{helper}{Text2Speech}[0]; 
   
   if(! -e $file) { # Datei existiert noch nicht im Cache
     Text2Speech_Download($hash, $file, $hash->{helper}{Text2Speech}[0]);
@@ -839,8 +900,12 @@ sub Text2Speech_DoIt($) {
     Log3 $hash->{NAME}, 4, "Text2Speech: $file gefunden, kein Download";
   }
 
-  if(-e $file) { # Datei existiert jetzt
+  if(-e $file && $hash->{MODE} ne "SERVER") { 
+    # Datei existiert jetzt
+    # im Falls Server, nicht die Datei abspielen
     $cmd = Text2Speech_BuildMplayerCmdString($hash, $file);
+    $cmd .= " >/dev/null" if($verbose < 5);
+
     Log3 $hash->{NAME}, 4, "Text2Speech:" .$cmd;
     system($cmd);
   }
@@ -872,7 +937,9 @@ sub Text2Speech_Done($) {
     for(my $i=0; $i<$tts_done; $i++) { 
       push(@text, $hash->{helper}{Text2Speech}[$i]);
     }         
-    Text2Speech_WriteStats($hash, 1, $filename, join(" ", @text));
+    Text2Speech_WriteStats($hash, 1, $filename, join(" ", @text)) if (AttrVal($hash->{NAME},"TTS_noStatisticsLog", "0")==0);
+
+    readingsSingleUpdate($hash, "lastFilename", $filename, 1);
   }
 
   delete($hash->{helper}{RUNNING_PID});
@@ -892,6 +959,7 @@ sub Text2Speech_AbortFn($)     {
 
   delete($hash->{helper}{RUNNING_PID});
   Log3 $hash->{NAME}, 2, "Text2Speech: BlockingCall for ".$hash->{NAME}." was aborted";
+  readingsSingleUpdate($hash, "playing", "0", 1);
 }
 
 #####################################
@@ -918,18 +986,28 @@ sub Text2Speech_WriteStats($$$$){
   }
   return undef if($defs{$DbLogDev}{STATE} !~ m/(active|connected)/); # muss active sein!
 
-  # den letzten Value von "Usage" ermitteln um dann die Staistik um 1 zu erhoehen.
-  my @LastValue = DbLog_Get($defs{$DbLogDev}, "", "current", "array", "-", "-", $hash->{NAME} ."|". $file.":Usage");
+  my $logdevice = $hash->{NAME} ."|". $file;
+  # den letzten Value von "Usage" ermitteln um dann die Statistik um 1 zu erhoehen.
+  my @LastValue = DbLog_Get($defs{$DbLogDev}, "", "current", "array", "-", "-", $logdevice.":Usage");   
   my $NewValue = 1;
   $NewValue = $LastValue[0]{value} + 1 if($LastValue[0]);
 
-  #           DbLogHash,        DbLogTable, TIMESTAMP, DEVICE,                    TYPE,          EVENT, READING, VALUE,     UNIT
-  DbLog_Push($defs{$DbLogDev}, "Current", TimeNow(), $hash->{NAME} ."|". $file, $hash->{TYPE}, $text, "Usage", $NewValue, "");
+  my $cmd;
+  if ($NewValue == 1) {
+    $cmd = "INSERT INTO current (TIMESTAMP, DEVICE, TYPE, EVENT, READING, VALUE, UNIT) VALUES (\
+           '".TimeNow()."','".$logdevice."','".$hash->{TYPE}."','".$text."','Usage','".$NewValue."','')";
+  } else {
+    $cmd = "UPDATE current SET VALUE = '".$NewValue."', TIMESTAMP = '".TimeNow()."' WHERE DEVICE ='".$logdevice."'";
+  } 
+  DbLog_ExecSQL($defs{$DbLogDev}, $cmd);
 }
 
 1;
 
 =pod
+=item helper
+=item summary    speaks given text via loudspeaker
+=item summary_DE wandelt uebergebenen Text um fuer Ausgabe auf Lautsprecher
 =begin html
 
 <a name="Text2Speech"></a>
@@ -954,14 +1032,14 @@ sub Text2Speech_WriteStats($$$$){
         <code>apt-get install mplayer</code><br>
         The given alsadevice has to be configured in <code>/etc/asound.conf</code>
         <p>
-          <b>Special AlsaDevice: </b><i>none</i><br>
-          The internal mplayer command will be without any audio directive if the given alsadevice is <i>none</i>.
+          <b>Special AlsaDevice: </b><i>default</i><br>
+          The internal mplayer command will be without any audio directive if the given alsadevice is <i>default</i>.
           In this case mplayer is using the standard audiodevice.
         </p>
         <p>
           <b>Example:</b><br>
           <code>define MyTTS Text2Speech hw=0.0</code><br>
-          <code>define MyTTS Text2Speech none</code>
+          <code>define MyTTS Text2Speech default</code>
         </p>
       </ul>
     </li>
@@ -983,6 +1061,15 @@ sub Text2Speech_WriteStats($$$$){
           <code>define MyTTS Text2Speech 192.168.178.10:7072 fhempasswd</code>
           <code>define MyTTS Text2Speech 192.168.178.10</code>
         </p>
+      If a PRESENCE Device is avilable for the host IP-address, than this will be used to detect the reachability instead of the blocking  internal method.
+      </ul>
+    </li>
+
+    <li>
+      <b>Server Device</b>
+      <ul>
+        In case of an usage of an Server, only the mp3 file will be generated.It makes no sence to use the attribute <i>TTS_speakAsFastAsPossible</i>.
+        Its recommend, to use the attribute <i>TTS_useMP3Wrap</i>. Otherwise only the last audiobrick will be shown is reading <i>lastFilename</i>.
       </ul>
     </li>
 
@@ -1099,6 +1186,19 @@ sub Text2Speech_WriteStats($$$$){
     Optional, Default: <code>cache/templates</code>
   </li>
 
+  <li>TTS_noStatisticsLog<br>
+    If set to <b>1</b>, it prevents logging statistics to DbLog Devices, default is <b>0</b><br>
+    But please notice: this looging is important to able to delete longer unused cachefiles. If you disable this
+    please take care to cleanup your cachedirectory by yourself.
+  </li>
+
+  <li>TTS_speakAsFastAsPossible<br>
+      Trying to get an speach as fast as possible. In case of not present audiobricks, you can hear a short break.
+      The audiobrick will be download at this time. In case of an presentation of all audiobricks at local cache, 
+      this attribute has no impact.<br>
+      Attribute only valid in case of an local or server instance.
+  </li>
+
   <li><a href="#readingFnAttributes">readingFnAttributes</a></li><br>
 
   <li><a href="#disable">disable</a><br>
@@ -1135,9 +1235,10 @@ sub Text2Speech_WriteStats($$$$){
   <ul>
     <b>Local : </b><code>define &lt;name&gt; Text2Speech &lt;alsadevice&gt;</code><br>
     <b>Remote: </b><code>define &lt;name&gt; Text2Speech &lt;host&gt;[:&lt;portnr&gt;][:SSL] [portpassword]</code> 
+    <b>Server : </b><code>define &lt;name&gt; Text2Speech none</code><br>
     <p>
     Das Modul wandelt Text mittels verschiedener Provider/Ressourcen in Sprache um. Dabei kann das Device als 
-    Remote oder Lokales Device konfiguriert werden.
+    Remote, Lokales Device oder als Server konfiguriert werden. 
     </p>
        
     <li>
@@ -1148,14 +1249,14 @@ sub Text2Speech_WriteStats($$$$){
         <code>apt-get install mplayer</code><br>
         Das angegebene Alsadevice ist in der <code>/etc/asound.conf</code> zu konfigurieren.
         <p>
-          <b>Special AlsaDevice: </b><i>none</i><br>
-          Ist als Alsa-Device <i>none</i> angegeben, so wird mplayer ohne eine Audiodevice Angabe aufgerufen. 
+          <b>Special AlsaDevice: </b><i>default</i><br>
+          Ist als Alsa-Device <i>default</i> angegeben, so wird mplayer ohne eine Audiodevice Angabe aufgerufen. 
           Dementsprechend verwendet mplayer das Standard Audio Ausgabedevice.
         </p>
         <p>
           <b>Beispiel:</b><br>
           <code>define MyTTS Text2Speech hw=0.0</code><br>
-          <code>define MyTTS Text2Speech none</code>
+          <code>define MyTTS Text2Speech default</code>
         </p>
       </ul>
     </li>
@@ -1178,6 +1279,16 @@ sub Text2Speech_WriteStats($$$$){
           <code>define MyTTS Text2Speech 192.168.178.10:7072 fhempasswd</code>
           <code>define MyTTS Text2Speech 192.168.178.10</code>
         </p>
+        Wenn ein PRESENCE Gerät die Host IP-Adresse abfragt, wird die blockierende interne Prüfung auf Erreichbarkeit umgangen und das PRESENCE Gerät genutzt.
+      </ul>
+    </li>
+
+    <li>
+      <b>Server Device</b>
+      <ul>
+        Im Falle der Verwendung als Server, wird nur die MP3 Datei erstellt und als Reading lastFilename dargestellt. Es macht keinen Sinn 
+        hier das Attribut <i>TTS_speakAsFastAsPossible</i> zu verwenden. Die Verwendung des Attributes <i>TTS_useMP3Wrap</i> wird dringend empfohlen. 
+        Ansonsten wird hier nur der letzte Teiltext als mp3 Datei im Reading dargestellt.
       </ul>
     </li>
 
@@ -1211,7 +1322,7 @@ sub Text2Speech_WriteStats($$$$){
     Hintergrund ist die Tatsache, das die Google Sprachengine nur 100Zeichen zul&auml;sst.<br>
     Im Standard wird nach jedem Satzende geteilt. Ist ein einzelner Satz l&auml;nger als 100 Zeichen,
     so wird zus&auml;tzlich nach Kommata, Semikolon und dem Verbindungswort <i>und</i> geteilt.<br>
-    Achtung: Nur bei einem lokal definierter Text2Speech Instanz m&ouml;glich und nur Nutzung der Google Sprachengine relevant!
+    Achtung: Nur bei einem lokal definierter Text2Speech Instanz m&ouml;glich und nur bei Nutzung der Google Sprachengine relevant!
   </li> 
 
   <li>TTS_Ressource<br>
@@ -1303,6 +1414,19 @@ sub Text2Speech_WriteStats($$$$){
     Anhebung der Grundlautstärke zur Anpassung an die angeschlossenen Lautsprecher. <br>
     Default: 110<br>
     <code>attr myTTS TTS_VolumeAdjust 400</code><br>
+  </li>
+
+  <li>TTS_noStatisticsLog<br>
+  <b>1</b>, verhindert das Loggen von Statistikdaten in DbLog Geräten, default ist <b>0</b><br>
+  Bitte zur Beachtung: Das Logging ist wichtig um alte, lang nicht genutzte Cachedateien automatisiert zu loeschen.
+  Wenn dieses hier dektiviert wird muss sich der User selbst darum kuemmern.
+  </li>
+
+  <li>TTS_speakAsFastAsPossible<br>
+    Es wird versucht, so schnell als möglich eine Sprachausgabe zu erzielen. Bei Sprachbausteinen die nicht bereits lokal vorliegen, 
+    ist eine kurze Pause wahrnehmbar. Dann wird der benötigte Sprachbaustein nachgeladen. Liegen alle Sprachbausteine im Cache vor, 
+    so hat dieses Attribut keine Auswirkung.<br>
+    Attribut nur verfügbar bei einer lokalen oder Server Instanz
   </li>
 
   <li><a href="#readingFnAttributes">readingFnAttributes</a>

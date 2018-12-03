@@ -1,5 +1,5 @@
 ################################################################
-# $Id$
+# $Id: release.pm 8170 2015-03-08 11:09:17Z rudolfkoenig $
 package main;
 use strict;
 use warnings;

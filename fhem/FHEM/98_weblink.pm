@@ -1,10 +1,12 @@
 ##############################################
-# $Id$
+# $Id: 98_weblink.pm 16293 2018-02-28 21:33:57Z rudolfkoenig $
 package main;
 
 use strict;
 use warnings;
 use vars qw($FW_subdir);  # Sub-path in URL for extensions, e.g. 95_FLOORPLAN
+use vars qw($FW_ME);      # webname (default is fhem), used by 97_GROUP/weblink
+use vars qw($FW_CSRF);    # CSRF Token or empty
 use IO::File;
 
 #####################################
@@ -114,15 +116,15 @@ weblink_FwFn($$$$)
     my @lines = split(" ", $link);
     my $row = 1;
     $ret = "<table>";
-    $ret .= "<tr><td><div class='devType'><a href='/fhem?detail=$d'>"
+    $ret .= "<tr><td><div class='devType'><a href='$FW_ME?detail=$d'>"
                 . AttrVal($d, "alias", $d)."</a></div></td></tr>";
     $ret .= "<tr><td><table class=\"block wide\">";
     foreach my $line (@lines) {
       my @args = split(":", $line, 3);
 
       $ret .= "<tr class='".(($row++&1)?"odd":"even")."'>";
-      $ret .= "<td><a href='/fhem?cmd=$args[2]'><div class='col1'>".
-                "<img src='/fhem/icons/$args[0]' width='19' height='19' ".
+      $ret .= "<td><a href='$FW_ME?cmd=$args[2]$FW_CSRF'><div class='col1'>".
+                "<img src='$FW_ME/icons/$args[0]' width='19' height='19' ".
                 "align='center' alt='$args[0]' title='$args[0]'>".
                 "$args[1]</div></a></td></td>";
       $ret .= "</tr>";
@@ -138,6 +140,8 @@ weblink_FwFn($$$$)
 
 =pod
 =item helper
+=item summary    define a HTTP link for the FHEMWEB frontend
+=item summary_DE HTTP Link fuer das FHEMWEB Frontend
 =begin html
 
 <a name="weblink"></a>
@@ -154,7 +158,7 @@ weblink_FwFn($$$$)
     Examples:
     <ul>
       <code>
-      define homepage weblink link http://www.fhem.de<br>
+      define homepage weblink link http://fhem.de<br>
       define webcam_picture weblink image http://w.x.y.z/current.jpg<br>
       define interactive_webcam weblink iframe http://w.x.y.z/webcam.cgi<br>
       define hr weblink htmlCode &lt;hr&gt<br>
@@ -189,7 +193,7 @@ weblink_FwFn($$$$)
       E.g.:<br>
       <ul>
         <code>
-        define yw weblink iframe http://weather.yahooapis.com/forecastrss?w=650272&u=c<br>
+        define yw weblink iframe http://weather.yahooapis.com/forecastrss?w=650272&amp;u=c<br>
         attr yw htmlattr width="480" height="560"<br>
         </code>
       </ul></li>

@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 00_ZWCUL.pm 16552 2018-04-04 19:24:18Z rudolfkoenig $
 package main;
 
 # TODO
@@ -20,12 +20,12 @@ sub ZWCUL_Parse($$$$$);
 sub ZWCUL_Read($@);
 sub ZWCUL_ReadAnswer($$$);
 sub ZWCUL_Ready($);
-sub ZWCUL_SimpleWrite($$);
 sub ZWCUL_Write($$$);
 sub ZWCUL_ProcessSendStack($);
 
-use vars qw(%zwave_id2class);
-my %sentIdx;
+our %zwave_id2class;
+my %ZWCUL_sentIdx;
+my %ZWCUL_sentIdx2cbid;
 
 my %sets = (
   "reopen"     => { cmd=>"" },
@@ -86,11 +86,11 @@ ZWCUL_Define($$)
   $hash->{baudRate} = "40k";
   $hash->{monitor} = 1 if($hash->{homeIdSet} eq "00000000");
   setReadingsVal($hash, "homeId",       # ZWDongle compatibility
-            "HomeId:$hash->{homeId} CtrlNodeId:$hash->{nodeIdHex}", TimeNow());
+          "HomeId:$hash->{homeId} CtrlNodeIdHex:$hash->{nodeIdHex}", TimeNow());
 
-  $hash->{Clients} = ":ZWave:STACKABLE_CC:";
-  my %matchList = ( "1:ZWave" => ".*",
-                    "2:STACKABLE_CC"=>"^\\*");
+  $hash->{Clients} = ":ZWave:STACKABLE:";
+  my %matchList = ( "1:ZWave" => "^[0-9A-Fa-f]+\$",
+                    "2:STACKABLE"=>"^\\*" );
   $hash->{MatchList} = \%matchList;
 
   if($dev eq "none") {
@@ -126,7 +126,7 @@ ZWCUL_DoInit($)
 
   my ($err, $ver, $try) = ("", "", 0);
   while($try++ < 3 && $ver !~ m/^V/) {
-    ZWCUL_SimpleWrite($hash, "V");
+    DevIo_SimpleWrite($hash, "V", 2, 1);
     ($err, $ver) = ZWCUL_ReadAnswer($hash, "Version", "^V");
     return "$name: $err" if($err && ($err !~ m/Timeout/ || $try == 3));
     $ver = "" if(!$ver);
@@ -140,8 +140,8 @@ ZWCUL_DoInit($)
   $ver =~ s/[\r\n]//g;
   $hash->{VERSION} = $ver;
 
-  ZWCUL_SimpleWrite($hash, "zi".$hash->{homeIdSet}.$hash->{nodeIdHex});
-  ZWCUL_SimpleWrite($hash, $hash->{initString});
+  DevIo_SimpleWrite($hash, "zi".$hash->{homeIdSet}.$hash->{nodeIdHex}, 2, 1);
+  DevIo_SimpleWrite($hash, $hash->{initString}, 2, 1);
 
   readingsSingleUpdate($hash, "state", "Initialized", 1);
   return undef;
@@ -153,7 +153,7 @@ sub
 ZWCUL_Undef($$) 
 {
   my ($hash,$arg) = @_;
-  ZWCUL_SimpleWrite($hash, "zx");
+  DevIo_SimpleWrite($hash, "zx", 2, 1);
   DevIo_CloseDev($hash); 
   return undef;
 }
@@ -163,7 +163,7 @@ ZWCUL_tmp9600($$)
 {
   my ($hash, $on) = @_;
   $hash->{baudRate} = ($on ? "9600" : AttrVal($hash->{NAME},"dataRate","40k"));
-  ZWCUL_SimpleWrite($hash, $on ? $on : $hash->{initString});
+  DevIo_SimpleWrite($hash, $on ? $on : $hash->{initString}, 2, 1);
 }
 
 #####################################
@@ -210,11 +210,13 @@ ZWCUL_cmd($$@)
     delete $hash->{addNode};
     if($cmdName eq "addNodeId") {
       $hash->{addNode} = sprintf("%02x", $a[0]);
+
     } else {
       $hash->{addNode} = ZWCUL_getNextNodeId($hash) if($a[0]);
       $hash->{addSecure} = 1 if($a[0] == 2);
     }
-    Log3 $hash, 3, "ZWCUL going to assigning new node id $hash->{addNode}";
+    Log3 $hash, 3, "ZWCUL going to assigning new node id $hash->{addNode}"
+        if($a[0]);
     ZWCUL_tmp9600($hash, $a[0] ? "zm9" : 0); # expect random homeId
     return;
   }
@@ -240,7 +242,7 @@ ZWCUL_cmd($$@)
   }
 
   $cmd = sprintf($cmd, @a);
-  ZWCUL_SimpleWrite($hash,  $cmd);
+  DevIo_SimpleWrite($hash,  $cmd, 2, 1);
   
   return undef if($type eq "set");
 
@@ -255,34 +257,19 @@ sub ZWCUL_Get() { return ZWCUL_cmd("get", \%gets, @_); };
 
 #####################################
 sub
-ZWCUL_SimpleWrite($$)
-{
-  my ($hash, $msg) = @_;
-  return if(!$hash);
-
-  my $name = $hash->{NAME};
-  Log3 $name, 5, "SW: $msg";
-  $msg .= "\n";
-
-  $hash->{USBDev}->write($msg)    if($hash->{USBDev});
-  syswrite($hash->{TCPDev}, $msg) if($hash->{TCPDev});
-  syswrite($hash->{DIODev}, $msg) if($hash->{DIODev});
-  select(undef, undef, undef, 0.001);
-}
-
-#####################################
-sub
 ZWCUL_Write($$$)
 {
   my ($hash,$fn,$msg) = @_;
 
   Log3 $hash, 5, "ZWCUL_Write $fn $msg";
-  if($msg =~ m/0013(..)(..)(.*)(....)/) {
-    my ($targetId,$l,$p) = ($1,$2,$3);
+  if($msg =~ m/0013(..)(..)(.*)(..)(..)/) {
+    my ($targetId,$l,$p,$flags,$cbid) = ($1,$2,$3,$4,$5);
     my ($homeId,$route) = split(",",$fn);
 
-    $sentIdx{$targetId} = 0 if(!$sentIdx{$targetId} || $sentIdx{$targetId}==15);
-    $sentIdx{$targetId}++;
+    my $sn = $ZWCUL_sentIdx{$targetId};
+    $sn = (!$sn || $sn==15) ? 1 : ($sn+1);
+    $ZWCUL_sentIdx2cbid{"$targetId$sn"} = $cbid;
+    $ZWCUL_sentIdx{$targetId} = $sn;
 
     my $s100 = ($hash->{baudRate} eq "100k");
 
@@ -293,11 +280,15 @@ ZWCUL_Write($$$)
     }
 
     $msg = sprintf("%s%s%02x%02x%02x%s%s", 
-                    $homeId, $hash->{nodeIdHex}, $rf, $sentIdx{$targetId},
+                    $homeId, $hash->{nodeIdHex}, $rf, $sn,
                     length($p)/2+($s100 ? 11 : 10), $targetId, $p);
     $msg .= ($s100 ? zwlib_checkSum_16($msg) : zwlib_checkSum_8($msg));
 
-    ZWCUL_SimpleWrite($hash, "zs".$msg);
+    DevIo_SimpleWrite($hash, "zs".$msg, 2, 1);
+
+  } elsif($hash->{STACKED}) {      
+    DevIo_SimpleWrite($hash, $msg, 2, 1);
+
   }
 }
 
@@ -366,7 +357,7 @@ ZWCUL_assignId($$$$)
     $myHash = 1;
   }
   ZWCUL_Write($hash, $hash->{homeIdSet}, 
-          sprintf("0013%s080103%s%s####", $oldNodeId, $newNodeId, $newHomeId));
+          sprintf("0013%s080103%s%s0000", $oldNodeId, $newNodeId, $newHomeId));
   delete $modules{ZWave}{defptr}{$key} if($myHash);
 }
 
@@ -375,7 +366,7 @@ ZWCUL_Parse($$$$$)
 {
   my ($hash, $iohash, $name, $rmsg, $nodispatch) = @_;
 
-  if($rmsg =~ m/^\*/) {                           # STACKABLE_CC
+  if($rmsg =~ m/^\*/) {                           # STACKABLE
     Dispatch($hash, $rmsg, undef);
     return;
   }
@@ -434,8 +425,8 @@ ZWCUL_Parse($$$$$)
   }
 
   if(AttrVal($me, "verbose", 1) > 4) {
-    Log3 $hash, 5, "$H S:$S F:$F f:$f SN:$sn L:$L T:$T ${ri}${u1}P:$P C:$C";
-    Log3 $hash, 5, "   F:".
+    Log3 $hash,5,"$name $H S:$S F:$F f:$f SN:$sn L:$L T:$T ${ri}${u1}P:$P C:$C";
+    Log3 $hash,5,"   F:".
       (($hF & 3)==1 ? " singleCast" :
        ($hF & 3)==2 ? " multiCast" :
        ($hF & 3)==3 ? " ack" : " unknownHeaderType:".($hF&0x3)).
@@ -470,7 +461,14 @@ ZWCUL_Parse($$$$$)
       return;
     }
 
-    $rmsg = sprintf("0004%s%s%02x%s", $S, $S, length($P)/2, $P);
+    if($P =~ m/^0101(......)(..)..(.*)/) {
+      my ($nodeInfo, $type6, $classes) = ($1, $2, $3);
+      $rmsg = sprintf("004a0003%s0000%s00%s", $S, $2, $3);
+
+    } else {
+      $rmsg = sprintf("0004%s%s%02x%s", $S, $S, length($P)/2, $P);
+
+    }
 
   } else {      # ACK
     if($hash->{removeNode} && $hash->{removeNode} eq $S) { #############
@@ -486,13 +484,13 @@ ZWCUL_Parse($$$$$)
 
       ZWCUL_tmp9600($hash, 0);
       $hash->{homeId} = $hash->{homeIdSet};
-      Dispatch($hash, sprintf("004a0003%s####%s##%s",
+      Dispatch($hash, sprintf("004a0003%s0000%s00%s",
                         $hash->{addNode}, $type6, $classes), \%addvals);
 
       my $node = ZWCUL_getNode($hash, $hash->{addNode});
       if($node) { # autocreated a node
         readingsSingleUpdate($node, "nodeInfo", $nodeInfo, 0);
-        Dispatch($hash, sprintf("004a0005%s##", $hash->{addNode}), \%addvals);
+        Dispatch($hash, sprintf("004a0005%s00", $hash->{addNode}), \%addvals);
       }
 
       delete $hash->{addNode};
@@ -507,7 +505,8 @@ ZWCUL_Parse($$$$$)
       return;
     }
 
-    $rmsg = sprintf("0013%s00", $S);
+    $rmsg = sprintf("0013%s00", 
+        $ZWCUL_sentIdx2cbid{"$S$sn"} ? $ZWCUL_sentIdx2cbid{"$S$sn"} : 00);
 
   }
   return $rmsg if($nodispatch);
@@ -613,7 +612,7 @@ ZWCUL_Attr($$$$)
               ($value eq "9600" ? "9" : "4"));
     $hash->{initString} = ($hash->{homeIdSet} =~ m/^0*$/ ? "zm$sfx":"zr$sfx");
     $hash->{baudRate} = $value;
-    ZWCUL_SimpleWrite($hash, $hash->{initString});
+    DevIo_SimpleWrite($hash, $hash->{initString}, 2);
 
   }
 
@@ -645,6 +644,8 @@ ZWCUL_Ready($)
 1;
 
 =pod
+=item summary    connection to a culfw Device in ZWave mode (e.g. CUL)
+=item summary_DE Anbindung eines culfw Ger&auml;tes in ZWave Modus (z.Bsp. CUL)
 =begin html
 
 <a name="ZWCUL"></a>
@@ -670,8 +671,7 @@ ZWCUL_Ready($)
     <code>define ZWCUL_1 ZWCUL /dev/cu.usbmodemfa141@9600 12345678 01</code><br>
   </ul>
   If the homeId is set to 00000000, then culfw will enter monitor mode, i.e. no
-  checksum filtering will be done, and no acks for received messages will be
-  sent.
+  acks for received messages will be sent, and no homeId filtering will be done.
   </ul>
   <br>
 
@@ -726,7 +726,7 @@ ZWCUL_Ready($)
   <a name="ZWCULattr"></a>
   <b>Attributes</b>
   <ul>
-    <li><a name="#dataRate">dataRate</a> [40k|100k|9600]<br>
+    <li><a name="dataRate">dataRate</a> [40k|100k|9600]<br>
       specify the data rate.
       </li>
     <li><a href="#dummy">dummy</a></li>
@@ -734,7 +734,7 @@ ZWCUL_Ready($)
     <li><a href="#model">model</a></li>
     <li><a href="#disable">disable</a></li>
     <li><a href="#networkKey">networkKey</a></li>
-    <li><a name="#intruderMode">intruderMode</a><br>
+    <li><a name="intruderMode">intruderMode</a><br>
       In monitor mode (see above) events are not dispatched to the ZWave module
       per default. Setting this attribute will allow to get decoded messages,
       and to send commands to devices not included by this controller.

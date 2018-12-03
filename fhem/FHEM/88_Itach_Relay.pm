@@ -22,7 +22,7 @@
 #  This copyright notice MUST APPEAR in all copies of the script!
 #
 ################################################################
-# $Id$
+# $Id: 88_Itach_Relay.pm 2078 2012-11-04 14:31:59Z rudolfkoenig $
 
 ##############################################
 package main;

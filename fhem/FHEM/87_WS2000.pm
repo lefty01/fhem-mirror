@@ -4,7 +4,7 @@ package main;
 # Modul for FHEM
 #
 # contributed by thomas dressler 2008
-# $Id$
+# $Id: 87_WS2000.pm 2076 2012-11-04 13:49:43Z rudolfkoenig $
 # corr. negativ temps / peterp
 ###########################
 use strict;

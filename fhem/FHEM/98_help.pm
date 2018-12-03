@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 98_help.pm 15223 2017-10-10 10:14:24Z betateilchen $
 #
 package main;
 use strict;
@@ -8,14 +8,19 @@ use Data::Dumper;
 my $ret;
 
 sub CommandHelp;
+sub cref_internals;
 sub cref_search;
 sub cref_search_cmd;
+sub cref_fill_list;
+sub cref_findInfo;
+
 
 sub help_Initialize($$) {
   my %hash = (  Fn => "CommandHelp",
 		   Hlp => "[<moduleName>],get help (this screen or module dependent docu)",
-		   InternalCmds => "attributes,command,commands,devspec,global,perl" );
+		   InternalCmds => cref_internals() );
   $cmds{help} = \%hash;
+  cref_fill_list();
 }
 
 sub CommandHelp {
@@ -27,19 +32,20 @@ sub CommandHelp {
   $lang = (lc($lang) eq 'de') ? '_DE' : '';
 
   if($mod) {
-
     $mod = "help" if($mod eq "?");
-  
-    my $internals = "attributes,command,commands,devspec,global,perl";
+    $mod = $defs{$mod}->{TYPE} if( defined($defs{$mod}) && $defs{$mod}->{TYPE} );
+
     $mod = lc($mod);
     my $modPath = AttrVal('global','modpath','.');
 	my $output = '';
+    
+    my $outputInfo = cref_findInfo($modPath,$mod);
 
 	if($cmds{help}{InternalCmds} !~ m/$mod\,/) {
       my %mods;
 	  my @modDir = ("$modPath/FHEM");
 
-      $mod = $cmds{$mod}{ModuleName} if defined($cmds{$mod}{ModuleName});
+      $mod = $cmds{$mod}{ModuleName} if defined($cmds{$mod}) && defined($cmds{$mod}{ModuleName});
 
 	  foreach my $modDir (@modDir) {
 	    eval { opendir(DH, $modDir); }; # || die "Cant open $modDir: $!\n";
@@ -59,14 +65,14 @@ sub CommandHelp {
 
       unless($output) {
          $output = cref_search($mods{$mod},"");
-         $output = "Keine deutsche Hilfe gefunden!<br/>$output" if $output;
+         $output = "<br/><br/>Keine deutsche Hilfe gefunden!<br/>$output" if $output;
       }
       
       $output = "No help found for module: $mod" unless $output;
+      $output = $outputInfo.$output;
 
     } else {
-
-      $output = '';
+      $output = "<br/><b>Internal command:</b> $mod";
 	  my $i;
 	  my $f = "$modPath/docs/commandref_frame$lang.html";
       my $skip = 1;
@@ -125,7 +131,7 @@ sub CommandHelp {
 
   } else {   # mod
 
-    cref_search_cmd(undef);
+#    cref_search_cmd(undef);
 
     my $str = "Possible commands:\n\n" .
 		"Command        Parameter\n" .
@@ -152,6 +158,19 @@ sub CommandHelp {
   }
 }
 
+sub cref_internals {
+   my $mod = "./docs/commandref_frame.html";
+   my $output = "";
+   my ($err,@text) = FileRead({FileName => $mod, ForceType => 'file'});
+   return $err if $err;
+   foreach my $l (@text) {
+     if($l =~ m/(^<!-- )(.*)( end.*>)/) {
+        $output .= "$2,";
+     }
+   }
+   return $output;
+}
+
 sub cref_search {
    my ($mod,$lang) = @_;
    my $output = "";
@@ -165,6 +184,15 @@ sub cref_search {
         $skip = 1;
      } elsif(!$skip) {
         $output .= "$l\n";
+        if($l =~ m,INSERT_DOC_FROM: ([^ ]+)/([^ /]+) ,) {
+          my ($dir, $re) = ($1, $2);
+          if(opendir(DH, $dir)) {
+            foreach my $file (grep { m/^$2$/ } readdir(DH)) {
+              $output .= cref_search("$dir/$file", $lang);
+            }
+            closedir(DH);
+          }
+        }
      }
    }
    return $output;
@@ -198,22 +226,76 @@ sub cref_search_cmd {
    return;
 }
 
+sub cref_fill_list(){
+
+  my %mods;
+  my %modIdx;
+  my @modDir = ("FHEM");
+
+  foreach my $modDir (@modDir) {
+    opendir(DH, $modDir) || die "Cant open $modDir: $!\n";
+    while(my $l = readdir DH) {
+      next if($l !~ m/^\d\d_.*\.pm$/);
+      my $of = $l;
+      $l =~ s/.pm$//;
+      $l =~ s/^[0-9][0-9]_//;
+      $mods{$l} = "$modDir/$of";
+      $modIdx{$l} = "device";
+      open(MOD, "$modDir/$of") || die("Cant open $modDir/$l");
+      while(my $cl = <MOD>) {
+        if($cl =~ m/^=item\s+(helper|command|device)/) {
+          $modIdx{$l} = $1;
+          last;
+        }
+      }
+      close(MOD);
+    }
+  }
+
+  foreach my $mod (sort keys %mods) {
+    my %h = (  Fn => undef,
+		      Hlp => "Command $mod not loaded. Use \"help $mod\" for more help" );
+    $cmds{$mod} = \%h if ( ($modIdx{$mod} eq "command") && !(defined($cmds{$mod})) );
+  }
+}
+
+sub cref_findInfo {
+  my ($modPath,$mod) = @_;
+  my ($l,@line,$found,$text);
+  my ($err,@text) = FileRead({FileName => "$modPath/MAINTAINER.txt", ForceType => 'file'});
+  foreach $l (@text) {
+    @line = split("[ \t][ \t]*", $l,3);
+    $found = ($l =~ m/_$mod/i);
+    last if ($found);
+  }
+  if($found) {
+  $line[0]= (split("/",$line[0]))[1] if $line[0] =~ /\//;
+  $line[2]= "no info" if ($line[2] =~ /http/ || !defined($line[2]));
+  $text  = "<br/><b>Module:</b> $line[0] ";
+  $text .= "<b>Maintainer:</b> $line[1] ";
+  $text .= "<b>Forum:</b> $line[2]\n";
+  }
+  $text //= '';
+  return $text;
+}
 
 1;
 
 =pod
 =item command
+=item summary    show help for module or device
+=item summary_DE Hilfe f&uuml;r Module und Ger&auml;te
 =begin html
 
 <a name="help"></a>
 <h3>?, help</h3>
   <ul>
-    <code>? [&lt;moduleName&gt;] [<language>]</code><br/>
-    <code>help [&lt;moduleName&gt;] [<language>]</code><br/>
+    <code>? [&lt;moduleName|deviceName&gt;] [<language>]</code><br/>
+    <code>help [&lt;moduleName|deviceName&gt;] [<language>]</code><br/>
     <br/>
     <ul>
       <li>Returns a list of available commands, when called without a
-        moduleName.</li>
+        moduleName/deviceName.</li>
       <li>Returns a module dependent helptext, same as in commandref.</li>
       <li>language will be determined in following order: 
          <ul>
@@ -232,12 +314,12 @@ sub cref_search_cmd {
 <a name="help"></a>
 <h3>?, help</h3>
   <ul>
-    <code>? [&lt;moduleName&gt;] [<language>]</code><br/>
-    <code>help [&lt;moduleName&gt;] [<language>]</code><br/>
+    <code>? [&lt;moduleName|deviceName&gt;] [<language>]</code><br/>
+    <code>help [&lt;moduleName|deviceName&gt;] [<language>]</code><br/>
     <br>
     <ul>
       <li>Liefert eine Liste aller Befehle mit einer Kurzbeschreibung zur&uuml;ck.</li>
-      <li>Falls moduleName spezifiziert ist, wird die modul-spezifische Hilfe
+      <li>Falls moduleName oder deviceName spezifiziert ist, wird die modul-spezifische Hilfe
           aus commandref zur&uuml;ckgeliefert.</li>
       <li>Die anzuzeigende Sprache wird in folgender Reihenfolge bestimmt: 
          <ul>

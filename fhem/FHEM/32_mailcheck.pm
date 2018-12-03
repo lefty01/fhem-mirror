@@ -1,5 +1,5 @@
 
-# $Id$
+# $Id: 32_mailcheck.pm 16299 2018-03-01 08:06:55Z justme1968 $
 
 # basic idea from https://github.com/justinribeiro/idlemailcheck
 
@@ -187,6 +187,7 @@ mailcheck_Connect($)
       #}
 
       $client->Uid(0);
+      $client->Timeout(8);
       $client->select($hash->{Folder});
 
       $hash->{tag} = $client->idle;
@@ -240,7 +241,7 @@ mailcheck_Set($$@)
 {
   my ($hash, $name, $cmd) = @_;
 
-  my $list = "active:noArgs inactive:noArgs";
+  my $list = "active:noArg inactive:noArg";
 
   if( $cmd eq 'active' ) {
     mailcheck_Disconnect($hash);
@@ -320,7 +321,7 @@ mailcheck_Attr($$$)
   } elsif( $attrName eq "logfile" ) {
     my $hash = $defs{$name};
 
-    close( $hash->{FH} );
+    close( $hash->{FH} ) if( defined($hash->{FH}) );
     delete $hash->{FH};
     delete $hash->{currentlogfile};
 
@@ -444,7 +445,14 @@ mailcheck_Read($)
           }
 
           $entity->head->decode();
-          $subject = $entity->head->get('Subject');
+
+          if( $subject =~ /iso-8859-1/ ) {
+            $subject = $entity->head->get('Subject');
+            $subject = latin1ToUtf8( $subject );
+          } else {
+            $subject = $entity->head->get('Subject');
+          }
+
           chomp( $subject );
           Log3 $name, 4, "subject decoded: $subject";
 
@@ -485,6 +493,8 @@ mailcheck_Read($)
 
 =pod
 =item device
+=item summary    watches an mailbox
+=item summary_DE &uuml;berwacht eine Mailbox
 =begin html
 
 <a name="mailcheck"></a>
@@ -510,7 +520,7 @@ mailcheck_Read($)
   <ul>
     <code>define &lt;name&gt; mailcheck &lt;host&gt; &lt;user&gt; &lt;password&gt; [&lt;folder&gt;]</code><br>
     <br>
-    &lt;user&gt; and <lt>&lt;password&gt; can be of the form {perl-code}. no spaces are allowed. for both evals $NAME and $HOST is set to the name and host of the mailcheck device and $USER is set to the user in the password eval.
+    &lt;user&gt; and &lt;password&gt; can be of the form {perl-code}. no spaces are allowed. for both evals $NAME and $HOST is set to the name and host of the mailcheck device and $USER is set to the user in the password eval.
     <br>
 
     Defines a mailcheck device.<br><br>

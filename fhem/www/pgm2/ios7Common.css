@@ -28,3 +28,10 @@ div#svgmarker {
   text-align:left; max-width:600px;
   color:black; background:#e5e5e5;
 }
+
+svg.zw_nr .zwBox { stroke:#c0c0c0; stroke-width:2px; fill:#f7f7f7; }
+svg.zw_nr .zwDongle { stroke:red; stroke-width:2px; fill:#f7f7f7; }
+svg.zw_nr .zwMargin { stroke:#c0c0c0; stroke-width:1px; fill:none; }
+svg.zw_nr .zwLine { stroke:#c0c0c0; stroke-width:1px; }
+svg.zw_nr .zwArrowHead { fill:#147bff; stroke-width:1px; }
+svg.zw_nr { height:auto; width:auto; margin:0; }

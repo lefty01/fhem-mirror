@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 10_pilight_ctrl.pm 16028 2018-01-28 18:34:25Z Risiko $
 #
 # Usage
 # 
@@ -38,6 +38,20 @@
 # V 1.11 2015-09-06 - FIX: pressure, windavg, winddir, windgust from weather stations without temperature 
 # V 1.12 2015-09-11 - FIX: handling ContactAsSwitch befor white list check
 # V 1.13 2015-11-10 - FIX: POSIX isdigit is deprecated replaced by own isDigit
+# V 1.14 2016-03-20 - FIX: send delimiter to signal end of stream if length of data > 1024
+# V 1.15 2016-03-28 - NEW: protocol daycom (switch)
+# V 1.16 2016-06-02 - NEW: protocol oregon_21 (temp)
+# V 1.17 2016-06-28 - FIX: Experimental splice on scalar is now forbidden - use explizit array notation
+# V 1.18 2016-06-28 - NEW: support smoke sensors (protocol: secudo_smoke_sensor)
+# V 1.19 2016-09-20 - FIX: PERL WARNING: Subroutine from Blocking.pm redefined
+# V 1.20 2016-10-27 - FIX: ContactAsSwitch protocol independend
+# V 1.21 2016-11-13 - NEW: support contact sensors 
+# V 1.22 2017-04-08 - NEW: support contact sensor GW-iwds07
+# V 1.23 2017-04-08 - NEW: support new temperature protocols bmp085 and bmp180
+# V 1.24 2017-04-22 - FIX: GS-iwds07 support
+# V 1.25 2017-04-23 - FIX: react only of global::INITIALIZED m/^INITIALIZED$/
+# V 1.26 2017-09-03 - FIX: heitech support
+# V 1.27 2018-01-28 - NEW: handle bh1750 illuminance sensor as weather station
 ############################################## 
 package main;
 
@@ -46,6 +60,9 @@ use warnings;
 use Time::HiRes qw(gettimeofday);
 use JSON;    #libjson-perl
 use Switch;  #libswitch-perl
+
+require 'DevIo.pm';
+require 'Blocking.pm';
 
 sub pilight_ctrl_Parse($$);
 sub pilight_ctrl_Read($);
@@ -60,7 +77,9 @@ my %sets = ( "reset:noArg" => "", "disconnect:noArg" => "");
 my %matchList = ( "1:pilight_switch" => "^PISWITCH",
                   "2:pilight_dimmer" => "^PISWITCH|^PIDIMMER|^PISCREEN",
                   "3:pilight_temp"   => "^PITEMP",
-                  "4:pilight_raw"    => "^PIRAW") ;
+                  "4:pilight_raw"    => "^PIRAW",
+                  "5:pilight_smoke"  => "^PISMOKE",
+                  "6:pilight_contact"=> "^PICONTACT");
                   
 my @idList   = ("id","systemcode","gpio"); 
 my @unitList = ("unit","unitcode","programcode");
@@ -79,9 +98,6 @@ sub pilight_ctrl_Initialize($)
 {
   my ($hash) = @_;
   
-  require "$attr{global}{modpath}/FHEM/DevIo.pm";
-  require "$attr{global}{modpath}/FHEM/Blocking.pm";
-  
   $hash->{ReadFn}  = "pilight_ctrl_Read";
   $hash->{WriteFn} = "pilight_ctrl_Write";
   $hash->{ReadyFn} = "pilight_ctrl_Ready";
@@ -92,7 +108,7 @@ sub pilight_ctrl_Initialize($)
   $hash->{StateFn} = "pilight_ctrl_State";
   $hash->{AttrList}= "ignoreProtocol brands ContactAsSwitch SendTimeout ".$readingFnAttributes;
   
-  $hash->{Clients} = ":pilight_switch:pilight_dimmer:pilight_temp:pilight_raw:";
+  $hash->{Clients} = ":pilight_switch:pilight_dimmer:pilight_temp:pilight_raw:pilight_smoke:pilight_contact:";
   #$hash->{MatchList} = \%matchList; #only for autocreate
 }
 
@@ -191,7 +207,7 @@ sub pilight_ctrl_Close($)
     delete($hash->{helper}{RUNNING_PID}); 
   }
    
-  splice($hash->{helper}->{sendQueue});
+  splice(@{$hash->{helper}->{sendQueue}});
   
   RemoveInternalTimer($hash);
   Log3 $me, 5, "$me(Close): close DevIo";
@@ -398,9 +414,12 @@ sub pilight_ctrl_Write($@)
   my $proto = $defs{$cName}->{PROTOCOL};
   my $id = $defs{$cName}->{ID};
   my $unit = $defs{$cName}->{UNIT};
+  my $syscode = undef;
+  $syscode = $defs{$cName}->{SYSCODE} if defined($defs{$cName}->{SYSCODE});
   
-  $id = "\"".$id."\""     if (defined($id) && !isDigit($id));
-  $unit = "\"".$unit."\"" if (defined($unit) && !isDigit($unit));
+  $id = "\"".$id."\""           if (defined($id) && !isDigit($id));
+  $unit = "\"".$unit."\""       if (defined($unit) && !isDigit($unit));
+  $syscode = "\"".$syscode."\"" if (defined($syscode) && !isDigit($syscode));
         
   my $code;
   switch($cType){
@@ -412,8 +431,15 @@ sub pilight_ctrl_Write($@)
           case m/mumbi/         {$code .= "\"systemcode\":$id,\"unitcode\":$unit,";}
           case m/brennenstuhl/  {$code .= "\"systemcode\":$id,\"unitcode\":$unit,";}
           case m/pollin/        {$code .= "\"systemcode\":$id,\"unitcode\":$unit,";}
+          case m/heitech/		    {$code .= "\"systemcode\":$id,\"unitcode\":$unit,";}
           case m/impuls/        {$code .= "\"systemcode\":$id,\"programcode\":$unit,";}
           case m/rsl366/        {$code .= "\"systemcode\":$id,\"programcode\":$unit,";}
+          case m/daycom/        { if (!defined($syscode)) {
+                                      Log3 $me, 1, "$me(Write): Error protocol daycom no systemcode defined";
+                                      return;
+                                  }
+                                  $code .= "\"id\":$id,\"systemcode\":$syscode,\"unit\":$unit,";
+                                }
           case m/cleverwatts/   { $code .= "\"id\":$id,"; 
                                   if ($unit eq "\"all\"") {
                                     $code .= "\"all\":1,";
@@ -498,11 +524,12 @@ sub pilight_ctrl_Send($)
     if ( $ret != 1 ) {
       Log3 $me, 2, "$me(Send): ERROR. Connection rejected from pilight-daemon";
       $socket->close();
-      return return "$me|0";
+      return "$me|0";
     }
   }
-  
   Log3 $me, 5, "$me(Send): $data";
+  
+  $data = $data."\n\n"; # add delimiter to signel end off stream if length > 1024
   $socket->send($data);
   
   #6.0 we get a response message
@@ -549,11 +576,11 @@ sub pilight_ctrl_addWhiteList($$)
 sub pilight_ctrl_createWhiteList($)
 {
   my ($own) = @_;
-  splice($own->{helper}->{whiteList});
+  splice(@{$own->{helper}->{whiteList}});
   foreach my $d (keys %defs)   
   { 
     my $module   = $defs{$d}{TYPE};
-    next if ($module !~ /pilight_[d|s|t].*/);
+    next if ($module !~ /pilight_[d|s|t|c].*/);
     
     pilight_ctrl_addWhiteList($own,$defs{$d});
   }
@@ -575,7 +602,7 @@ sub pilight_ctrl_Notify($$)
     next if(!defined($s));
     my ($what,$who) = split(' ',$s);
     
-    if ( $what =~ m/INITIALIZED/ ) {
+    if ( $what =~ m/^INITIALIZED$/  ) {
       Log3 $me, 4, "$me(Notify): create white list for $s";
       pilight_ctrl_createWhiteList($own);
     } elsif ( $what =~ m/DEFINED/ ){
@@ -754,6 +781,9 @@ sub pilight_ctrl_Parse($$)
     last if ($id ne "");
   }
   
+  #systemcode and id for protocol daycom (needs 3 id's, systemcode, id, unit
+  my $syscode = (defined($data->{$s}{"systemcode"}))   ? $data->{$s}{"systemcode"}  : ""; 
+  
   my $unit = "";
   foreach my $sunit (@unitList) {
     $unit          = (defined($data->{$s}{$sunit}))    ? $data->{$s}{$sunit}      : ""; 
@@ -762,12 +792,18 @@ sub pilight_ctrl_Parse($$)
 
   # handling ContactAsSwitch befor white list check
   my $asSwitch = $attr{$me}{ContactAsSwitch};
-  if ( defined($asSwitch) && $proto =~ /contact/ && $asSwitch =~ /$id/) {
+  if ( defined($asSwitch) && $asSwitch =~ /$id/ && ($state =~ /opened/ || $state =~ /closed/) ) {
     $proto =~ s/contact/switch/g;
     $state =~ s/opened/on/g;
     $state =~ s/closed/off/g;
-    Log3 $me, 5, "$me(Parse): contact as switch for $id";
+    Log3 $me, 4, "$me(Parse): contact as switch for $id";
   }
+  
+  # some protocols have no id but unit(code) e.q. ev1527, GS-iwds07
+  $id = $unit if ($id eq "" && $unit ne "");   
+  $unit = "all" if ($unit eq "" && $all ne "");
+  
+  Log3 $me, 5, "$me(Parse): protocol:$proto,id:$id,unit:$unit";
         
   my @ignoreIDs = split(",",AttrVal($me, "ignoreProtocol","")); 
   
@@ -790,9 +826,7 @@ sub pilight_ctrl_Parse($$)
   readingsBeginUpdate($hash);
   readingsBulkUpdate($hash,"rcv_raw",$rmsg);
   readingsEndUpdate($hash, 1);
-  
-  $unit = "all" if ($unit eq "" && $all ne "");
-  
+    
   my $protoID = -1;  
   switch($proto){
     #switch
@@ -802,14 +836,21 @@ sub pilight_ctrl_Parse($$)
     case m/mumbi/       {$protoID = 1;}
     case m/brennenstuhl/{$protoID = 1;}
     case m/pollin/      {$protoID = 1;}
+    case m/daycom/      {$protoID = 1;}
     case m/impuls/      {$protoID = 1;}
     case m/rsl366/      {$protoID = 1;}
     case m/cleverwatts/ {$protoID = 1;}
     case m/intertechno_old/ {$protoID = 1;}
     case m/quigg_gt/    {$protoID = 1;}
+    case m/heitech/		{$protoID = 1;}
     
     case m/dimmer/      {$protoID = 2;}
+    
+    #contact sensors
     case m/contact/     {$protoID = 3;}
+    case m/ev1527/      {$protoID = 3;}
+    case m/sc2262/      {$protoID = 3;}
+    case m/GS-iwds07/   {$protoID = 3;} 
     
     #Weather Stations temperature, humidity
     case m/alecto/      {$protoID = 4;}
@@ -817,6 +858,10 @@ sub pilight_ctrl_Parse($$)
     case m/ninjablocks/ {$protoID = 4;}
     case m/tfa/         {$protoID = 4;}
     case m/teknihall/   {$protoID = 4;}
+    case m/oregon_21/   {$protoID = 4;}
+    
+    #handle illuminance sensor as weather station - workaround
+    case m/bh1750/      {$protoID = 4;}
     
     #gpio temperature, humidity sensors
     case m/dht11/       {$protoID = 4;}
@@ -826,8 +871,14 @@ sub pilight_ctrl_Parse($$)
     case m/cpu_temp/    {$protoID = 4;}
     case m/lm75/        {$protoID = 4;}
     case m/lm76/        {$protoID = 4;}
+    case m/bmp085/      {$protoID = 4;}
+    case m/bmp180/      {$protoID = 4;}
     
     case m/screen/      {$protoID = 5;}
+    
+    #smoke sensors
+    case m/secudo_smoke_sensor/   {$protoID = 6;}
+    
     case m/firmware/    {return;}    
     else                {Log3 $me, 3, "$me(Parse): unknown protocol -> $proto"; return;}
   }
@@ -840,6 +891,8 @@ sub pilight_ctrl_Parse($$)
   switch($protoID){
     case 1 {
       my $msg = "PISWITCH,$proto,$id,$unit,$state";
+      $msg .= ",$syscode" if ($syscode ne "");
+      
       Log3 $me, 4, "$me(Dispatch): $msg";
       return Dispatch($hash, $msg,undef );
       }
@@ -850,7 +903,13 @@ sub pilight_ctrl_Parse($$)
       Log3 $me, 4, "$me(Dispatch): $msg";
       return Dispatch($hash, $msg ,undef);
     }
-    case 3 {return;}
+    case 3 { 
+		my $piTempData = "";
+        $piTempData .= ",battery:$data->{$s}{battery}"          if (defined($data->{$s}{battery}));
+        my $msg = "PICONTACT,$proto,$id,$unit,$state$piTempData";
+        Log3 $me, 4, "$me(Dispatch): $msg";
+		return Dispatch($hash, $msg,undef);		
+	}
     case 4 {      
         my $piTempData = "";
         $piTempData .= ",temperature:$data->{$s}{temperature}"  if (defined($data->{$s}{temperature}));
@@ -860,12 +919,15 @@ sub pilight_ctrl_Parse($$)
         $piTempData .= ",windavg:$data->{$s}{windavg}"          if (defined($data->{$s}{windavg}));
         $piTempData .= ",winddir:$data->{$s}{winddir}"          if (defined($data->{$s}{winddir}));
         $piTempData .= ",windgust:$data->{$s}{windgust}"        if (defined($data->{$s}{windgust}));
+        #workaround illuminance sensor
+        $piTempData .= ",illuminance:$data->{$s}{illuminance}"  if (defined($data->{$s}{illuminance}));
         
         my $msg = "PITEMP,$proto,$id$piTempData";
         Log3 $me, 4, "$me(Dispatch): $msg";
         return Dispatch($hash, $msg,undef);
     }
     case 5 { return Dispatch($hash, "PISCREEN,$proto,$id,$unit,$state",undef); }
+    case 6 { return Dispatch($hash, "PISMOKE,$proto,$id,$state",undef); }
     else  {Log3 $me, 3, "$me(Parse): unknown protocol -> $proto"; return;}
   }
   return;
@@ -904,6 +966,8 @@ sub pilight_ctrl_SimpleWrite(@)
 1;
 
 =pod
+=item summary    base module to comunicate with pilight
+=item summary_DE Basismodul zur Kommunikation mit pilight
 =begin html
 
 <a name="pilight_ctrl"></a>

@@ -1,18 +1,23 @@
-# $Id$
+# $Id: 44_S7.pm 14697 2017-07-13 04:36:34Z charlie71 $
 ####################################################
 
 package main;
 
 use strict;
 use warnings;
+
 #use Devel::NYTProf; #profiler
 
-
-require "44_S7_Client.pm";
+require "44_S7_S7Client.pm";
+require "44_S7_S5Client.pm";
 
 my %gets = (
 	"S7TCPClientVersion" => "",
 	"PLCTime"            => ""
+);
+
+my %sets = (
+	"intervall" => ""
 );
 
 my @areasconfig = (
@@ -22,15 +27,16 @@ my @areasconfig = (
 	"WriteFlags-Config",  "WriteDB-Config"
 );
 my @s7areas = (
-	&S7Client::S7AreaPE, &S7Client::S7AreaPA, &S7Client::S7AreaMK,
-	&S7Client::S7AreaDB, &S7Client::S7AreaPE, &S7Client::S7AreaPA,
-	&S7Client::S7AreaMK, &S7Client::S7AreaDB
+	&S7ClientBase::S7AreaPE, &S7ClientBase::S7AreaPA, &S7ClientBase::S7AreaMK,
+	&S7ClientBase::S7AreaDB, &S7ClientBase::S7AreaPE, &S7ClientBase::S7AreaPA,
+	&S7ClientBase::S7AreaMK, &S7ClientBase::S7AreaDB
 );
 my @areaname =
   ( "inputs", "outputs", "flags", "db", "inputs", "outputs", "flags", "db" );
 
 #####################################
-sub S7_Initialize($) {
+sub S7_Initialize($) {    #S5_OK
+
 	my $hash = shift @_;
 
 	# Provider
@@ -48,8 +54,10 @@ sub S7_Initialize($) {
 	$hash->{DefFn}    = "S7_Define";
 	$hash->{UndefFn}  = "S7_Undef";
 	$hash->{GetFn}    = "S7_Get";
+	$hash->{SetFn}   = "S7_Set";
+	
 	$hash->{AttrFn}   = "S7_Attr";
-	$hash->{AttrList} = "MaxMessageLength " . $readingFnAttributes;
+	$hash->{AttrList} = "MaxMessageLength Intervall receiveTimeoutMs " . $readingFnAttributes;
 
 	#	$hash->{AttrList} = join( " ", @areasconfig )." PLCTime";
 }
@@ -61,103 +69,139 @@ sub S7_connect($) {
 	my $name = $hash->{NAME};
 
 	if ( $hash->{STATE} eq "connected to PLC" ) {
-		Log3 $name, 2, "$name S7_connect: allready connected!";
+		Log3( $name, 2, "$name S7_connect: allready connected!" );
 		return;
 	}
 
-	Log3 $name, 4,
-	    "S7: $name connect ip_address="
-	  . $hash->{ipAddress}
-	  . ", LocalTSAP="
-	  . $hash->{LocalTSAP}
-	  . ", RemoteTSAP="
-	  . $hash->{RemoteTSAP} . " ";
+	Log3( $name, 4,
+		    "S7: $name connect PLC_address="
+		  . $hash->{plcAddress}
+		  . ", LocalTSAP="
+		  . $hash->{LocalTSAP}
+		  . ", RemoteTSAP="
+		  . $hash->{RemoteTSAP}
+		  . " " );
 
-
-	if ( !defined( $hash->{S7TCPClient} ) ) {
+	if ( !defined( $hash->{S7PLCClient} ) ) {
 		S7_reconnect($hash);
 		return;
 	}
 
-
 	$hash->{STATE} = "disconnected";
 	main::readingsSingleUpdate( $hash, "state", "disconnected", 1 );
-
-	$hash->{S7TCPClient}
-	  ->SetConnectionParams( $hash->{ipAddress}, $hash->{LocalTSAP},
-		$hash->{RemoteTSAP} );
-
 	my $res;
-	eval {
-		local $SIG{__DIE__} = sub {
-			my ($s) = @_;
-			Log3 $hash, 0, "S7_connect: $s";
-			$res = -1;
+
+	if ( $hash->{S7TYPE} eq "S5" ) {
+		eval {
+			local $SIG{__DIE__} = sub {
+				my ($s) = @_;
+				Log3( $hash, 0, "S7_connect: $s" );
+				$res = -1;
+			};
+			$res =
+			  $hash->{S7PLCClient}->S5ConnectPLCAS511( $hash->{plcAddress} );
 		};
-		$res = $hash->{S7TCPClient}->Connect();
-	};
+	}
+	else {
+		$hash->{S7PLCClient}
+		  ->SetConnectionParams( $hash->{plcAddress}, $hash->{LocalTSAP},
+			$hash->{RemoteTSAP} );
+
+		eval {
+			local $SIG{__DIE__} = sub {
+				my ($s) = @_;
+				Log3( $hash, 0, "S7_connect: $s" );
+				$res = -1;
+			};
+			$res = $hash->{S7PLCClient}->Connect();
+		};
+	}
 
 	if ($res) {
-		Log3 $name, 2, "S7_connect: $name Could not connect to PLC ($res)";
+		Log3( $name, 2, "S7_connect: $name Could not connect to PLC ($res)" );
 		return;
 	}
 
-	my $PDUlength = $hash->{S7TCPClient}->{PDULength};
+	my $PDUlength = $hash->{S7PLCClient}->{PDULength};
 	$hash->{maxPDUlength} = $PDUlength;
 
-	Log3 $name, 3,
-	  "$name S7_connect: connect to PLC with maxPDUlength=$PDUlength";
+	Log3( $name, 3,
+		"$name S7_connect: connect to PLC with maxPDUlength=$PDUlength" );
 
 	$hash->{STATE} = "connected to PLC";
 	main::readingsSingleUpdate( $hash, "state", "connected to PLC", 1 );
-
 
 	return undef;
 
 }
 
 #####################################
-sub S7_disconnect($) {
+sub S7_disconnect($) {    #S5 OK
 	my $hash = shift @_;
-	my ( $ph, $res, $di);
+	my ( $ph, $res, $di );
 	my $name  = $hash->{NAME};
 	my $error = "";
 
-	$hash->{S7TCPClient}->Disconnect() if ( defined( $hash->{S7TCPClient} ) );
-	$hash->{S7TCPClient} = undef;    #TCP Client freigeben
+	$hash->{S7PLCClient}->Disconnect() if ( defined( $hash->{S7PLCClient} ) );
+	$hash->{S7PLCClient} = undef;    #PLC Client freigeben
 
 	$hash->{STATE} = "disconnected";
 	main::readingsSingleUpdate( $hash, "state", "disconnected", 1 );
 
-	Log3 $name, 2, "$name S7 disconnected";
+	Log3( $name, 2, "$name S7 disconnected" );
 
 }
 
 #####################################
-sub S7_reconnect($) {
+sub S7_reconnect($) {                #S5 OK
 	my $hash = shift @_;
-	S7_disconnect($hash) if ( defined( $hash->{S7TCPClient} ) );
+	S7_disconnect($hash) if ( defined( $hash->{S7PLCClient} ) );
 
-	$hash->{S7TCPClient} = S7Client->new();
+	
+	
+	if ( $hash->{S7TYPE} eq "S5" ) {
+		$hash->{S7PLCClient} = S5Client->new();
+	}
+	else {
+		$hash->{S7PLCClient} = S7Client->new();
+	}
 	InternalTimer( gettimeofday() + 3, "S7_connect", $hash, 1 )
-	  ;    #wait 3 seconds for reconnect
+	  ;                              #wait 3 seconds for reconnect
 }
 
 #####################################
-sub S7_Define($$) {
+sub S7_Define($$) {                  # S5 OK
 	my ( $hash, $def ) = @_;
 	my @a = split( "[ \t][ \t]*", $def );
 
-	my ( $name, $ip_address, $LocalTSAP, $RemoteTSAP, $res, $PDUlength, $rack,
+	my ( $name, $PLC_address, $LocalTSAP, $RemoteTSAP, $res, $PDUlength, $rack,
 		$slot );
 
 	$name = $a[0];
 
-	if ( uc $a[2] eq "LOGO7" || uc $a[2] eq "LOGO8" ) {
-		$ip_address       = $a[3];
+	if ( uc $a[2] eq "S5" ) {
+		$hash->{S7TYPE}   = "S5";
+		$PLC_address      = $a[3];
+		if (@a > 4) {
+			$hash->{Interval} = $a[4];
+		} else {
+			$hash->{Interval} = 1;
+		} 
+		$LocalTSAP        = -1;
+		$RemoteTSAP       = -1;
+
+		$PDUlength = 240;
+
+	}
+	elsif ( uc $a[2] eq "LOGO7" || uc $a[2] eq "LOGO8" ) {
+		$PLC_address      = $a[3];
 		$LocalTSAP        = 0x0100;
 		$RemoteTSAP       = 0x0200;
-		$hash->{Interval} = 1;
+		if (@a > 4) {
+			$hash->{Interval} = $a[4];
+		} else {
+			$hash->{Interval} = 1;
+		} 
 		if ( uc $a[2] eq "LOGO7" ) {
 			$hash->{S7TYPE} = "LOGO7";
 		}
@@ -169,7 +213,7 @@ sub S7_Define($$) {
 	}
 	else {
 
-		$ip_address = $a[2];
+		$PLC_address = $a[2];
 
 		$rack = int( $a[3] );
 		return "invalid rack parameter (0 - 15)"
@@ -193,13 +237,13 @@ sub S7_Define($$) {
 		$hash->{S7TYPE} = "NATIVE";
 	}
 
-	$hash->{ipAddress}          = $ip_address;
-	$hash->{LocalTSAP}          = $LocalTSAP;
-	$hash->{RemoteTSAP}         = $RemoteTSAP;
-	$hash->{maxPDUlength}       = $PDUlength;    #initial PDU length
-
+	$hash->{plcAddress}   = $PLC_address;
+	$hash->{LocalTSAP}    = $LocalTSAP;
+	$hash->{RemoteTSAP}   = $RemoteTSAP;
+	$hash->{maxPDUlength} = $PDUlength;     #initial PDU length
+    $hash->{receiveTimeoutMs} = 500; #default receiving timeout = 500ms
 	Log3 $name, 4,
-"S7: define $name ip_address=$ip_address,LocalTSAP=$LocalTSAP, RemoteTSAP=$RemoteTSAP ";
+"S7: define $name PLC_address=$PLC_address,LocalTSAP=$LocalTSAP, RemoteTSAP=$RemoteTSAP ";
 
 	$hash->{STATE} = "disconnected";
 	main::readingsSingleUpdate( $hash, "state", "disconnected", 1 );
@@ -213,7 +257,7 @@ sub S7_Define($$) {
 }
 
 #####################################
-sub S7_Undef($) {
+sub S7_Undef($) {    #S5 OK
 	my $hash = shift;
 
 	RemoveInternalTimer($hash);
@@ -225,8 +269,16 @@ sub S7_Undef($) {
 	return undef;
 }
 
+
 #####################################
-sub S7_Get($@) {
+sub S7_Set($@) {
+	
+	
+}
+
+
+#####################################
+sub S7_Get($@) {    #S5 OK
 	my ( $hash, @a ) = @_;
 	return "Need at least one parameters" if ( @a < 2 );
 	return "Unknown argument $a[1], choose one of "
@@ -238,11 +290,11 @@ sub S7_Get($@) {
   ARGUMENT_HANDLER: {
 		$cmd eq "S7TCPClientVersion" and do {
 
-			return $hash->{S7TCPClient}->version();
+			return $hash->{S7PLCClient}->version();
 			last;
 		};
 		$cmd eq "PLCTime" and do {
-			return $hash->{S7TCPClient}->getPLCDateTime();
+			return $hash->{S7PLCClient}->getPLCDateTime();
 			last;
 		};
 	}
@@ -262,13 +314,34 @@ sub S7_Attr(@) {
 	if ( $cmd eq "set" ) {
 		if ( $aName eq "MaxMessageLength" ) {
 
-			if ( $aVal < $hash->{S7TCPClient}->{MaxReadLength} ) {
+			if ( $aVal < $hash->{S7PLCClient}->{MaxReadLength} ) {
 
-				$hash->{S7TCPClient}->{MaxReadLength} = $aVal;
+				$hash->{S7PLCClient}->{MaxReadLength} = $aVal;
 
-				Log3 $name, 3, "$name S7_Attr: setting MaxReadLength= $aVal";
+				Log3( $name, 3, "$name S7_Attr: setting MaxReadLength= $aVal" );
 			}
+		} elsif ($aName eq "Intervall") {
+			if ( $aVal >= 1 ) {
+
+				$hash->{Interval} = $aVal;
+
+				Log3( $name, 3, "$name S7_Attr: setting Intervall= $aVal" );
+			}			
+		} elsif ($aName eq "receiveTimeoutMs") {
+			if ( $aVal > 100 &&  $aVal < 10000) {
+
+				$hash->{receiveTimeoutMs} = $aVal;
+
+				Log3( $name, 3, "$name S7_Attr: setting receiveTimeoutMs= $aVal" );
+				
+				#reconnect with the new receiving timeout
+
+				$hash->{S7PLCClient}->setRecvTimeout($hash->{receiveTimeoutMs}) if ( defined( $hash->{S7PLCClient} ) );				
+			}			
+		
 		}
+		
+		
 		###########
 
 		if (   $aName eq "WriteInputs-Config"
@@ -277,11 +350,11 @@ sub S7_Attr(@) {
 			|| $aName eq "WriteDB-Config" )
 		{
 			my $PDUlength = $hash->{maxPDUlength};
-			
+
 			my @a = split( "[ \t][ \t]*", $aVal );
 			if ( int(@a) % 3 != 0 || int(@a) == 0 ) {
-				Log3 $name, 3,
-				  "S7: Invalid $aName in attr $name $aName $aVal: $@";
+				Log3( $name, 3,
+					"S7: Invalid $aName in attr $name $aName $aVal: $@" );
 				return
 "Invalid $aName $aVal \n Format: <DB> <STARTPOSITION> <LENGTH> [<DB> <STARTPOSITION> <LENGTH> ]";
 			}
@@ -290,20 +363,22 @@ sub S7_Attr(@) {
 				for ( my $i = 0 ; $i < int(@a) ; $i++ ) {
 					if ( $a[$i] ne int( $a[$i] ) ) {
 						my $s = $a[$i];
-						Log3 $name, 3,
-"S7: Invalid $aName in attr $name $aName $aVal ($s is not a number): $@";
+						Log3( $name, 3,
+"S7: Invalid $aName in attr $name $aName $aVal ($s is not a number): $@"
+						);
 						return "Invalid $aName $aVal: $s is not a number";
 					}
 					if ( $i % 3 == 0 && ( $a[$i] < 0 || $a[$i] > 1024 ) ) {
-						Log3 $name, 3,
-						  "S7: Invalid $aName db. valid db 0 - 1024: $@";
+						Log3( $name, 3,
+							"S7: Invalid $aName db. valid db 0 - 1024: $@" );
 						return
 						  "Invalid $aName length: $aVal db: valid db 0 - 1024";
 
 					}
 					if ( $i % 3 == 1 && ( $a[$i] < 0 || $a[$i] > 32768 ) ) {
-						Log3 $name, 3,
-"S7: Invalid $aName startposition. valid startposition 0 - 32768: $@";
+						Log3( $name, 3,
+"S7: Invalid $aName startposition. valid startposition 0 - 32768: $@"
+						);
 						return
 "Invalid $aName startposition: $aVal db: valid startposition 0 - 32768";
 
@@ -311,8 +386,9 @@ sub S7_Attr(@) {
 					if ( $i % 3 == 2
 						&& ( $a[$i] < 1 || $a[$i] > $PDUlength ) )
 					{
-						Log3 $name, 3,
-"S7: Invalid $aName length. valid length 1 - $PDUlength: $@";
+						Log3( $name, 3,
+"S7: Invalid $aName length. valid length 1 - $PDUlength: $@"
+						);
 						return
 "Invalid $aName lenght: $aVal: valid length 1 - $PDUlength";
 					}
@@ -340,7 +416,7 @@ sub S7_Attr(@) {
 
 #####################################
 
-sub S7_getAreaIndex4AreaName($) {
+sub S7_getAreaIndex4AreaName($) {    #S5 OK
 	my ($aName) = @_;
 
 	my $AreaIndex = -1;
@@ -351,7 +427,7 @@ sub S7_getAreaIndex4AreaName($) {
 		}
 	}
 	if ( $AreaIndex < 0 ) {
-		Log3 undef, 2, "S7_Attr: Internal error invalid WriteAreaIndex";
+		Log3( undef, 2, "S7_Attr: Internal error invalid WriteAreaIndex" );
 		return "Internal error invalid WriteAreaIndex";
 	}
 	return $AreaIndex;
@@ -369,35 +445,44 @@ sub S7_WriteToPLC($$$$$$) {
 	my $name = $hash->{NAME};
 
 	my $res          = -1;
-	my $Bufferlength = length($dataBlock);
+	my $Bufferlength  = 59999; 
+	$Bufferlength = length($dataBlock);
 
 	if ( $Bufferlength <= $PDUlength ) {
 		if ( $hash->{STATE} eq "connected to PLC" ) {
 
 			my $bss = join( ", ", unpack( "H2" x $Bufferlength, $dataBlock ) );
-			Log3 $name, 5,
-"$name S7_WriteToPLC: Write Bytes to PLC: $areaIndex, $dbNr,$startByte , $Bufferlength, $bss";
-
+			Log3( $name, 5,
+"$name S7_WriteToPLC: Write Bytes to PLC: $areaIndex, $dbNr,$startByte , $Bufferlength, $bss"
+			);
 
 			eval {
 				local $SIG{__DIE__} = sub {
 					my ($s) = @_;
 					print "DIE:$s";
-					Log3 $hash, 0, "DIE:$s";
+					Log3( $hash, 0, "DIE:$s" );
 					$res = -2;
 				};
 
-				$res =
-				  $hash->{S7TCPClient}
-				  ->WriteArea( $s7areas[$areaIndex], $dbNr, $startByte,
-					$Bufferlength, $WordLen, $dataBlock );
+				if ( $hash->{S7TYPE} eq "S5" ) {
+					$res = $hash->{S7PLCClient}->S5WriteS5Bytes(
+						$s7areas[$areaIndex], $dbNr, $startByte, $Bufferlength,
+						$dataBlock
+					);
+				}
+				else {
+					$res =
+					  $hash->{S7PLCClient}
+					  ->WriteArea( $s7areas[$areaIndex], $dbNr, $startByte,
+						$Bufferlength, $WordLen, $dataBlock );
+				}
 
 			};
 			if ( $res != 0 ) {
-				my $error = $hash->{S7TCPClient}->getErrorStr($res);
+				my $error = $hash->{S7PLCClient}->getErrorStr($res);
 
 				my $msg = "$name S7_WriteToPLC WriteArea error: $res=$error";
-				Log3 $name, 3, $msg;
+				Log3( $name, 3, $msg );
 
 				S7_reconnect($hash);    #lets try a reconnect
 				return ( -2, $msg );
@@ -406,7 +491,7 @@ sub S7_WriteToPLC($$$$$$) {
 		else {
 			my $msg = "$name S7_WriteToPLC: PLC is not connected ";
 
-			Log3 $name, 3, $msg;
+			Log3( $name, 3, $msg );
 
 			S7_reconnect($hash);        #lets try a reconnect
 
@@ -417,7 +502,7 @@ sub S7_WriteToPLC($$$$$$) {
 	else {
 		my $msg =
 "S7_WriteToPLC: wrong block length  $Bufferlength (max length $PDUlength)";
-		Log3 $name, 3, $msg;
+		Log3( $name, 3, $msg );
 		return ( -1, $msg );
 	}
 }
@@ -438,10 +523,9 @@ sub S7_WriteBitToPLC($$$$$) {
 		if ( $hash->{STATE} eq "connected to PLC" ) {
 
 			my $bss = join( ", ", unpack( "H2" x $Bufferlength, $bitValue ) );
-			Log3 $name, 5,
-"$name S7_WriteBitToPLC: Write Bytes to PLC: $areaIndex, $dbNr, $bitPosition , $Bufferlength, $bitValue";
-
-
+			Log3( $name, 5,
+"$name S7_WriteBitToPLC: Write Bytes to PLC: $areaIndex, $dbNr, $bitPosition , $Bufferlength, $bitValue"
+			);
 
 			eval {
 				local $SIG{__DIE__} = sub {
@@ -451,15 +535,19 @@ sub S7_WriteBitToPLC($$$$$) {
 					$res = -2;
 				};
 
-				$res =
-				  $hash->{S7TCPClient}
-				  ->WriteArea( $s7areas[$areaIndex], $dbNr, $bitPosition,
-					$Bufferlength, &S7Client::S7WLBit, chr($bitValue) );
+				if ( $hash->{S7TYPE} eq "S5" ) {
 
-
+					#todo fix S5 Handling
+				}
+				else {
+					$res =
+					  $hash->{S7PLCClient}
+					  ->WriteArea( $s7areas[$areaIndex], $dbNr, $bitPosition,
+						$Bufferlength, &S7Client::S7WLBit, chr($bitValue) );
+				}
 			};
 			if ( $res != 0 ) {
-				my $error = $hash->{S7TCPClient}->getErrorStr($res);
+				my $error = $hash->{S7PLCClient}->getErrorStr($res);
 
 				my $msg = "$name S7_WriteBitToPLC WriteArea error: $res=$error";
 				Log3 $name, 3, $msg;
@@ -515,18 +603,26 @@ sub S7_ReadBlockFromPLC($$$$$) {
 					$res = -2;
 				};
 
-				( $res, $readbuffer ) =
-				  $hash->{S7TCPClient}->ReadArea( $s7areas[$areaIndex], $dbNr, $startByte,
-					$requestedLength, &S7Client::S7WLByte );
+				if ( $hash->{S7TYPE} eq "S5" ) {
+					( $res, $readbuffer ) =
+					  $hash->{S7PLCClient}
+					  ->S5ReadS5Bytes( $s7areas[$areaIndex], $dbNr, $startByte,
+						$requestedLength );
+				}
+				else {
+					( $res, $readbuffer ) =
+					  $hash->{S7PLCClient}
+					  ->ReadArea( $s7areas[$areaIndex], $dbNr, $startByte,
+						$requestedLength, &S7Client::S7WLByte );
+				}
 			};
-
 
 			if ( $res != 0 ) {
 
-				my $error = $hash->{S7TCPClient}->getErrorStr($res);
+				my $error = $hash->{S7PLCClient}->getErrorStr($res);
 				my $msg =
 				  "$name S7_ReadBlockFromPLC ReadArea error: $res=$error";
-				Log3 $name, 3, $msg;
+				Log3( $name, 3, $msg );
 
 				S7_reconnect($hash);    #lets try a reconnect
 				return ( -2, $msg );
@@ -539,7 +635,7 @@ sub S7_ReadBlockFromPLC($$$$$) {
 		}
 		else {
 			my $msg = "$name S7_ReadBlockFromPLC: PLC is not connected ";
-			Log3 $name, 3, $msg;
+			Log3( $name, 3, $msg );
 			return ( -1, $msg );
 
 		}
@@ -547,14 +643,14 @@ sub S7_ReadBlockFromPLC($$$$$) {
 	else {
 		my $msg =
 "$name S7_ReadBlockFromPLC: wrong block length (max length $PDUlength)";
-		Log3 $name, 3, $msg;
+		Log3( $name, 3, $msg );
 		return ( -1, $msg );
 	}
 }
 
 #####################################
 
-sub S7_setBitInBuffer($$$) {
+sub S7_setBitInBuffer($$$) {    #S5 OK
 	my ( $bitPosition, $buffer, $newValue ) = @_;
 
 	my $Bufferlength = ( length($buffer) + 1 ) / 3;
@@ -573,7 +669,6 @@ sub S7_setBitInBuffer($$$) {
 	my @Writebuffer = unpack( "C" x $Bufferlength,
 		pack( "H2" x $Bufferlength, split( ",", $buffer ) ) );
 
-	#my $intrestingByte = $Writebuffer[$bytePosition];
 	my $intrestingBit = $bitPosition % 8;
 
 	if ( $newValue eq "on" || $newValue eq "trigger" ) {
@@ -599,7 +694,7 @@ sub S7_setBitInBuffer($$$) {
 }
 
 #####################################
-sub S7_getBitFromBuffer($$) {
+sub S7_getBitFromBuffer($$) {    #S5 OK
 	my ( $bitPosition, $buffer ) = @_;
 
 	my $Bufferlength = ( length($buffer) * 3 ) - 1;
@@ -626,7 +721,7 @@ sub S7_getBitFromBuffer($$) {
 }
 
 #####################################
-sub S7_getAllWritingBuffersFromPLC($$$) {
+sub S7_getAllWritingBuffersFromPLC($$$) {    #S5 OK
 
 	#$hash ... from S7 physical modul
 	#$writerConfig ... writer Config
@@ -634,7 +729,7 @@ sub S7_getAllWritingBuffersFromPLC($$$) {
 
 	my ( $hash, $aName, $writerConfig ) = @_;
 
-	Log3 $aName, 4, "S7: getAllWritingBuffersFromPLC called";
+	Log3( $aName, 4, "S7: getAllWritingBuffersFromPLC called" );
 
 	my @a = split( "[ \t][ \t]*", $writerConfig );
 
@@ -688,7 +783,7 @@ sub S7_getAllWritingBuffersFromPLC($$$) {
 sub S7_GetUpdate($) {
 	my ($hash) = @_;
 	my $name = $hash->{NAME};
-	Log3 $name, 4, "S7: $name GetUpdate called ...";
+	Log3( $name, 4, "S7: $name GetUpdate called ..." );
 
 	my $res = S7_readFromPLC($hash);
 
@@ -706,9 +801,11 @@ sub S7_GetUpdate($) {
 
 #####################################
 sub S7_dispatchMsg($$$$$$$$) {
-	my ( $hash, $msgprefix, $areaIndex, $dbNr, $startByte, $hexbuffer,$length, $clientsNames ) = @_;
+	my ( $hash, $msgprefix, $areaIndex, $dbNr, $startByte, $hexbuffer, $length,
+		$clientsNames )
+	  = @_;
 
-	my $name   = $hash->{NAME};
+	my $name = $hash->{NAME};
 	my $dmsg =
 	    $msgprefix . " "
 	  . $areaname[$areaIndex] . " "
@@ -716,39 +813,38 @@ sub S7_dispatchMsg($$$$$$$$) {
 	  . $startByte . " "
 	  . $length . " "
 	  . $name . " "
-	  . $hexbuffer. " "
-	  . $clientsNames
-	  ;
+	  . $hexbuffer . " "
+	  . $clientsNames;
 
-
-	Log3 $name, 5, $name . " S7_dispatchMsg " . $dmsg;
+	Log3( $name, 5, $name . " S7_dispatchMsg " . $dmsg );
 
 	Dispatch( $hash, $dmsg, {} );
 
 }
 #####################################
-sub S7_readAndDispatchBlockFromPLC($$$$$$$$$$) {
+sub S7_readAndDispatchBlockFromPLC($$$$$$$$$$) {    #S5 OK
 	my (
 		$hash,              $area,             $dbnr,
 		$blockstartpos,     $blocklength,      $hasAnalogReading,
-		$hasDigitalReading, $hasAnalogWriting, $hasDigitalWriting, $clientsNames
+		$hasDigitalReading, $hasAnalogWriting, $hasDigitalWriting,
+		$clientsNames
 	) = @_;
 
 	my $name      = $hash->{NAME};
 	my $state     = $hash->{STATE};
 	my $areaIndex = S7_getAreaIndex4AreaName($area);
 
-
-	Log3 $name, 4,
-	    $name
-	  . " READ Block AREA="
-	  . $area
-	  . ", DB ="
-	  . $dbnr
-	  . ", ADDRESS="
-	  . $blockstartpos
-	  . ", LENGTH="
-	  . $blocklength;
+	Log3( $name, 4,
+		    $name
+		  . " READ Block AREA="
+		  . $area . " ("
+		  . $areaIndex
+		  . "), DB ="
+		  . $dbnr
+		  . ", ADDRESS="
+		  . $blockstartpos
+		  . ", LENGTH="
+		  . $blocklength );
 
 	if ( $state ne "connected to PLC" ) {
 		Log3 $name, 3, "$name is disconnected ? --> reconnect";
@@ -772,18 +868,18 @@ sub S7_readAndDispatchBlockFromPLC($$$$$$$$$$) {
 
 		#dispatch to reader
 		S7_dispatchMsg( $hash, "AR", $areaIndex, $dbnr, $blockstartpos,
-			$hexbuffer,$length,$clientsNames )
+			$hexbuffer, $length, $clientsNames )
 		  if ( $hasAnalogReading > 0 );
 		S7_dispatchMsg( $hash, "DR", $areaIndex, $dbnr, $blockstartpos,
-			$hexbuffer,$length,$clientsNames )
+			$hexbuffer, $length, $clientsNames )
 		  if ( $hasDigitalReading > 0 );
 
 		#dispatch to writer
 		S7_dispatchMsg( $hash, "AW", $areaIndex, $dbnr, $blockstartpos,
-			$hexbuffer,$length,$clientsNames )
+			$hexbuffer, $length, $clientsNames )
 		  if ( $hasAnalogWriting > 0 );
 		S7_dispatchMsg( $hash, "DW", $areaIndex, $dbnr, $blockstartpos,
-			$hexbuffer,$length,$clientsNames )
+			$hexbuffer, $length, $clientsNames )
 		  if ( $hasDigitalWriting > 0 );
 		return 0;
 	}
@@ -795,7 +891,7 @@ sub S7_readAndDispatchBlockFromPLC($$$$$$$$$$) {
 
 }
 #####################################
-sub S7_getReadingsList($) {
+sub S7_getReadingsList($) {    #S5 OK
 	my ($hash) = @_;
 	my $name = $hash->{NAME};
 
@@ -808,7 +904,8 @@ sub S7_getReadingsList($) {
 	@mykeys =
 	  grep $defs{$_}{TYPE} =~ /^S7_/ && $defs{$_}{IODev}{NAME} eq $hash->{NAME},
 	  keys(%defs);
-	@logoClients{@mykeys} = @defs{@mykeys};#jetzt haben wir alle clients in logoClients
+	@logoClients{@mykeys} =
+	  @defs{@mykeys};    #jetzt haben wir alle clients in logoClients
 
 	#we need to find out the unique areas
 	my %tmphash = map { $logoClients{$_}{AREA} => 1 } keys %logoClients;
@@ -850,7 +947,7 @@ sub S7_getReadingsList($) {
 			my $hasDigitalReading = 0;
 			my $hasAnalogWriting  = 0;
 			my $hasDigitalWriting = 0;
-			my $clientsName = "";
+			my $clientsName       = "";
 
 			for ( my $i = 0 ; $i < int(@positioned) ; $i++ ) {
 				if ( $blockstartpos < 0 ) {
@@ -872,7 +969,7 @@ sub S7_getReadingsList($) {
 					$hasDigitalWriting++
 					  if ( $logoClientsDB{ $positioned[$i] }{TYPE} eq
 						"S7_DWrite" );
-						
+
 					$clientsName = $logoClientsDB{ $positioned[$i] }{NAME};
 
 				}
@@ -881,7 +978,7 @@ sub S7_getReadingsList($) {
 					if ( $logoClientsDB{ $positioned[$i] }{ADDRESS} +
 						$logoClientsDB{ $positioned[$i] }{LENGTH} -
 						$blockstartpos <=
-						$hash->{S7TCPClient}->{MaxReadLength} )
+						$hash->{S7PLCClient}->{MaxReadLength} )
 					{
 
 						#extend existing block
@@ -907,11 +1004,10 @@ sub S7_getReadingsList($) {
 							$hasDigitalWriting++
 							  if ( $logoClientsDB{ $positioned[$i] }{TYPE} eq
 								"S7_DWrite" );
-								
-							
-								
+
 						}
-						$clientsName .= "," .$logoClientsDB{ $positioned[$i] }{NAME};
+						$clientsName .=
+						  "," . $logoClientsDB{ $positioned[$i] }{NAME};
 					}
 					else {
 
@@ -957,8 +1053,8 @@ sub S7_getReadingsList($) {
 						$hasDigitalWriting++
 						  if ( $logoClientsDB{ $positioned[$i] }{TYPE} eq
 							"S7_DWrite" );
-							
-						$clientsName = $logoClientsDB{ $positioned[$i] }{NAME};							
+
+						$clientsName = $logoClientsDB{ $positioned[$i] }{NAME};
 					}
 
 				}
@@ -994,7 +1090,7 @@ sub S7_getReadingsList($) {
 }
 
 #####################################
-sub S7_readFromPLC($) {
+sub S7_readFromPLC($) {    #S5 OK
 	my ($hash) = @_;
 	my $name = $hash->{NAME};
 	my $res;
@@ -1009,9 +1105,9 @@ sub S7_readFromPLC($) {
 	for ( my $i = 0 ; $i < int(@readingList) ; $i++ ) {
 		my @readingSet = @{ $readingList[$i] };
 		$res = S7_readAndDispatchBlockFromPLC(
-			$hash,          $readingSet[0], $readingSet[1],
-			$readingSet[2], $readingSet[3], $readingSet[4],
-			$readingSet[5], $readingSet[6], $readingSet[7], $readingSet[8]
+			$hash,          $readingSet[0], $readingSet[1], $readingSet[2],
+			$readingSet[3], $readingSet[4], $readingSet[5], $readingSet[6],
+			$readingSet[7], $readingSet[8]
 		);
 
 		return $res if ( $res != 0 );
@@ -1019,64 +1115,113 @@ sub S7_readFromPLC($) {
 	return 0;
 }
 
-
-
 1;
 
+
 =pod
+=item summary basic interface to a SIEMENS S7 / S5
+=item summary_DE Schnittstelle zu einer Siemens S7 / S5
 =begin html
 
-<a name="S7"></a>
+<p><a name="S7"></a></p>
 <h3>S7</h3>
 <ul>
-	This module connects a SIEMENS PLC (Note: also SIEMENS Logo is supported). The TCP communication module is based on settimino (http://settimino.sourceforge.net) You can found a german wiki here: httl://www.fhemwiki.de/wiki/S7<br />
-	<br />
-	For the communication the following modules have been implemented:
-	<ul>
-		<li>S7 &hellip; sets up the communication channel to the PLC</li>
-		<li>S7_ARead &hellip; Is used for reading integer Values from the PLC</li>
-		<li>S7_AWrite &hellip; Is used for write integer Values to the PLC</li>
-		<li>S7_DRead &hellip; Is used for read bits</li>
-		<li>S7_DWrite &hellip; Is used for writing bits.</li>
-	</ul>
-	<br />
-	<br />
-	Reading work flow:<br />
-	<br />
-	The S7 module reads periodically the configured DB areas from the PLC and stores the data in an internal buffer. Then all reading client modules are informed. Each client module extracts his data and the corresponding readings are set. <brl> <brl> Writing work flow:<br />
-	<br />
-	At the S7 module you need to configure the PLC writing target. Also the S7 module holds a writing buffer. Which contains a master copy of the data needs to send.<br />
-	(Note: after configuration of the writing area a copy from the PLC is read and used as initial fill-up of the writing buffer)<br />
-	Note: The S7 module will send always the whole data block to the PLC. When data on the clients modules is set then the client module updates the internal writing buffer on the S7 module and triggers the writing to the PLC.<br />
-	<br />
-	<a name="S7define"></a> <b>Define</b>
-
-	<ul>
-		<li><code>define &lt;name&gt; S7 &lt;ip_address&gt; &lt;rack&gt; &lt;slot&gt; [&lt;Interval&gt;] </code><br />
-		<br />
-		<code>define logo S7 10.0.0.241 2 0 </code>
-
-		<ul>
-			<li>ip_address &hellip; IP address of the PLC</li>
-			<li>rack &hellip; rack of the PLC</li>
-			<li>slot &hellip; slot of the PLC</li>
-			<li>Interval &hellip; Intervall how often the modul should check if a reading is required</li>
-		</ul>
-		<br />
-		Note: For Siemens logo you should use a alternative (more simply configuration method):<br />
-		define logo S7 LOGO7 10.0.0.241</li>
-	</ul>
-	<br />
-	<br />
-	<b>Attr</b><br />
-	The following attributes are supported:<br />
-	<br />
-	&nbsp;
-	<ul>
-		<li>MaxMessageLength</li>
-		<br />
-		<li>MaxMessageLength ... restricts the packet length if lower than the negioated PDULength. This could be used to increate the processing speed. 2 small packages may be smaler than one large package</li>
-	</ul>
+<ul>
+<ul>This module connects a SIEMENS PLC (S7,S5,SIEMENS Logo!). The TCP communication (S7, Siemens LOGO!) module is based on settimino (http://settimino.sourceforge.net). The serial Communication is based on a libnodave portation.</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>You can found a german wiki here: httl://www.fhemwiki.de/wiki/S7</ul>
+</ul>
+<p><br /><br /></p>
+<ul>
+<ul>For the communication the following modules have been implemented:
+<ul>
+<li>S7 &hellip; sets up the communication channel to the PLC</li>
+<li>S7_ARead &hellip; Is used for reading integer Values from the PLC</li>
+<li>S7_AWrite &hellip; Is used for write integer Values to the PLC</li>
+<li>S7_DRead &hellip; Is used for read bits</li>
+<li>S7_DWrite &hellip; Is used for writing bits.</li>
+</ul>
+</ul>
+</ul>
+<p><br /><br /></p>
+<ul>
+<ul>Reading work flow:</ul>
+</ul>
+<p><br /><br /></p>
+<ul>
+<ul>The S7 module reads periodically the configured DB areas from the PLC and stores the data in an internal buffer. Then all reading client modules are informed. Each client module extracts his data and the corresponding readings are set. Writing work flow:</ul>
+</ul>
+<p><br /><br /></p>
+<ul>
+<ul>At the S7 module you need to configure the PLC writing target. Also the S7 module holds a writing buffer. Which contains a master copy of the data needs to send.</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>(Note: after configuration of the writing area a copy from the PLC is read and used as initial fill-up of the writing buffer)</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>Note: The S7 module will send always the whole data block to the PLC. When data on the clients modules is set then the client module updates the internal writing buffer on the S7 module and triggers the writing to the PLC.</ul>
+</ul>
+<p><br /><br /><a name="S7define"></a><strong>Define</strong><code>define &lt;name&gt; S7 &lt;PLC_address&gt; &lt;rack&gt; &lt;slot&gt; [&lt;Interval&gt;] </code><br /><br /><code>define logo S7 10.0.0.241 2 0 </code></p>
+<ul>
+<ul>
+<ul>
+<ul>
+<li>PLC_address &hellip; IP address of the S7 PLC (For S5 see below)</li>
+<li>rack &hellip; rack of the PLC</li>
+<li>slot &hellip; slot of the PLC</li>
+<li>Interval &hellip; Intervall how often the modul should check if a reading is required</li>
+</ul>
+</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul>Note: For Siemens logo you should use a alternative (more simply configuration method):</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul><code>define logo S7 LOGO7 10.0.0.241</code></ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul>Note: For Siemens S5 you must use a alternative (more simply configuration method):</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul>define logo S7 S5 /dev/tty1 in this case the PLC_address is the serial port number</ul>
+</ul>
+</ul>
+<p><br /><br /><strong>Attr</strong></p>
+<ul>
+<ul>The following attributes are supported:</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul>
+<li>MaxMessageLength</li>
+<li>receiveTimeoutMs</li>
+<li>Intervall</li>
+</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>MaxMessageLength ... restricts the packet length if lower than the negioated PDULength. This could be used to increate the processing speed. 2 small packages may be smaler than one large package</ul>
+<ul>receiveTimeoutMs ... timeout in ms for TCP receiving packages. Default Value 500ms.&nbsp;</ul>
+<ul>Intervall ... polling&nbsp;intervall in s&nbsp;</ul>
 </ul>
 
 =end html
@@ -1084,60 +1229,106 @@ sub S7_readFromPLC($) {
 =begin html_DE
 
 
-<a name="S7"></a>
+<p><a name="S7"></a></p>
 <h3>S7</h3>
 <ul>
-	This module connects a SIEMENS PLC (Note: also SIEMENS Logo is supported). The TCP communication module is based on settimino (http://settimino.sourceforge.net) You can found a german wiki here: httl://www.fhemwiki.de/wiki/S7<br />
-	<br />
-	For the communication the following modules have been implemented:
-	<ul>
-		<li>S7 &hellip; sets up the communication channel to the PLC</li>
-		<li>S7_ARead &hellip; Is used for reading integer Values from the PLC</li>
-		<li>S7_AWrite &hellip; Is used for write integer Values to the PLC</li>
-		<li>S7_DRead &hellip; Is used for read bits</li>
-		<li>S7_DWrite &hellip; Is used for writing bits.</li>
-	</ul>
-	<br />
-	<br />
-	Reading work flow:<br />
-	<br />
-	The S7 module reads periodically the configured DB areas from the PLC and stores the data in an internal buffer. Then all reading client modules are informed. Each client module extracts his data and the corresponding readings are set. <brl> <brl> Writing work flow:<br />
-	<br />
-	At the S7 module you need to configure the PLC writing target. Also the S7 module holds a writing buffer. Which contains a master copy of the data needs to send.<br />
-	(Note: after configuration of the writing area a copy from the PLC is read and used as initial fill-up of the writing buffer)<br />
-	Note: The S7 module will send always the whole data block to the PLC. When data on the clients modules is set then the client module updates the internal writing buffer on the S7 module and triggers the writing to the PLC.<br />
-	<br />
-	<a name="S7define"></a> <b>Define</b>
-
-	<ul>
-		<li><code>define &lt;name&gt; S7 &lt;ip_address&gt; &lt;rack&gt; &lt;slot&gt; [&lt;Interval&gt;] </code><br />
-		<br />
-		<code>define logo S7 10.0.0.241 2 0 </code>
-
-		<ul>
-			<li>ip_address &hellip; IP address of the PLC</li>
-			<li>rack &hellip; rack of the PLC</li>
-			<li>slot &hellip; slot of the PLC</li>
-			<li>Interval &hellip; Intervall how often the modul should check if a reading is required</li>
-		</ul>
-		<br />
-		Note: For Siemens logo you should use a alternative (more simply configuration method):<br />
-		define logo S7 LOGO7 10.0.0.241</li>
-	</ul>
-	<br />
-	<br />
-	<b>Attr</b><br />
-	The following attributes are supported:<br />
-	<br />
-	&nbsp;
-	<ul>
-		<li>MaxMessageLength</li>
-		<br />
-		<li>MaxMessageLength ... restricts the packet length if lower than the negioated PDULength. This could be used to increate the processing speed. 2 small packages may be smaler than one large package</li>
-	</ul>
+<ul>
+<ul>This module connects a SIEMENS PLC (S7,S5,SIEMENS Logo!). The TCP communication (S7, Siemens LOGO!) module is based on settimino (http://settimino.sourceforge.net). The serial Communication is based on a libnodave portation.</ul>
 </ul>
-
-
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>You can found a german wiki here: httl://www.fhemwiki.de/wiki/S7</ul>
+</ul>
+<p><br /><br /></p>
+<ul>
+<ul>For the communication the following modules have been implemented:
+<ul>
+<li>S7 &hellip; sets up the communication channel to the PLC</li>
+<li>S7_ARead &hellip; Is used for reading integer Values from the PLC</li>
+<li>S7_AWrite &hellip; Is used for write integer Values to the PLC</li>
+<li>S7_DRead &hellip; Is used for read bits</li>
+<li>S7_DWrite &hellip; Is used for writing bits.</li>
+</ul>
+</ul>
+</ul>
+<p><br /><br /></p>
+<ul>
+<ul>Reading work flow:</ul>
+</ul>
+<p><br /><br /></p>
+<ul>
+<ul>The S7 module reads periodically the configured DB areas from the PLC and stores the data in an internal buffer. Then all reading client modules are informed. Each client module extracts his data and the corresponding readings are set. Writing work flow:</ul>
+</ul>
+<p><br /><br /></p>
+<ul>
+<ul>At the S7 module you need to configure the PLC writing target. Also the S7 module holds a writing buffer. Which contains a master copy of the data needs to send.</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>(Note: after configuration of the writing area a copy from the PLC is read and used as initial fill-up of the writing buffer)</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>Note: The S7 module will send always the whole data block to the PLC. When data on the clients modules is set then the client module updates the internal writing buffer on the S7 module and triggers the writing to the PLC.</ul>
+</ul>
+<p><br /><br /><a name="S7define"></a><strong>Define</strong><code>define &lt;name&gt; S7 &lt;PLC_address&gt; &lt;rack&gt; &lt;slot&gt; [&lt;Interval&gt;] </code><br /><br /><code>define logo S7 10.0.0.241 2 0 </code></p>
+<ul>
+<ul>
+<ul>
+<ul>
+<li>PLC_address &hellip; IP address of the S7 PLC (For S5 see below)</li>
+<li>rack &hellip; rack of the PLC</li>
+<li>slot &hellip; slot of the PLC</li>
+<li>Interval &hellip; Intervall how often the modul should check if a reading is required</li>
+</ul>
+</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul>Note: For Siemens logo you should use a alternative (more simply configuration method):</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul><code>define logo S7 LOGO7 10.0.0.241</code></ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul>Note: For Siemens S5 you must use a alternative (more simply configuration method):</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul>define logo S7 S5 /dev/tty1 in this case the PLC_address is the serial port number</ul>
+</ul>
+</ul>
+<p><br /><br /><strong>Attr</strong></p>
+<ul>
+<ul>The following attributes are supported:</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>
+<ul>
+<li>MaxMessageLength</li>
+<li>receiveTimeoutMs</li>
+<li>Intervall</li>
+</ul>
+</ul>
+</ul>
+<p>&nbsp;</p>
+<ul>
+<ul>MaxMessageLength ... restricts the packet length if lower than the negioated PDULength. This could be used to increate the processing speed. 2 small packages may be smaler than one large package</ul>
+<ul>receiveTimeoutMs ... timeout in ms for TCP receiving packages. Default Value 500ms.&nbsp;</ul>
+<ul>Intervall ... polling&nbsp;intervall in s&nbsp;</ul>
+</ul>
 =end html_DE
 
 =cut

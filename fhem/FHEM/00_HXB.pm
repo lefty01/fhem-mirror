@@ -1,4 +1,4 @@
-# $Id$
+# $Id: 00_HXB.pm 16375 2018-03-10 15:40:02Z neubert $
 ################################################################
 #
 #  Copyright notice
@@ -126,6 +126,8 @@ sub HXB_Read($)
 
 
 =pod
+=item summary    receive multicast messages from Hexabus devices
+=item summary_DE empfange Multicast-Nachrichten von Hexabus-Ger&auml;ten
 =begin html
 
 <a name="HXB"></a>

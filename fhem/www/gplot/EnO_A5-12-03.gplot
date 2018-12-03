@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_A5-12-03.gplot 9632 2015-10-25 05:59:32Z klaus-schauer $
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device
 #

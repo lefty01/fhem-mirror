@@ -11,7 +11,7 @@
 # Norbert Truchsess
 # based on 00_OWX.pm written by Prof. Dr. Peter A. Henning
 #
-# $Id$
+# $Id: 00_OWX_ASYNC.pm 6378 2014-08-07 22:01:18Z ntruchsess $
 #
 ########################################################################################
 #

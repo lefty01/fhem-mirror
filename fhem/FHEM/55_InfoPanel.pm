@@ -1,3 +1,6 @@
+# $Id: 55_InfoPanel.pm 16791 2018-05-28 09:19:51Z betateilchen $
+
+=for comment
 ##############################################
 #
 # 55_InfoPanel.pm written by betateilchen
@@ -55,9 +58,13 @@
 # 2015-03-29 - 8334 - changed: commandref updated
 # 2015-09-25 -      - changed: support ReadingsVal() in ticker
 #                              with \n in text
+# 2016-09-04 - 12114 - added:   movecalculated
+#
+# 2018-05-06 - 16695 - changed: check plotName exists
+# 2018-05-28 - $Rev: 16791 $ - changed: remove misleading link in commandref
 #
 ##############################################
-# $Id$
+=cut
 
 package main;
 use strict;
@@ -142,6 +149,7 @@ sub InfoPanel_Initialize($) {
     $hash->{GetFn}     = "btIP_Get";
     $hash->{NotifyFn}  = "btIP_Notify";
     $hash->{AttrList}  = "autoreread:1,0 useViewPort:1,0 bgcolor refresh size ";
+    $hash->{AttrList} .= "mobileApp:none,apple,other ";
     $hash->{AttrList} .= "title noscript showTime:1,0 ";
     $hash->{AttrList} .= " bgcenter:1,0 bgdir bgopacity tmin" if $useImgTools;
 
@@ -224,8 +232,8 @@ sub btIP_Get {
      }
      when ("overrides") {
         last if(!defined($defs{$name}{fhem}{override}));
-        while ( my ($key, $value) = each($defs{$name}{fhem}{override}) ) {
-          $ret .= "$key => $value \n";
+        foreach my $key ( keys %{$defs{$name}{fhem}{override}} ) {
+          $ret .= "$key => $defs{$name}{fhem}{override}{$key} \n";
         }
      }
      default {
@@ -255,8 +263,15 @@ sub btIP_readLayout {
 
   my ($err, @layoutfile) = FileRead($filename);
   if($err) {
+#    Log 1, "InfoPanel $name: $err";
+#    $hash->{fhem}{layout} = "text ERROR 50 50 \"Error on reading layout!\"";
     Log 1, "InfoPanel $name: $err";
     $hash->{fhem}{layout} = "text ERROR 50 50 \"Error on reading layout!\"";
+    my ($e,@layout) = FileRead('./FHEM/template.layout');
+    unless ($e){
+       FileWrite($filename,@layout);
+       $hash->{fhem}{layout} = "text ERROR 50 50 \"Please edit layoutfile now.\"";
+    }
   } else {
     $hash->{fhem}{layout} = join("\n", @layoutfile);
     while($hash->{fhem}{layout} =~ m/\@include/ && $level < 1000) {
@@ -479,6 +494,8 @@ sub _btIP_imgData {
   my $height   = $info->{height};
   $width  =~ s/px//;
   $height =~ s/px//;
+  $width  =~ s/pt//;
+  $height =~ s/pt//;
   ($width,$height)= _btIP_imgRescale($width,$height,$scale);
   my $mimetype = $info->{file_media_type};
   
@@ -529,6 +546,7 @@ sub btIP_itemLongpoll {
 sub btIP_itemPlot {
   my ($id,$x,$y,$scale,$inline,$arg) = @_;
   my (@plotName) = split(";",$arg);
+  return ("<!-- undefined plotDevice -->\n",undef,undef) unless defined($defs{$plotName[0]});
   $id = ($id eq '-') ? createUniqueId() : $id;
   my (@webs,$width,$height,$newWidth,$newHeight,$output,$mimetype,$svgdata);
   
@@ -1119,6 +1137,12 @@ sub btIP_evalLayout {
           $svg .= btIP_itemLongpoll($id,$x,$y,$text,%params);
         }
         
+        when("movecalculated") {
+          my ($tox,$toy)= split('[ \t]+', $def, 2);
+          $params{xx} = AnalyzePerlCommand(undef,$tox);
+          $params{yy} = AnalyzePerlCommand(undef,$toy);
+        }
+
         when("moveby") {
           my ($byx,$byy) = split('[ \t]+', $def, 2);
           my ($x,$y)= btIP_xy($byx,$byy,%params);
@@ -1153,9 +1177,11 @@ sub btIP_evalLayout {
 
         when("pop") {
           return unless $pstackcount;
-          while ( my ($key, $value) = each($pstack{$pstackcount}) ) {
-            $params{$key} = $value;
+          foreach my $key ( keys %{$pstack{$pstackcount}} ) {
+#             Debug "pop key: $key, value: $pstack{$pstackcount}{$key}";
+             $params{$key} = $pstack{$pstackcount}{$key};
           }
+
           delete $pstack{$pstackcount};
           $pstackcount--;
         }
@@ -1172,8 +1198,9 @@ sub btIP_evalLayout {
         
         when("push") {
           $pstackcount++;
-          while ( my ($key, $value) = each(%params) ) {
-            $pstack{$pstackcount}{$key} = $value;
+          foreach my $key ( keys %params ) {
+#             Debug "push key: $key, value: $params{$key}";
+             $pstack{$pstackcount}{$key} = $params{$key};
           }
         }
 
@@ -1375,12 +1402,16 @@ sub btIP_returnHTML {
   my $refresh = AttrVal($name, 'refresh', 60);
      $refresh = ($refresh && $refresh < 59) ? 60 : $refresh; 
   my $title   = AttrVal($name, 'title', $name);
-  my $viewport= "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0\"/>";  
+  my $viewport= "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, minimum-scale=1.0, maximum-scale=1.0\"/>";  
   $viewport = AttrVal($name,"useViewPort",1) ? $viewport : "";
+  my $webApp  = "";
+     $webApp = "<meta name=\"apple-mobile-web-app-capable\" content=\"yes\"/>" if (AttrVal($name,'mobileApp','none') eq 'apple');
+     $webApp = "<meta name=\"mobile-web-app-capable\" content=\"yes\"/>"       if (AttrVal($name,'mobileApp','none') eq 'other');
   my $gen     = 'generated="'.(time()-1).'"';  
-  my $code    = btIP_HTMLHead($name,$title,$viewport,$refresh);
+  my $code    = btIP_HTMLHead($name,$title,$viewport,$webApp,$refresh);
 
-  $code .=  "<body topmargin=\"0\" leftmargin=\"0\" margin=\"0\" padding=\"0\" ".
+  my $csrf= ($FW_CSRF ? "fwcsrf='$defs{$FW_wname}{CSRFTOKEN}'" : "");
+  $code .=  "<body $csrf topmargin=\"0\" leftmargin=\"0\" margin=\"0\" padding=\"0\" ".
             "$gen longpoll=\"1\" longpollfilter=\"room=all\" >\n".
 
             "<div id=\"svg_content\" style=\"position:absolute; top:0px; left:0px; z-index:1\" >\n".
@@ -1391,7 +1422,7 @@ sub btIP_returnHTML {
 }
 
 sub btIP_HTMLHead {
-  my ($name,$title,$viewport,$refresh) = @_;
+  my ($name,$title,$viewport,$webApp,$refresh) = @_;
   my $doctype = '<?xml version="1.0" encoding="utf-8" standalone="no"?> '."\n".
                 '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '.
                 '"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">'."\n";
@@ -1400,7 +1431,7 @@ sub btIP_HTMLHead {
   my $r       = (defined($refresh) && $refresh) ? "<meta http-equiv=\"refresh\" content=\"$refresh\"/>" : "";
   my $scripts = btIP_getScript($name);
   my $meta    = "<meta charset=\"UTF-8\">";
-  my $code    = "$doctype\n<html $xmlns>\n<head>\n<title>$title</title>\n$meta\n$r\n$viewport\n$scripts</head>\n";
+  my $code    = "$doctype\n<html $xmlns>\n<head>\n<title>$title</title>\n$meta\n$r\n$viewport\n$webApp\n$scripts</head>\n";
   return $code;
 }
 
@@ -1458,14 +1489,12 @@ sub btIP_getURL {
 
 =pod
 =item helper
+=item summary    create a simple status display
+=item summary_DE erzeugt ein einfaches Statusdisplay
 =begin html
 
 <a name="InfoPanel"></a>
 <h3>InfoPanel</h3>
-
-<ul><b>!!! This module is "under development" as of 2015-02-06 !!!</b><br/>
-Please read <a href="http://forum.fhem.de/index.php/topic,32828.0.html" target="_blank">&gt;&gt;&gt; the development thread &lt;&lt;&lt;</a> in fhem forum for actual informations.</ul>
-<br/>
 
 <ul>
     InfoPanel is an extension to <a href="#FHEMWEB">FHEMWEB</a>. You must install FHEMWEB to use InfoPanel.<br/>
@@ -1560,6 +1589,7 @@ Please read <a href="http://forum.fhem.de/index.php/topic,32828.0.html" target="
 		<li><b>size</b> - The dimensions of the picture in the format
             <code>&lt;width&gt;x&lt;height&gt;</code></li>
 		<li><b>useViewPort</b> - add viewport meta tag to fit mobile displays</li>
+		<li><b>mobileApp</b> - add support for mobile fullscreen experience</li>
 		<li><b>title</b> - webpage title to be shown in Browser</li>
 		<br/>
 		<li><b>bgcenter</b> - background images will not be centered if attribute set to 0. Default: show centered</li>
@@ -1720,6 +1750,11 @@ Please read <a href="http://forum.fhem.de/index.php/topic,32828.0.html" target="
        <li><code>moveby &lt;x&gt; &lt;y&gt;</code><br/>
            <br/>
            <ul>move most recently x- and y-coordinates by given steps<br/>
+           </ul></li><br/>
+       <br/>
+       <li><code>movecalculated &lt;{perlSpecial x}&gt; &lt;{perlSpecial y}&gt;</code><br/>
+           <br/>
+           <ul>calculate x- and y-coordinates by perlSpecials<br/>
            </ul></li><br/>
        <br/>
        <li><code>moveto &lt;x&gt; &lt;y&gt;</code><br/>
@@ -1886,13 +1921,5 @@ Please read <a href="http://forum.fhem.de/index.php/topic,32828.0.html" target="
 </ul>
 
 =end html
-=begin html_DE
 
-<a name="InfoPanel"></a>
-<h3>InfoPanel</h3>
-<ul>
-Sorry, keine deutsche Dokumentation vorhanden.<br/><br/>
-Die englische Doku gibt es hier: <a href='commandref.html#InfoPanel'>InfoPanel</a><br/>
-</ul>
-=end html_DE
 =cut

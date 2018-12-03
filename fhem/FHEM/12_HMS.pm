@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: 12_HMS.pm 16797 2018-05-29 19:35:43Z rudolfkoenig $
 package main;
 
 use strict;
@@ -34,7 +34,7 @@ HMS_Initialize($)
 #                        810e04210218a00186e0000000000000 HMS100CO
 #                        810e0448029ea00132d5000000000000 FI-Trenner
 
-  $hash->{Match}     = "^810e04....(1|5|9).a001";
+  $hash->{Match}     = "^810e04......a001";
   $hash->{DefFn}     = "HMS_Define";
   $hash->{UndefFn}   = "HMS_Undef";
   $hash->{ParseFn}   = "HMS_Parse";
@@ -228,6 +228,8 @@ HMS_Parse($$)
   my $max = int(@txt);
   for( my $i = 0; $i < $max; $i++) {
     readingsBulkUpdate($def, $txt[$i], $v[$i]);
+    readingsBulkUpdate($def, "batteryState", $v[$i] eq "empty" ? "low" : "ok")
+      if($txt[$i] eq "battery");
   }
   readingsBulkUpdate($def, "type", $type);
   readingsBulkUpdate($def, "state", $val);
@@ -240,6 +242,8 @@ HMS_Parse($$)
 1;
 
 =pod
+=item summary    devices communicating via the ELV HMS protocol
+=item summary_DE Anbindung von ELV HMS Ger&auml;ten
 =begin html
 
 <a name="HMS"></a>

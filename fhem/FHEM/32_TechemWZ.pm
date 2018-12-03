@@ -1,5 +1,5 @@
 ###############################################################################
-# $Id$
+# $Id: 32_TechemWZ.pm 10662 2016-01-30 10:22:50Z herrmannj $
 #
 # this module is part of fhem under the same license
 # copyright 2015, joerg herrmann

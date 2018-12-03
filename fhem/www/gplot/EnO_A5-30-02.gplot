@@ -1,5 +1,5 @@
 ##############################################
-# $Id$
+# $Id: EnO_A5-30-02.gplot 9593 2015-10-22 19:06:37Z klaus-schauer $
 # Display contact sensor log
 # FileLog definition: 
 # define FileLog_device FileLog ./log/device-%Y.log device

@@ -32,11 +32,12 @@ sub
 ePowerSwitch_Initialize($)
 {
   my ($hash) = @_;
-  $hash->{Clients}   = ":EGPM:";
-  $hash->{GetFn}     = "ePowerSwitch_Get";
-  $hash->{SetFn}     = "ePowerSwitch_Set";
-  $hash->{DefFn}     = "ePowerSwitch_Define";
-  $hash->{AttrList}  = "stateDisplay:sockNumber,sockName autocreate:on,off";
+
+  $hash->{GetFn}    = "ePowerSwitch_Get";
+  $hash->{SetFn}    = "ePowerSwitch_Set";
+  $hash->{DefFn}    = "ePowerSwitch_Define";
+  $hash->{UndefFn}  = "ePowerSwitch_Undefine";
+  $hash->{AttrList} = $readingFnAttributes;
 }
 
 
@@ -115,6 +116,37 @@ sub ePowerSwitch_ReadPassword($)
     return "";
   }
 }
+###################################
+
+sub ePowerSwitch_Define($$) {
+  my ($hash, $def) = @_;
+  my @a = split("[ \t][ \t]*", $def);
+
+  my $u = "wrong syntax: define <name> ePowerSwitch IP [Password]";
+  return $u if (int(@a) < 2);
+
+  $hash->{IP} = $a[2];
+  if (int(@a) == 4) {
+    ePowerSwitch_StorePassword($hash, $a[3]);
+    $hash->{DEF} = $a[2];
+  }
+
+  my $result = ePowerSwitch_Login($hash);
+  if ($result == 1) {
+    $hash->{STATE} = "initialized";
+    ePowerSwitch_Statusrequest($hash, 0);
+    ePowerSwitch_Logoff($hash);
+  }
+  else {
+    $hash->{STATE} = "undefined";
+  }
+  return undef;
+}
+
+sub ePowerSwitch_Undefine($$) {
+  # FIXME
+  return undef;
+}
 
 
 ###################################
@@ -151,8 +183,9 @@ ePowerSwitch_Set($@)
 {
   my ($hash, @a) = @_;
 
-  return "no set value specified" if(int(@a) < 2);
-  return "Unknown argument $a[1], choose one of on:1,2,3,4,all off:1,2,3,4,all toggle:1,2,3,4 clearreadings:noArg statusrequest:noArg password" if($a[1] eq "?");
+  return "no set value specified" if (int(@a) < 2);
+  return "Unknown argument $a[1], choose one of on:1,2,3,4,all off:1,2,3,4,all"
+      ." toggle:1,2,3,4 clearreadings:noArg statusrequest:noArg password" if ($a[1] eq "?");
 
   my $name = shift @a;
   my $setcommand = shift @a;
@@ -176,7 +209,7 @@ ePowerSwitch_Set($@)
   elsif ($setcommand eq "toggle") { ### FIXME ...
     my $currentstate = ePowerSwitch_Statusrequest($hash, 1);
     if (defined($currentstate)) {
-      my @powerstates = split(",", $currentstate);
+      my @powerstates = split(" ", $currentstate);
       my $newcommand = "off";
       if ($powerstates[$params - 1] eq "0") {
 	$newcommand = "on";
@@ -218,8 +251,10 @@ sub ePowerSwitch_Switch($$$) {
   my ($hash, $state, $port) = @_;
   my $data;
   my $response;
+  my $keepalive = 1;
+
   $state = ($state eq "on" ? "1" : "0");
-  Log3 "ePowerSwitch", 0, "Switch(): state=$state, data=$data";
+  Log3 "ePowerSwitch", 0, "Switch(): state=$state";
 
   # port may only be one of 1, 2, 3, or 4
   if ($port eq "1" or $port eq "2" or $port eq "3" or $port eq "4") {
@@ -232,15 +267,14 @@ sub ePowerSwitch_Switch($$$) {
 
   eval {
     # Parameter: $url, $timeout, $data, $noshutdown=0, $loglevel=4
-    $response = GetFileFromURL("http://" . $hash->{IP} . "/econtrol.html", 5, $data, 0, 0);
-    Log3 "ePowerSwitch", 0, "Switch(): response: $response";
+    $response = GetFileFromURL("http://" . $hash->{IP} . "/econtrol.html", 5, $data, $keepalive);
   };
   if ($@) {
     ### catch block
     Log3 "ePowerSwitch", 0, "Switch(): ERROR: $@";
   } else {
-    Log3 "ePowerSwitch", 0, "Switch(): switch command OK";
-    Log3 "ePowerSwitch", 0, "Switch(): response: $response" if (defined $response);
+    Log3 "ePowerSwitch", 3, "Switch(): switch command OK";
+    Log3 "ePowerSwitch", 4, "Switch(): response: $response" if (defined $response);
   }
 
   return 1;
@@ -255,8 +289,9 @@ sub ePowerSwitch_Login($) {
   Log3 "ePowerSwitch", 0, "try to Login @" . $hash->{IP};
 
   eval {
+    # Parameter: $url, $timeout, $data, $noshutdown, $loglevel
     GetFileFromURL("http://" . $hash->{IP} . "/elogin.html", 5,
-		   "pwd=" . (defined($passwd) ? $passwd : ""), 0, $keepalive);
+		   "pwd=" . (defined($passwd) ? $passwd : ""), $keepalive, 0);
   };
   if ($@) {
       ### catch block
@@ -269,114 +304,51 @@ sub ePowerSwitch_Login($) {
 }
 
 ################################
-sub ePowerSwitch_GetDeviceInfo($$) {
-  my ($hash, $input) = @_;
 
-  Log3 "ePowerSwitch", 0 ,"GetDeviceInfo: inpu=$input";
-  #try to read Device Name
-  my ($devicename) = $input =~ m/<h2>(.+)<\/h2><\/div>/si;
-  $hash->{DEVICENAME} = trim($devicename);
-
-  #try to read Socket Names
-  my @socketlist;
-  # <TD align=right class=OF>switch1
-  while ($input =~ m/<TD align=right class=..>(switch\d)\w*<\/TD>/gi) {
-    my $socketname = trim($1);
-    $socketname =~ s/ /_/g;    #remove spaces
-    push(@socketlist, $socketname);
-  }
-
-  # check for duplicate names
-  my %seen;
-  foreach my $entry (@socketlist) {
-    next unless $seen{$entry}++;
-    Log3 "ePowerSwitch", 0, "Sorry! Can't use devicenames. " . trim($entry) . " is duplicated.";
-    @socketlist = qw(Socket_1 Socket_2 Socket_3 Socket_4);
-  }
-  if (int(@socketlist) < 4) {
-    @socketlist = qw(Socket_1 Socket_2 Socket_3 Socket_4);
-  }
-  return @socketlist;
-}
-
-################################
-sub ePowerSwitch_Statusrequest($$) {
-  my ($hash, $autoCr) = @_;
+sub ePowerSwitch_Statusrequest($) {
+  my ($hash) = @_;
   my $name = $hash->{NAME}; # device name
-  Log3 "ePowerSwitch", 0, "Statusrequest() name=$name, autoCr=$autoCr";
+  my $keepalive = 1;
+  Log3 "ePowerSwitch", 0, "Statusrequest() devicename=$name";
 
-  ##ePowerSwitch_Login($hash); # ???
-  my $response = GetFileFromURL("http://" . $hash->{IP} . "/econtrol.html", 5, "", 0, 0);
+  my $response = GetFileFromURL("http://" . $hash->{IP} . "/econtrol.html", 5, "", $keepalive);
 
   if (not defined($response)) {
      Log3 "ePowerSwitch", 0, "Statusrequest() for $name Cant connect to " . $hash->{IP};
-     $hash->{STATE} = "Connection failed";
+     $hash->{STATE} = "no response";
      return 0
   }
-  Log3 "ePowerSwitch", 1, "Statusrequest: response=" . $response;
+  Log3 "ePowerSwitch", 4, "Statusrequest: response=" . $response;
 
-  if ($response =~ /.,.,.,./) {
-    my $powerstatestring = $&;
-    my @powerstates = split(",", $powerstatestring);
+  my %socketstates;
+  while ($response =~ m/\s*.*<TD align=right class=(ON|OF)>switch(\d)\s*<\/TD>/gi) {
+    my $socketstate = trim($1) eq "ON" ? 1 : 0;
+    my $socketnum   = trim($2);
+    $socketstates{$socketnum} = $socketstate;
+    Log3 "ePowerSwitch", 4, "Statusrequest: socket: $socketnum is $socketstate";
+  }
 
-    Log3 "ePowerSwitch", 0, " Powerstates: " . $powerstatestring;
-
-    if (int(@powerstates) == 4) {
-      my $index;
-      my $newstatestring;
-      my @socketlist = ePowerSwitch_GetDeviceInfo($hash, $response);
-      readingsBeginUpdate($hash);
-
-      foreach my $powerstate (@powerstates) {
-	$index++;
-	if (length(trim($socketlist[$index-1])) == 0) {
-	  $socketlist[$index-1] = "Socket_" . $index;
-	}
-	if (AttrVal($name, "stateDisplay", "sockNumber") eq "sockName") {
-	  $newstatestring .= $socketlist[$index-1] . ": " . ($powerstates[$index-1] ? "on" : "off") . " ";
-	} else {
-	  $newstatestring .= $index . ": " . ($powerstates[$index-1] ? "on" : "off") . " ";
-	}
-
-	#Create Socket-Object if not available
-	my $defptr = $modules{EGPM}{defptr}{$name . $index};
-	if ($autoCr && AttrVal($name, "autocreate", "on") eq "on" && not defined($defptr)) {
-	  if (Value("autocreate") eq "active") {
-	    Log3 "ePowerSwitch", 1, "Autocreate EGPM for Socket $index";
-	    CommandDefine(undef, $name . "_" . $socketlist[$index-1] . " EGPM $name $index");
-	  }
-	  else {
-	    Log 2, "ePowerSwitch: Autocreate disabled in globals section";
-	    $attr{$name}{autocreate} = "off";
-	  }
-	}
-
-	#Write state 2 related Socket-Object
-	if (defined($defptr)) {
-	  if (ReadingsVal($defptr->{NAME}, "state","") ne ($powerstates[$index-1] ? "on" : "off")) {
-	    #check for chages and update -> trigger event
-	    Log3 "ePowerSwitch", 0, "Update State of " . $defptr->{NAME};
-	    readingsSingleUpdate($defptr, "state", ($powerstates[$index-1] ? "on" : "off"), 1);
-	  }
-	  $defptr->{DEVICENAME} = $hash->{DEVICENAME};
-	  $defptr->{SOCKETNAME} = $socketlist[$index-1];
-	}
-
-	readingsBulkUpdate($hash, $index."_".$socketlist[$index-1], ($powerstates[$index-1] ? "on" : "off"));
-      }
-      readingsBulkUpdate($hash, "state", $newstatestring);
-      readingsEndUpdate($hash, 0);
-
-      #everything is fine
-      return $powerstatestring;
-    }
-    else {
-      Log3 "ePowerSwitch", 0, "Failed to parse powerstate";
-    }
+  # fixme attr num sockets?
+  my $size = keys %socketstates;
+  if ($size < 4) {
+    $hash->{STATE} = "no valid response";
+    Log3 "ePowerSwitch", 3, "no valid response";
   }
   else {
-    $hash->{STATE} = "Login failed";
-    Log3 "ePowerSwitch", 0, "Login failed";
+    my $statusstring = "";
+    foreach my $sock (keys %socketstates) {
+      Log3 "ePowerSwitch", 3, "socket $sock is $socketstates{$sock}";
+      $statusstring = "S$sock:$socketstates{$sock} ";
+
+      #$hash->{CHANGED}[0] = $setcommand;
+      $hash->{READINGS}{'S'.$sock}{TIME} = TimeNow();
+      $hash->{READINGS}{'S'.$sock}{VAL} = $socketstates{$sock};
+
+    }
+
+    #everything is fine
+    $hash->{STATE} = $statusstring;
+    return $statusstring;
   }
   #something went wrong :-(
   return undef;
@@ -393,38 +365,11 @@ sub ePowerSwitch_Logoff($) {
     Log3 "ePowerSwitch", 0, "Logoff error: $@";
     return 0;
   };
-  Log3 "ePowerSwitch", 0, "Logoff successful!";
-
+  Log3 "ePowerSwitch", 1, "Logoff successful!";
 
   return 1;
 }
 
-sub ePowerSwitch_Define($$) {
-  my ($hash, $def) = @_;
-  my @a = split("[ \t][ \t]*", $def);
-
-  my $u = "wrong syntax: define <name> ePowerSwitch IP [Password]";
-  return $u if (int(@a) < 2);
-
-  $hash->{IP} = $a[2];
-  if (int(@a) == 4) {
-    ePowerSwitch_StorePassword($hash, $a[3]);
-    $hash->{DEF} = $a[2];
-  }
-  # else { ??
-
-  my $result = ePowerSwitch_Login($hash);
-  if ($result == 1) {
-    $hash->{STATE} = "initialized";
-    ePowerSwitch_Statusrequest($hash, 0);
-    ePowerSwitch_Logoff($hash);
-  }
-  else {
-    $hash->{STATE} = "undefined";
-  }
-
-  return undef;
-}
 
 1;
 
@@ -441,8 +386,7 @@ sub ePowerSwitch_Define($$) {
     <code>define &lt;name&gt; ePowerSwitch &lt;IP-Address&gt; [&lt;Password&gt;]</code><br>
     <br>
     Creates a Leunig &reg; <a href="http://www.leunig.de/_pro/remote_power_switches.html" >ePowerSwitch</a> device to switch up to 4 sockets over the network.
-    If you have more than one device, it is helpful to connect and set names for your sockets over the web-interface first.
-    The name settings will be adopted to FHEM and helps you to identify the sockets. Please make sure that you&acute;re logged off from the ePowerSwitch web-interface otherwise you can&acute;t control it with FHEM at the same time.<br>
+    Please make sure that you&acute;re logged off from the ePowerSwitch web-interface otherwise you can&acute;t control it with FHEM at the same time.<br>
 </ul><br>
   <a name="ePowerSwitchset"></a>
   <b>Set</b>
@@ -455,10 +399,9 @@ sub ePowerSwitch_Define($$) {
     <br>
     <code>set &lt;name&gt; &lt;staterequest&gt;</code><br>
     Update the device information and the state of all sockets.<br>
-    If <a href="#autocreate">autocreate</a> is enabled, an <a href="#EGPM">EGPM</a> device will be created for each socket.<br>
     <br>
     <code>set &lt;name&gt; &lt;clearreadings&gt;</code><br>
-    Removes all readings from the list to get rid of old socketnames.
+    Removes all readings from the list.
   </ul>
   <br>
   <a name="ePowerSwitchget"></a>
@@ -467,12 +410,6 @@ sub ePowerSwitch_Define($$) {
   <a name="ePowerSwitchattr"></a>
   <b>Attributes</b>
   <ul>
-    <li>stateDisplay</li>
-      Default: <b>socketNumer</b> changes between <b>socketNumer</b> and <b>socketName</b> in front of the current state. Call <b>set statusrequest</b> to update all states.
-    <li>autocreate</li>
-    Default: <b>on</b> <a href="#EGPM">EGPM</a>-devices will be created automatically with a <b>set</b>-command.
-      Change this attribute to value <b>off</b> to avoid that mechanism.
-    <li><a href="#loglevel">loglevel</a></li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
   </ul>
   <br>
@@ -498,9 +435,8 @@ sub ePowerSwitch_Define($$) {
   <ul>
     <code>define &lt;name&gt; ePowerSwitch &lt;IP-Address&gt; [&lt;Password&gt;]</code><br>
     <br>
-    Das Modul erstellt eine Verbindung zu einer Gembird &reg; <a href="http://energenie.com/item.aspx?id=7557" >Energenie EG-PM2-LAN</a> Steckdosenleiste und steuert 4 angeschlossene Ger&auml;te..
-    Falls mehrere Steckdosenleisten &uuml;ber das Netzwerk gesteuert werden, ist es ratsam, diese zuerst &uuml;ber die Web-Oberfl&auml;che zu konfigurieren und die einzelnen Steckdosen zu benennen. Die Namen werden dann automatisch in die
-    Oberfl&auml;che von FHEM &uuml;bernommen. Bitte darauf achten, die Weboberfl&auml;che mit <i>Logoff</i> wieder zu verlassen, da der Zugriff sonst blockiert wird.
+    Das Modul erstellt eine Verbindung zu einer Leunig &reg; <a href="http://www.leunig.de/_pro/remote_power_switches.html" >ePowerSwitch</a> Steckdosenleiste und steuert 4 angeschlossene Ger&auml;te..
+    Bitte darauf achten, die Weboberfl&auml;che mit <i>Logoff</i> wieder zu verlassen, da der Zugriff sonst blockiert wird.
 </ul><br>
   <a name="ePowerSwitchset"></a>
   <b>Set</b>
@@ -513,7 +449,6 @@ sub ePowerSwitch_Define($$) {
     <br>
     <code>set &lt;name&gt; &lt;staterequest&gt;</code><br>
     Aktualisiert die Statusinformation der Steckdosenleiste.<br>
-    Wenn das globale Attribut <a href="#autocreate">autocreate</a> aktiviert ist, wird f&uuml;r jede Steckdose ein <a href="#EGPM">EGPM</a>-Eintrag erstellt.<br>
     <br>
     <code>set &lt;name&gt; &lt;clearreadings&gt;</code><br>
     L&ouml;scht alle ung&uuml;ltigen Eintr&auml;ge im Abschnitt &lt;readings&gt;.
@@ -525,17 +460,11 @@ sub ePowerSwitch_Define($$) {
   <a name="ePowerSwitchattr"></a>
   <b>Attribute</b>
   <ul>
-    <li>stateDisplay</li>
-      Default: <b>socketNumer</b> wechselt zwischen <b>socketNumer</b> und <b>socketName</b> f&uuml;r jeden Statuseintrag. Verwende <b>set statusrequest</b>, um die Anzeige zu aktualisieren.
-    <li>autocreate</li>
-    Default: <b>on</b> <a href="#EGPM">EGPM</a>-Eintr&auml;ge werden automatisch mit dem <b>set</b>-command erstellt.
-    <li><a href="#loglevel">loglevel</a></li>
     <li><a href="#readingFnAttributes">readingFnAttributes</a></li>
   </ul>
   <br>
 <br>
    <br>
-
     Beispiel:
     <ul>
       <code>define sleiste ePowerSwitch 10.192.192.20 geheim</code><br>

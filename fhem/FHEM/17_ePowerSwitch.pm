@@ -191,7 +191,7 @@ ePowerSwitch_Set($@)
   my $setcommand = shift @a;
   my $params = join(" ", @a);
 
-  Log3 "ePowerSwitch", 0, "set $name (". $hash->{IP}. ") $setcommand $params";
+  Log3 "ePowerSwitch", 3, "set $name (". $hash->{IP}. ") $setcommand $params";
 
   ePowerSwitch_Login($hash);
 
@@ -207,11 +207,11 @@ ePowerSwitch_Set($@)
     ePowerSwitch_Statusrequest($hash, 1);
   }
   elsif ($setcommand eq "toggle") { ### FIXME ...
-    my $currentstate = ePowerSwitch_Statusrequest($hash, 1);
-    if (defined($currentstate)) {
-      my @powerstates = split(" ", $currentstate);
+    my $stateref = ePowerSwitch_Statusrequest($hash, 1);
+    if (defined($stateref)) {
+      Log3 "ePowerSwitch_Statusrequest", 1, "socket $params=" . $stateref->{$params} . "\n";
       my $newcommand = "off";
-      if ($powerstates[$params - 1] eq "0") {
+      if ($stateref->{$params} == 0) {
 	$newcommand = "on";
       }
       ePowerSwitch_Switch($hash, $newcommand, $params);
@@ -222,7 +222,7 @@ ePowerSwitch_Set($@)
     ePowerSwitch_Statusrequest($hash, 1);
   }
   elsif ($setcommand eq "clearreadings") {
-       delete $hash->{READINGS};
+    delete $hash->{READINGS};
   }
   elsif($setcommand eq "password") {
     my $result = ePowerSwitch_StorePassword($hash, $params);
@@ -336,19 +336,19 @@ sub ePowerSwitch_Statusrequest($) {
   }
   else {
     my $statusstring = "";
+    readingsBeginUpdate($hash);
     foreach my $sock (keys %socketstates) {
       Log3 "ePowerSwitch", 3, "socket $sock is $socketstates{$sock}";
-      $statusstring = "S$sock:$socketstates{$sock} ";
+      $statusstring .= "S$sock:$socketstates{$sock},";
 
-      #$hash->{CHANGED}[0] = $setcommand;
-      $hash->{READINGS}{'S'.$sock}{TIME} = TimeNow();
-      $hash->{READINGS}{'S'.$sock}{VAL} = $socketstates{$sock};
-
+      readingsBulkUpdateIfChanged($hash, 'S'.$sock, $socketstates{$sock});
     }
+    readingsEndUpdate($hash, 1);
 
     #everything is fine
+    $statusstring =~ s/,$//;
     $hash->{STATE} = $statusstring;
-    return $statusstring;
+    return \%socketstates;
   }
   #something went wrong :-(
   return undef;

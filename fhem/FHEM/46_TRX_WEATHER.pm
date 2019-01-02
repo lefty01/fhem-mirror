@@ -1,4 +1,4 @@
-# $Id: 46_TRX_WEATHER.pm 16542 2018-04-02 22:10:20Z KernSani $
+# $Id: 46_TRX_WEATHER.pm 18095 2018-12-30 14:37:23Z KernSani $
 ##############################################################################
 #
 # 46_TRX_WEATHER.pm
@@ -1677,8 +1677,9 @@ TRX_WEATHER_Parse($$)
 			my @words = split(/\s+/,$i->{current});
 			$val .= "BAT: ".$words[0]." "; #use only first word
 
-			$sensor = "battery";			
-			readingsBulkUpdate($def, $sensor, $i->{current});
+			#$sensor = "battery";			
+			readingsBulkUpdate($def, "battery", $i->{current});
+			readingsBulkUpdate($def, "batteryState", $i->{current});
 	}
 	elsif ($i->{type} eq "pressure") { 
 			Log3 $name, 5, "TRX_WEATHER: name=$name device=$device_name Luftdruck ".$i->{current}." ".$i->{units}." Vorhersage=".$i->{forecast};

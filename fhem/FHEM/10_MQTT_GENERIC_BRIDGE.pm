@@ -22,7 +22,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
-# $Id: 10_MQTT_GENERIC_BRIDGE.pm 17841 2018-11-25 15:06:01Z hexenmeister $
+# $Id: 10_MQTT_GENERIC_BRIDGE.pm 18077 2018-12-28 13:30:17Z hexenmeister $
 #
 ###############################################################################
 
@@ -30,7 +30,29 @@
 # 
 # CHANGE LOG
 # 
-# 25.11.018  1.0.3
+# 28.12.2018 1.0.8
+# change     : fuer MQTT2_CLIENT (IOWrite): func. name change "subscribe" -> "subscriptions"
+#              kein Befehl "subscribtions" an eine MQTT2_SERVER-Instanz senden
+#
+# 27.12.2018 1.0.7
+# implement  : alias bei subscribe
+# 
+# 27.12.2018 1.0.6
+# bugfix     : inkorrekte Verarbeitung von 'mqttDefaults' mit 
+#              Prefixen 'pub:'/'sub:'.
+# improvement: Sonderlocken fuer $base, $name, $reading, $device, 
+#              damit auch xxx:topic={$base} geht (sonst koente nur {"$base"} verwendet werden)
+#
+# 16.12.2018 1.0.5
+#  bugfix    : $name im Unterschied zu $reading in mqttSubscribe funktioniert
+#              nicht. Nach dieser Korrektur wird es erstmal als $reading 
+#              behandelt, soll jedoch noch ueber mqttAlias redefiniert
+#              werden können.
+#
+# 06.12.2018 1.0.4
+#  bugfix    : Variable $base bei publish leer annehmen falls nicht definiert
+# 
+# 25.11.2018 1.0.3
 #  bugfix    : Param name for IOWrite (subscribe)
 #
 # 21.11.018  1.0.2
@@ -54,36 +76,36 @@
 #              retain-Flag sollte funktionieren, qos nicht,
 #              wie qos uebermittelt werden soll ist noch unklar
 #
-# 14.11.2018 0.9.9
+# 14.11.2018 0.9.9.9
 #  feature   : Unterstuetzung fuer MQTT2 -> subscribe (Parse)
 #              ! Erfordert Aenderung in MQTT2_CLIENT und MQTT2_SERVER !
 #              ! in   $hash->{Clients} = ":MQTT2_DEVICE:MQTT_GENERIC_BRIDGE:";
 #              ! und  $hash->{MatchList}= { "1:MQTT2_DEVICE"  => "^.*", 
 #                                           "2:MQTT_GENERIC_BRIDGE"=>"^.*" },
 #
-# 11.11.2018 0.9.9
+# 11.11.2018 0.9.9.8
 #   change   : import fuer json2nameValue aus main.
 #              Damit geht JSON-Unterstuetzung ohne Prefix 'main::'
 #              Beispiel: 
 #              json:topic=/XTEST/json json:expression={json2nameValue($value)}
 #
-# 04.11.2018 0.9.9
+# 04.11.2018 0.9.9.7
 #   bugfix   : Bei Mehrfachdefinitionen wie 'a|b|c:topic=some/$reading/thing'
 #              wurden beim Treffer alle genannten Readings aktualisiert 
 #              anstatt nur der einer passenden. 
 #   change   : forward blockieren nur fuer Readings (mode 'R').
 # 
-# 18.10.2018 0.9.9
+# 18.10.2018 0.9.9.6
 #   bugfix   : qos/retain/expression aus 'mqttDefaults' in Device wurden nicht
 #              verwendet (Fehler bei der Suche (Namen))
 #
-# 14.10.2018 0.9.9
+# 14.10.2018 0.9.9.5
 #   change   : 'mqttForward' dokumentiert
 #   improved : Laden von MQTT-Modul in BEGIN-Block verlagert. 
 #              Es gab Meldungen ueber Probleme (undefined subroutine) wenn
 #              MQTT-Modul in fhem.cfg nach dem Bridge-Modul stand.
 #
-# 11.10.2018 0.9.9
+# 11.10.2018 0.9.9.4
 #   change   : 'self-trigger-topic' wieder ausgebaut.
 #   feature  : 'mqttForward' Attribute fuer ueberwachte Geraete implmentiert.
 #              Moegliche Werte derzeit: 'all' und 'none'. 
@@ -97,14 +119,14 @@
 #              zurueckmelden koennen, jedoch Dummies beim Einsatz als 
 #              FHEM-UI-Schalter keine Endlosschleifen verursachen.
 #
-# 30.09.2018 0.9.9
+# 30.09.2018 0.9.9.3
 #   feature finished: globalTypeExclude und globalDeviceExclude incl. Commandref
 #   bugfix   : initialization
 #
-# 29.09.2018 0.9.9
+# 29.09.2018 0.9.9.2
 #   quick fix: received messages forward exclude for 'dummy'
 # 
-# 27.09.2018 0.9.9
+# 27.09.2018 0.9.9.1
 #   imroved  : auch bei stopic-Empfang wird nicht weiter gepublisht (s.u.)
 #              (kein self-trigger-stopic implementiert, ggf. bei Bedarf)
 #   bugfix   : beim Aendern von devspec (ueberwachte Geraete) werden die
@@ -123,11 +145,11 @@
 #              gepublisht wird. Achtung! Gefahr von Loops und wohl eher
 #              ein Sonderfall, wird daher wird nicht in Commandref aufgenommen.
 #  
-# 25.09.2018 0.9.8
+# 25.09.2018 0.9.8.2
 #   feature  : no-trigger-topic - wie readings-topic, es wird jedoch 
 #              beim Update kein Trigger gesendet.
 # 
-# 23.09.2018 0.9.8
+# 23.09.2018 0.9.8.1
 #   change   : Meldung (Reading: transmission-state) ueber inkompatibles IODev
 #   bugfix   : beim Aendern von mqttXXX und globalXXX mit Zeilenumbruechen 
 #              werden interne Tabellen nicht aktualisiert
@@ -159,11 +181,11 @@
 #              werden aelteste ueberzaelige Nachrichten verworfen.
 #              (Beispiel: *:resendOnConnect=last)
 #
-# 21.09.2019 0.9.7 
+# 21.09.2019 0.9.7.2
 #   fix      : Anlegen / Loeschen von userAttr
 #   change   : Vorbereitungen fuer resendOnConnect
 # 
-# 16.09.2018 0.9.7 
+# 16.09.2018 0.9.7.1
 #   fix      : defaults in globalPublish nicht verfuegbar
 #   fix      : atopic in devinfo korrekt anzeigen
 #   improved : Anzeige devinfo
@@ -251,8 +273,8 @@ use strict;
 use warnings;
 
 #my $DEBUG = 1;
-my $cvsid = '$Id: 10_MQTT_GENERIC_BRIDGE.pm 17841 2018-11-25 15:06:01Z hexenmeister $';
-my $VERSION = "version 1.0.3 by hexenmeister\n$cvsid";
+my $cvsid = '$Id: 10_MQTT_GENERIC_BRIDGE.pm 18077 2018-12-28 13:30:17Z hexenmeister $';
+my $VERSION = "version 1.0.8 by hexenmeister\n$cvsid";
 
 my %sets = (
 );
@@ -429,6 +451,7 @@ sub ioDevDisconnect($);
 sub updateDevCount($);
 sub retrieveIODev($);
 sub isIODevMQTT2($);
+sub isIODevMQTT2_CLIENT($);
 sub isIODevMQTT($);
 sub initUserAttr($);
 sub createRegexpForTopic($);
@@ -557,15 +580,25 @@ sub checkIODevMQTT2($) {
   return 0;
 }
 
+sub checkIODevMQTT2_CLIENT($) {
+  my ($iodt) = @_;
+  return 0 unless defined $iodt;
+  return 1 if $iodt eq 'MQTT2_CLIENT';
+  return 0;
+}
+
 # prueft, ob IODev MQTT2-Instanz ist
 sub isIODevMQTT2($) {
   my ($hash) = @_;
   my ($iodt, $iodn) = retrieveIODev($hash);
-  # return 0 unless defined $iodt;
-  # return 1 if $iodt eq 'MQTT2_SERVER';
-  # return 1 if $iodt eq 'MQTT2_CLIENT';
-  # return 0;
   return checkIODevMQTT2($iodt);
+}
+
+# prueft, ob IODev MQTT2_CLIENT-Instanz ist
+sub isIODevMQTT2_CLIENT($) {
+  my ($hash) = @_;
+  my ($iodt, $iodn) = retrieveIODev($hash);
+  return checkIODevMQTT2_CLIENT($iodt);
 }
 
 # Fuegt notwendige UserAttr hinzu
@@ -790,14 +823,18 @@ sub IsObservedAttribute($$) {
 #   $key:     Schluessel. Unter Inhalt aus dem Quellmap unter diesem Schluessel wird in Zielmap kopiert.
 sub _takeDefaults($$$$) {
   my ($map, $dev, $valMap, $key) = @_;
-  if (defined($valMap->{$key})) {
+  my $pr = '';
+  $pr = substr($key, 0, 4) if (length($key)>4);
+  if(($pr eq 'sub:') or ($pr eq 'pub:')) {
+  #if (defined($valMap->{$key})) {
     # ggf. nicht ueberschreiben (damit nicht undefiniertes VErhalten entsteht,
     # wenn mit und ohne Prefx gleichzeitig angegeben wird. So wird die Definition mit Prefix immer gewinnen)
-    $map->{$dev}->{':defaults'}->{'pub:'.$key}=$valMap->{$key} unless defined $map->{$dev}->{':defaults'}->{'pub:'.$key};
-    $map->{$dev}->{':defaults'}->{'sub:'.$key}=$valMap->{$key} unless defined $map->{$dev}->{':defaults'}->{'sub:'.$key};
+    $map->{$dev}->{':defaults'}->{$key}=$valMap->{$key} unless defined $map->{$dev}->{':defaults'}->{$key};
+    $map->{$dev}->{':defaults'}->{$key}=$valMap->{$key} unless defined $map->{$dev}->{':defaults'}->{$key};
+  } else {
+    $map->{$dev}->{':defaults'}->{'pub:'.$key}=$valMap->{$key};
+    $map->{$dev}->{':defaults'}->{'sub:'.$key}=$valMap->{$key};
   }
-  $map->{$dev}->{':defaults'}->{'pub:'.$key}=$valMap->{'pub:'.$key} if defined($valMap->{'pub:'.$key});
-  $map->{$dev}->{':defaults'}->{'sub:'.$key}=$valMap->{'sub:'.$key} if defined($valMap->{'sub:'.$key});
 }
 
 # Erstellt Strukturen fuer 'Defaults' fuer ein bestimmtes Geraet.
@@ -812,6 +849,10 @@ sub CreateSingleDeviceTableAttrDefaults($$$$) {
     # format: [pub:|sub:]base=ha/wz/ [pub:|sub:]qos=0 [pub:|sub:]retain=0
     my($unnamed, $named) = MQTT::parseParams($attrVal,'\s',' ','='); #main::parseParams($attrVal);
     foreach my $param (keys %{$named}) {
+      # my $pr = substr($param, 0, 4);
+      # if($pr eq 'sub:' or $pr eq 'pub:') {
+      #   $param = substr($param, 4);
+      # }
       _takeDefaults($map, $dev, $named, $param);
     }
     # _takeDefaults($map, $dev, $named, 'base');
@@ -1020,6 +1061,8 @@ sub getDevicePublishRecIntern($$$$$) {
   # compute defaults
   my $combined = computeDefaults($hash, 'pub:', $globalMap, $devMap, {'device'=>$dev,'reading'=>$reading,'name'=>$name,'mode'=>$mode});
   # $topic evaluieren (avialable vars: $device (device name), $reading (oringinal name), $name ($reading oder alias, if defined), defaults)
+  $combined->{'base'} = '' unless defined $combined->{'base'}; # base leer anlegen wenn nicht definiert
+
   if(defined($topic) and ($topic =~ m/^{.*}$/)) {
     $topic = _evalValue2($hash->{NAME},$topic,{'topic'=>$topic,'device'=>$dev,'reading'=>$reading,'name'=>$name,%$combined}) if defined $topic;
   }
@@ -1149,17 +1192,32 @@ sub _evalValue2($$;$$) {
   if($str =~ m/^{.*}$/) {
     no strict "refs";
     local $@;
+    my $base = '';
+    my $device = '';
+    my $reading = '';
+    my $name = '';
     if(defined($map)) {
       foreach my $param (keys %{$map}) {
         my $val = $map->{$param};
         my $pname = '$'.$param;
         $val=$pname unless defined $val;
-        #Log3('xxx',1,"MQTT_GENERIC_BRIDGE:DEBUG:> replace2: $ret : $pname => $val");
+        # Sonderlocken fuer $base, $name, $reading, $device, damit auch xxx:topic={$base} geht (sonst koente nur {"$base"} verwendet werden)
+        if($pname eq '$base') {
+          $base = $val;
+        } elsif ($pname eq '$reading') {
+          $reading = $val;
+        } elsif ($pname eq '$device') {
+          $device = $val;
+        } elsif ($pname eq '$name') {
+          $name = $val;
+        } else {
+          #Log3('xxx',1,"MQTT_GENERIC_BRIDGE:DEBUG:> replace2: $ret : $pname => $val");
         $ret =~ s/\Q$pname\E/$val/g;
-        #Log3('xxx',1,"MQTT_GENERIC_BRIDGE:DEBUG:> replace2 done: $ret");
+          #Log3('xxx',1,"MQTT_GENERIC_BRIDGE:DEBUG:> replace2 done: $ret");
       }
     }
-    #Log3('xxx',1,"MQTT_GENERIC_BRIDGE:DEBUG:> eval2 !!!");
+    }
+    #Log3('xxx',1,"MQTT_GENERIC_BRIDGE:DEBUG:> eval2 expr: $ret");
     $ret = eval($ret) unless $noEval;
     #Log3('xxx',1,"MQTT_GENERIC_BRIDGE:DEBUG:> eval2 done: $ret");
     if ($@) {
@@ -1197,19 +1255,32 @@ sub searchDeviceForTopic($$) {
   
   my $ret = {};
   my $map = $hash->{+HS_TAB_NAME_DEVICES};
+  my $globalMap = $map->{':global'};
   if(defined ($map)) {
     foreach my $dname (keys %{$map}) {
       my $dmap = $map->{$dname}->{':subscribe'};
       foreach my $rmap (@{$dmap}) {
         my $topicExp = $rmap->{'topicExp'};
-        #Log3($hash->{NAME},1,"MQTT_GENERIC_BRIDGE:DEBUG:> searchDeviceForTopic: expr: ".Dumper($topicExp));
+        #Log3($hash->{NAME},1,"MQTT_GENERIC_BRIDGE:DEBUG:> searchDeviceForTopic: $dname => expr: ".Dumper($topicExp));
         if (defined($topicExp) and $topic =~ $topicExp) {
           #Log3($hash->{NAME},1,"MQTT_GENERIC_BRIDGE:DEBUG:> searchDeviceForTopic: match topic: $topic, reading: ".$rmap->{'reading'});
           #Log3($hash->{NAME},1,"MQTT_GENERIC_BRIDGE:DEBUG:> searchDeviceForTopic: >>>: \$+{name}: ".$+{name}.", \$+{reading}: ".$+{reading});
           # Check named groups: $+{reading},..
           my $reading = undef;
           my $oReading = $rmap->{'reading'};
-          my $nReading = $+{name};
+          my $nReading = undef;
+          #my $nReading = $+{name}; # TODO ummappen ueber 'alias'
+          # map name
+          my $fname = $+{name};
+          if(defined($fname)) {
+            if (defined($map->{$dname}->{':alias'})) {
+              $nReading = $map->{$dname}->{':alias'}->{'sub:'.$fname};
+            }
+            if (!defined($nReading) and defined($globalMap) and defined($globalMap->{':alias'})) {
+              $nReading = $globalMap->{':alias'}->{'sub:'.$fname};
+            }
+            $nReading = $fname unless defined $nReading;
+          }
           $nReading = $+{reading} unless defined $nReading;
           if((!defined($nReading)) or ($oReading eq $nReading)) {
             $reading = $oReading;
@@ -1246,6 +1317,7 @@ sub createRegexpForTopic($) {
   $t =~ s|#$|.\*|;
   # Zugriff auf benannte captures: $+{reading}
   $t =~ s|(\$reading)|(\?\<reading\>+)|g;
+  $t =~ s|(\$name)|(\?\<name\>+)|g;
   $t =~ s|(\$device)|(\?\<device\>+)|g;
   $t =~ s|\$|\\\$|g;
   $t =~ s|\/\.\*$|.\*|;
@@ -1558,9 +1630,10 @@ sub UpdateSubscriptions($) {
     }
   }
 
-  if(isIODevMQTT2($hash)) {
+  #if(isIODevMQTT2($hash)) {
+  if(isIODevMQTT2_CLIENT($hash)) {
     # MQTT2 Subscriptions
-    IOWrite($hash, "subscribe", join(" ", @new));
+    IOWrite($hash, "subscriptions", join(" ", @new));
   }
 }
 
@@ -1568,9 +1641,10 @@ sub UpdateSubscriptions($) {
 sub RemoveAllSubscripton($) {
   my ($hash) = @_;
 
-  if(isIODevMQTT($hash)) {
+  #if(isIODevMQTT($hash)) {
+  if(isIODevMQTT2_CLIENT($hash)) {
     # MQTT2 Subscriptions => per default alles
-    IOWrite($hash, "subscribe", "#");
+    IOWrite($hash, "subscriptions", "#");
   }
 
   if(isIODevMQTT($hash)) {
@@ -2550,7 +2624,8 @@ sub onmessage($$$) {
         This module is a MQTT bridge, which simultaneously collects data from several FHEM devices
         and passes their readings via MQTT or set readings from the incoming MQTT messages or executes them
         as a 'set' command on the configured FHEM device.
-    <br/>An <a href="#MQTT">MQTT</a> device is needed as IODev.
+     <br/>One fo the device types could serve as IODev: <a href="#MQTT">MQTT</a>, 
+     <a href="#MQTT2_CLIENT">MQTT2_CLIENT</a> or <a href="#MQTT2_SERVER">MQTT2_SERVER</a>.
  </p>
  <p>The (minimal) configuration of the bridge itself is basically very simple.</p>
  <a name="MQTT_GENERIC_BRIDGEdefine"></a>
@@ -2706,7 +2781,10 @@ sub onmessage($$$) {
                 The following variables can be used in an expression:
                    $base = corresponding definition from the '<a href="#MQTT_GENERIC_BRIDGEglobalDefaults">globalDefaults</a>', 
                    $reading = Original reading name, $device = device name, and $name = reading alias (see <a href="#MQTT_GENERIC_BRIDGEmqttAlias">mqttAlias</a>. 
-                   If no alias is defined, than $name = $ reading).</li>
+                   If no alias is defined, than $name = $ reading).<br/>
+                   Furthermore, freely named variables can be defined. These can also be used in the public / subscribe definitions. 
+                   These variables are always to be used there with quotation marks.
+                   </li>
             </ul>
             <br/>
             All these values can be limited by prefixes ('pub:' or 'sub') in their validity 
@@ -2870,7 +2948,7 @@ sub onmessage($$$) {
         <p>Topic definition with shared part in 'base' variable:<br/>
             <code>defmod sensor XXX<br/>
                 attr sensor mqttDefaults base={"/$device/$reading"}<br/>
-                attr sensor mqttPublish *:topic={$base}</code></p>
+                attr sensor mqttPublish *:topic={"$base"}</code></p>
         </p>
     </li>
 
@@ -2879,7 +2957,7 @@ sub onmessage($$$) {
             <code>defmod sensor XXX<br/>
                 attr sensor mqttAlias temperature=temp humidity=hum<br/>
                 attr sensor mqttDefaults base={"/$device/$name"}<br/>
-                attr sensor mqttPublish temperature:topic={$base} humidity:topic={$base}<br/></code></p>
+                attr sensor mqttPublish temperature:topic={"$base"} humidity:topic={"$base"}<br/></code></p>
         </p>
     </li>
 
@@ -2938,7 +3016,8 @@ sub onmessage($$$) {
     Dieses Modul ist eine MQTT-Bridge, die gleichzeitig mehrere FHEM-Devices erfasst und deren Readings 
     per MQTT weiter gibt bzw. aus den eintreffenden MQTT-Nachrichten befuellt oder diese als 'set'-Befehl 
     an dem konfigurierten FHEM-Geraet ausfuert.
-    <br/>Es wird ein <a href="#MQTT">MQTT</a>-Geraet als IODev benoetigt.
+     <br/>Es wird eines der folgenden Geraete als IODev benoetigt: <a href="#MQTT">MQTT</a>, 
+     <a href="#MQTT2_CLIENT">MQTT2_CLIENT</a> oder <a href="#MQTT2_SERVER">MQTT2_SERVER</a>.
  </p>
  <p>Die (minimale) Konfiguration der Bridge selbst ist grundsaetzlich sehr einfach.</p>
  <a name="MQTT_GENERIC_BRIDGEdefine"></a>
@@ -3096,7 +3175,10 @@ sub onmessage($$$) {
                    $base = entsprechende Definition aus dem '<a href="#MQTT_GENERIC_BRIDGEglobalDefaults">globalDefaults</a>', 
                    $reading = Original-Readingname, 
                    $device = Devicename und $name = Readingalias (s. <a href="#MQTT_GENERIC_BRIDGEmqttAlias">mqttAlias</a>. 
-                   Ist kein Alias definiert, ist $name=$reading).</li>
+                   Ist kein Alias definiert, ist $name=$reading).<br/>
+                   Weiterhin koennen frei benannte Variablen definiert werden, die neben den oben genannten in den public/subscribe Definitionen 
+                   verwendet werden koennen. Allerdings ist zu beachten, dass diese Variablen dort immer mit Anfuehrungszeichen zu verwenden sind.
+                   </li>
             </ul>
             <br/>
             Alle diese Werte koennen durch vorangestelle Prefixe ('pub:' oder 'sub') in ihrer Gueltigkeit 
@@ -3264,7 +3346,7 @@ sub onmessage($$$) {
         <p>Topicsdefinition mit Auslagerung von dem gemeinsamen Teilnamen in 'base'-Variable:<br/>
             <code>defmod sensor XXX<br/>
                 attr sensor mqttDefaults base={"/$device/$reading"}<br/>
-                attr sensor mqttPublish *:topic={$base}</code></p>
+                attr sensor mqttPublish *:topic={"$base"}</code></p>
         </p>
     </li>
 
@@ -3273,7 +3355,7 @@ sub onmessage($$$) {
             <code>defmod sensor XXX<br/>
                 attr sensor mqttAlias temperature=temp humidity=hum<br/>
                 attr sensor mqttDefaults base={"/$device/$name"}<br/>
-                attr sensor mqttPublish temperature:topic={$base} humidity:topic={$base}<br/></code></p>
+                attr sensor mqttPublish temperature:topic={"$base"} humidity:topic={"$base"}<br/></code></p>
         </p>
     </li>
 

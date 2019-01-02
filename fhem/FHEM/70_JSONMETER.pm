@@ -208,7 +208,7 @@ JSONMETER_Define($$)
   #Reset temporary values
   $hash->{fhem}{jsonInterpreter} = "";
 
-  $hash->{fhem}{modulVersion} = '$Date: 2018-05-10 09:25:20 +0200 (Do, 10 Mai 2018) $';
+  $hash->{fhem}{modulVersion} = '$Date: 2018-05-10 09:25:20 +0200 (Thu, 10 May 2018) $';
  
  return undef;
 } #end JSONMETER_Define

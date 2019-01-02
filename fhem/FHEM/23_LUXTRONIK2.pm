@@ -144,7 +144,7 @@ LUXTRONIK2_Define($$)
   $hash->{fhem}{heatingPumpLastStop} = time();
   $hash->{fhem}{heatingPumpLastRun} = time();
  
-  $hash->{fhem}{modulVersion} = '$Date: 2018-04-12 18:58:59 +0200 (Do, 12 Apr 2018) $';
+  $hash->{fhem}{modulVersion} = '$Date: 2018-04-12 18:58:59 +0200 (Thu, 12 Apr 2018) $';
        
   return undef;
 }

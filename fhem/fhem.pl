@@ -4,7 +4,7 @@
 #
 #  Copyright notice
 #
-#  (c) 2005-2018
+#  (c) 2005-2019
 #  Copyright: Rudolf Koenig (r dot koenig at koeniglich dot de)
 #  All rights reserved
 #
@@ -27,7 +27,7 @@
 #
 #  Homepage:  http://fhem.de
 #
-# $Id: fhem.pl 17779 2018-11-18 17:49:14Z rudolfkoenig $
+# $Id: fhem.pl 18111 2019-01-01 14:41:21Z rudolfkoenig $
 
 
 use strict;
@@ -132,7 +132,8 @@ sub getAllGets($;$);
 sub getAllSets($;$);
 sub getPawList($);
 sub getUniqueId();
-sub json2nameValue($;$);
+sub json2nameValue($;$$);
+sub json2reading($$;$$);
 sub latin1ToUtf8($);
 sub myrename($$$);
 sub notifyRegexpChanged($$);
@@ -265,7 +266,7 @@ use vars qw($fhemForked);       # 1 in a fhemFork()'ed process, else undef
 use vars qw($addTimerStacktrace);# set to 1 by fhemdebug
 
 $selectTimestamp = gettimeofday();
-$cvsid = '$Id: fhem.pl 17779 2018-11-18 17:49:14Z rudolfkoenig $';
+$cvsid = '$Id: fhem.pl 18111 2019-01-01 14:41:21Z rudolfkoenig $';
 
 my $AttrList = "alias comment:textField-long eventMap:textField-long ".
                "group room suppressReading userReadings:textField-long ".
@@ -2572,6 +2573,12 @@ CommandRename($$)
   delete($oldvalue{$old});
 
   CallFn($new, "RenameFn", $new,$old);# ignore replies
+  for my $d (keys %defs) {
+    my $aw = ReadingsVal($d, "associatedWith", "");
+    next if($aw !~ m/\b$old\b/);
+    $aw =~ s/\b$old\b/$new/;
+    setReadingsVal($defs{$d}, "associatedWith", $aw, TimeNow());
+  }
 
   addStructChange("rename", $new, $param);
   DoTrigger("global", "RENAMED $old $new", 1);
@@ -2636,7 +2643,7 @@ GlobalAttr($$$$)
   my ($type, $me, $name, $val) = @_;
 
   if($type eq "del") {
-    my %noDel = ( modpath=>1, verbose=>1, logfile=>1 );
+    my %noDel = ( modpath=>1, verbose=>1, logfile=>1, configfile=>1 );
     return "The global attribute $name cannot be deleted" if($noDel{$name});
     $featurelevel = 5.9 if($name eq "featurelevel");
     $haveInet6    = 0   if($name eq "useInet6"); # IPv6
@@ -2846,7 +2853,7 @@ CommandAttr($$)
     if($ra{$attrName}) {
       my ($lval,$rp,$cache) = ($attrVal, $ra{$attrName}{p}, $ra{$attrName}{c});
 
-      if($rp && $lval =~ m/$rp/) {
+      if($rp && $lval =~ m/$rp/s) {
         my $err = perlSyntaxCheck($attrVal, %{$ra{$attrName}{pv}});
         return "attr $sdev $attrName: $err" if($err);
 
@@ -4456,8 +4463,13 @@ evalStateFormat($)
 
   ###########################
   # Set STATE
-  my $sr = AttrVal($name, "stateFormat", undef);
   my $st = $hash->{READINGS}{state};
+  if($hash->{skipStateFormat} && defined($st)) {
+    $hash->{STATE} = ReplaceEventMap($name, $st->{VAL}, 1);
+    return;
+  }
+
+  my $sr = AttrVal($name, "stateFormat", undef);
   if(!$sr) {
     $st = $st->{VAL} if(defined($st));
 
@@ -4913,13 +4925,15 @@ toJSON($)
 }
 
 #############################
-# will return a hash of name:value pairs.
-# Note: doesnt know arrays, just objects and simple types
+# will return a hash of name:value pairs.  in is a json_string, prefix will be
+# prepended to each name, map is a hash for mapping the names
 sub
-json2nameValue($;$)
+json2nameValue($;$$)
 {
-  my ($in,$prefix) = @_;
+  my ($in, $prefix, $map) = @_;
   $prefix = "" if(!defined($prefix));
+  $map = eval $map if($map && !ref($map)); # passing hash through AnalyzeCommand
+  $map = {} if(!$map);
   my %ret;
 
   sub
@@ -4932,12 +4946,12 @@ json2nameValue($;$)
       if($s eq '\\') { 
         $esc = !$esc;
       } elsif($s eq '"' && !$esc) {
-        return (substr($t,1,$off-1), substr($t,$off+1));
+        return (undef,substr($t,1,$off-1), substr($t,$off+1));
       } else {
         $esc = 0;
       }
     }
-    return ($t, "");
+    return ('json2nameValue: no closing " found', "","");
   }
 
   sub
@@ -4947,11 +4961,12 @@ json2nameValue($;$)
     my $depth=1;
     my ($esc, $inquote);
 
+    $inquote = 0;
     for(my $off = 1; $off < length($t); $off++){
       my $s = substr($t,$off,1);
       if($s eq $cc && !$inquote) { # close character
         $depth--;
-        return (substr($t,1,$off-1), substr($t,$off+1)) if(!$depth);
+        return ("", substr($t,1,$off-1), substr($t,$off+1)) if(!$depth);
 
       } elsif($s eq $oc && !$inquote) { # open character
         $depth++;
@@ -4966,62 +4981,86 @@ json2nameValue($;$)
         $esc = 0;
       }
     }
-    return ($t, "");    # error
+    return ("json2nameValue: no closing $cc found", "", "");
   }
 
-  sub eObj($$$$$);
   sub
-  eObj($$$$$)
+  setVal($$$$$)
   {
-    my ($ret,$name,$val,$in,$prefix) = @_;
+    my ($ret,$map,$prefix,$name,$val) = @_;
+    $name = "$prefix$name";
+    if(defined($map->{$name})) {
+      return if(!$map->{$name});
+      $name = $map->{$name};
+    }
+    $ret->{$name} = $val;
+  };
+
+  sub eObj($$$$$$);
+  sub
+  eObj($$$$$$)
+  {
+    my ($ret,$map,$name,$val,$in,$prefix) = @_;
+    my $err; 
 
     if($val =~ m/^"/) {
-      ($val, $in) = lStr($val);
+      ($err, $val, $in) = lStr($val);
+      return ($err,undef) if($err);
       $val =~ s/\\u([0-9A-F]{4})/chr(hex($1))/gsie; # toJSON reverse
-      $ret->{"$prefix$name"} = $val;
+      setVal($ret, $map, $prefix, $name, $val);
 
     } elsif($val =~ m/^{/) { # }
-      ($val, $in) = lObj($val, '{', '}');
+      ($err, $val, $in) = lObj($val, '{', '}');
+      return ($err,undef) if($err);
       my $r2 = json2nameValue($val);
       foreach my $k (keys %{$r2}) {
-        $ret->{"$prefix${name}_$k"} = $r2->{$k};
+        setVal($ret, $map, $prefix, "${name}_$k", $r2->{$k});
       }
 
     } elsif($val =~ m/^\[/) { 
-      ($val, $in) = lObj($val, '[', ']');
+      ($err, $val, $in) = lObj($val, '[', ']');
+      return ($err,undef) if($err);
       my $idx = 1;
       $val =~ s/^\s*//;
       while($val) {
-        $val = eObj($ret, $name."_$idx", $val, $val, $prefix);
+        ($err,$val) = eObj($ret, $map, $name."_$idx", $val, $val, $prefix);
+        return ($err,undef) if($err);
         $val =~ s/^\s*,\s*//;
         $val =~ s/\s*$//;
         $idx++;
       }
+
     } elsif($val =~ m/^([0-9.-]+)(.*)$/s) {
-      $ret->{"$prefix$name"} = $1;
+      setVal($ret, $map, $prefix, $name, $1);
       $in = $2;
 
     } elsif($val =~ m/^(true|false)(.*)$/s) {
-      $ret->{"$prefix$name"} = $1;
+      setVal($ret, $map, $prefix, $name, $1);
       $in = $2;
 
     } elsif($val =~ m/^(null)(.*)$/s) {
-      $ret->{"$prefix$name"} = undef;
+      setVal($ret, $map, $prefix, $name, undef);
       $in = $2;
 
     } else {
       Log 1, "Error parsing >$val< for $prefix$name";
       $in = "";
     }
-    return $in;
+    return (undef, $in);
   }
 
   $in = $1 if($in =~ m/^{(.*)}$/s);
 
+  my $err;
   while($in =~ m/^\s*"([^"]+)"\s*:\s*(.*)$/s) {
     my ($name,$val) = ($1,$2);
     $name =~ s/[^a-z0-9._\-\/]/_/gsi;
-    $in = eObj(\%ret, $name, $val, $in, $prefix);
+    ($err,$in) = eObj(\%ret, $map, $name, $val, $in, $prefix);
+    if($err) {
+      Log 4, $err;
+      %ret = ();
+      return \%ret;
+    }
     $in =~ s/^\s*,\s*//;
   }
   return \%ret;
@@ -5029,15 +5068,15 @@ json2nameValue($;$)
 
 # generate readings from the json string (parsed by json2reading) for $hash
 sub
-json2reading($$)
+json2reading($$;$$)
 {
-  my ($hash, $json) = @_;
+  my ($hash, $json, $prefix, $map) = @_;
 
   $hash = $defs{$hash} if(ref($hash) ne "HASH");
   return "json2reading: first arg is not a FHEM device"
         if(!$hash || ref $hash ne "HASH" || !$hash->{TYPE});
 
-  my $ret = json2nameValue($json);
+  my $ret = json2nameValue($json, $prefix, $map);
   if($ret && ref $ret eq "HASH") {
     readingsBeginUpdate($hash);
     foreach my $k (keys %{$ret}) {
@@ -5542,6 +5581,8 @@ getPawList($)
       push(@dob, $dn);
     }
   }
+  my $aw = ReadingsVal($d, "associatedWith", ""); # Explicit link
+  push(@dob, split("[ ,]",$aw)) if($aw);
   return @dob;
 }
 

@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 51_MOBILEALERTS.pm 17494 2018-10-08 18:07:46Z MarkusF $
+# $Id: 51_MOBILEALERTS.pm 17948 2018-12-10 17:44:26Z MarkusF $
 # Written by Markus Feist, 2017
 package main;
 
@@ -1041,7 +1041,9 @@ sub MOBILEALERTS_decodeHumidity($) {
 
 sub MOBILEALERTS_decodeHumidityDecimal($) {
     my ($humidity) = @_;
-    return ( $humidity & 0x3FF ) * 0.1;
+    $humidity = $humidity & 0x3FF;
+    return 9999 if ( $humidity == 1023 );
+    return $humidity * 0.1;
 }
 
 sub MOBILEALERTS_humidityToString($) {

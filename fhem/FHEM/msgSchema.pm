@@ -1,5 +1,5 @@
 ###############################################################################
-# $Id: msgSchema.pm 17853 2018-11-27 12:49:07Z loredo $
+# $Id: msgSchema.pm 17916 2018-12-07 18:46:40Z loredo $
 package main;
 sub msgSchema_Initialize() { }
 
@@ -377,25 +377,34 @@ my $db = {
             },
         },
 
-        'LaMetric' => {
+        'LaMetric2' => {
             'Normal' =>
-'set %DEVICE% msg \'%LaMatric_ICON%\' \'%MSG%\' \'%LaMetric_SOUND%\'',
+'set %DEVICE% msg title=\'%TITLE%\' lifetime=%EXPIRE% priority=%LaMetric2_PRIORITY% sound=%LaMetric2_SOUND% repeat=%LaMetric2_REPEAT% cycles=%LaMetric2_CYCLES% message=\'%MSG%\'',
             'High' =>
-'set %DEVICE% msg \'%LaMatric_ICON%\' \'%MSG%\' \'%LaMetric_SOUND%\'',
+'set %DEVICE% msg title=\'%TITLE%\' lifetime=%EXPIRE% priority=%LaMetric2_PRIORITY% sound=%LaMetric2_SOUND% repeat=%LaMetric2_REPEAT% cycles=%LaMetric2_CYCLES% message=\'%MSG%\'',
             'Low' =>
-'set %DEVICE% msg \'%LaMatric_ICON%\' \'%MSG%\' \'%LaMetric_SOUND%\'',
+'set %DEVICE% msg title=\'%TITLE%\' lifetime=%EXPIRE% priority=%LaMetric2_PRIORITY% sound=%LaMetric2_SOUND% repeat=%LaMetric2_REPEAT% cycles=%LaMetric2_CYCLES% message=\'%MSG%\'',
             'defaultValues' => {
                 'Normal' => {
-                    'LaMatric_ICON'  => 'a21844',
-                    'LaMetric_SOUND' => 'notifications:notification',
+                    'EXPIRE'            => '120',
+                    'LaMetric2_PRIORITY' => 'warning',
+                    'LaMetric2_SOUND'    => 'notification',
+                    'LaMetric2_REPEAT'   => '1',
+                    'LaMetric2_CYCLES'   => '1',
                 },
                 'High' => {
-                    'LaMatric_ICON'  => 'a4787',
-                    'LaMetric_SOUND' => 'alarms:alarm13',
+                    'EXPIRE'            => '120',
+                    'LaMetric2_PRIORITY' => 'critical',
+                    'LaMetric2_SOUND'    => 'alarm13',
+                    'LaMetric2_REPEAT'   => '3',
+                    'LaMetric2_CYCLES'   => '2',
                 },
                 'Low' => {
-                    'LaMatric_ICON'  => 'a22098',
-                    'LaMetric_SOUND' => 'notifications:positive5',
+                    'EXPIRE'            => '120',
+                    'LaMetric2_PRIORITY' => 'info',
+                    'LaMetric2_SOUND'    => 'positive5',
+                    'LaMetric2_REPEAT'   => '1',
+                    'LaMetric2_CYCLES'   => '1',
                 },
             },
         },

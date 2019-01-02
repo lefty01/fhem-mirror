@@ -6,7 +6,7 @@
 # 
 # Published under GNU GPL License
 #
-# $Id: 10_IT.pm 17540 2018-10-15 19:00:42Z bjoernh $
+# $Id: 10_IT.pm 18090 2018-12-30 07:24:59Z bjoernh $
 #
 ######################################################
 package main;
@@ -82,7 +82,8 @@ my %bintotristate=(
 my %bintotristateV3=(
   "10" => "1",
   "01" => "0",
-  "00" => "D"
+  "00" => "D",
+  "11" => "2"
 );
 my %bintotristateHE=(
   "10" => "1",
@@ -952,7 +953,12 @@ IT_Parse($$)
         }
         $bin = $bin1;# . $bin3;
   } else { # IT
-        $bin=sprintf("%024b",hex(substr($msg,1,length($msg)-1)));
+	    if (length($msg) > 10) {
+			Log3 $hash,4,"$ioname IT: Wrong IT message received: $msg";
+			return undef;
+		} else {
+			$bin=sprintf("%024b",hex(substr($msg,1,length($msg)-1)));
+		}
   }
 
   if ((length($bin) % 2) != 0) {

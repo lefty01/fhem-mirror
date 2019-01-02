@@ -1,5 +1,5 @@
 ################################################################
-# $Id: 59_HCS.pm 17793 2018-11-19 22:57:32Z bernd_zwo $
+# $Id: 59_HCS.pm 17894 2018-12-04 20:18:34Z bernd_zwo $
 # vim: ts=2:et
 #
 #  (c) 2012 Copyright: Martin Fischer (m_fischer at gmx dot de)
@@ -722,7 +722,7 @@ HCS_getValues($$) {
     }
 
   }
-  my $str = sprintf("Found %d Device(s): %d FHT, %d HM-CC-TC, %d MAX, %d ZWave, demand: %d, idle: %d, ignored: %d, excluded: %d, unknown: %d",
+  my $str = sprintf("Found %d Device(s): %d FHT, %d HM-CC-TC, %d PID20, %d MAX, %d ZWave, demand: %d, idle: %d, ignored: %d, excluded: %d, unknown: %d",
                     $sumTotal,$sumFHT,$sumHMCCTC, $sumPID20, $sumMAX, $sumZWave, $sumDemand,$sumIdle,$sumIgnored,$sumExcluded,$sumUnknown);
   Log3 $name, 3, "$type $name $str, eco: $eco overdrive: $overdrive";
 

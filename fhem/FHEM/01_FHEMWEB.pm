@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 01_FHEMWEB.pm 17882 2018-12-02 18:30:04Z rudolfkoenig $
+# $Id: 01_FHEMWEB.pm 18111 2019-01-01 14:41:21Z rudolfkoenig $
 package main;
 
 use strict;
@@ -171,6 +171,7 @@ FHEMWEB_Initialize($)
     hiddengroupRegexp
     hiddenroom
     hiddenroomRegexp
+    httpHeader
     iconPath
     longpoll:0,1,websocket
     longpollSVG:1,0
@@ -207,8 +208,17 @@ FHEMWEB_Initialize($)
 
   ###############
   # Initialize internal structures
-  map { addToAttrList($_) } ( "webCmd", "webCmdLabel:textField-long", "icon",
-      "cmdIcon", "devStateIcon", "widgetOverride",  "sortby", "devStateStyle");
+  map { addToAttrList($_) } (
+    "cmdIcon",
+    "devStateIcon:textField-long",
+    "devStateStyle",
+    "icon",
+    "sortby",
+    "webCmd",
+    "webCmdLabel:textField-long",
+    "widgetOverride"
+  );
+
   InternalTimer(time()+60, "FW_closeInactiveClients", 0, 0);
 
   $FW_dir      = "$attr{global}{modpath}/www";
@@ -413,6 +423,9 @@ FW_Read($$)
         if(defined($defs{$FW_wname}{CSRFTOKEN}) &&
            AttrVal($FW_wname, "csrfTokenHTTPHeader", 1));
 
+   my $hh = AttrVal($FW_wname, "httpHeader", undef);
+   $FW_headerlines .= "$hh\r\n" if($hh);
+
   #########################
   # Return 200 for OPTIONS or 405 for unsupported method
   my ($method, $arg, $httpvers) = split(" ", $FW_httpheader[0], 3)
@@ -564,8 +577,9 @@ FW_finishRead($$$)
   }
 
   my $length = length($FW_RET);
-  my $expires = ($cacheable?
-        ("Expires: ".FmtDateTimeRFC1123($hash->{LASTACCESS}+900)."\r\n") : "");
+  my $expires = ($cacheable ?
+         "Expires: ".FmtDateTimeRFC1123($hash->{LASTACCESS}+900)."\r\n" : 
+         "Cache-Control: no-cache, no-store, must-revalidate\r\n");
   Log3 $FW_wname, 4,
         "$FW_wname: $arg / RL:$length / $FW_RETTYPE / $compressed / $expires";
   if( ! FW_addToWritebuffer($hash,
@@ -2421,7 +2435,7 @@ FW_iconTable($$$$)
   my %icoList = ();
   foreach my $style (@FW_iconDirs) {
     foreach my $imgName (sort keys %{$FW_icons{$style}}) {
-      next if($imgName=~m+^\.+); # Skip dot files
+      next if($imgName =~ m+^\.+ || $imgName =~ m+/\.+); # Skip dot files
       $imgName =~ s/\.[^.]*$//; # Cut extension
       next if(!$FW_icons{$style}{$imgName}); # Dont cut it twice: FS20.on.png
       next if($FW_icons{$style}{$imgName} !~ m/$imgName/); # Skip alias
@@ -2773,7 +2787,7 @@ FW_dev2image($;$)
   my (undef, $rstate) = ReplaceEventMap($name, [undef, $state], 0);
 
   my ($icon, $rlink);
-  if(defined($devStateIcon) && $devStateIcon =~ m/^{.*}$/) {
+  if(defined($devStateIcon) && $devStateIcon =~ m/^{.*}$/s) {
     my ($html, $link) = eval $devStateIcon;
     Log3 $FW_wname, 1, "devStateIcon $name: $@" if($@);
     return ($html, $link, 1) if(defined($html) && $html =~ m/^<.*>$/s);
@@ -3071,11 +3085,11 @@ FW_devState($$@)
   my $state = $defs{$d}{STATE};
   $state = "" if(!defined($state));
 
-  $hasOnOff = ($allSets =~ m/(^| )on(:[^ ]*)?( |$)/ &&
-               $allSets =~ m/(^| )off(:[^ ]*)?( |$)/);
   my $txt = $state;
   my $dsi = ($attr{$d} && ($attr{$d}{stateFormat} || $attr{$d}{devStateIcon}));
 
+  $hasOnOff = ($allSets =~ m/(^| )on(:[^ ]*)?( |$)/i &&
+               $allSets =~ m/(^| )off(:[^ ]*)?( |$)/i);
   if(AttrVal($d, "showtime", undef)) {
     my $v = $defs{$d}{READINGS}{state}{TIME};
     $txt = $v if(defined($v));
@@ -3128,9 +3142,11 @@ FW_devState($$@)
 
 
   if($hasOnOff) {
+    my $isUpperCase = ($allSets =~ m/(^| )ON(:[^ ]*)?( |$)/ &&
+                       $allSets =~ m/(^| )OFF(:[^ ]*)?( |$)/);
     # Have to cover: "on:An off:Aus", "A0:Aus AI:An Aus:off An:on"
-    my $on  = ReplaceEventMap($d, "on", 1);
-    my $off = ReplaceEventMap($d, "off", 1);
+    my $on  = ReplaceEventMap($d, $isUpperCase ? "ON" :"on" , 1);
+    my $off = ReplaceEventMap($d, $isUpperCase ? "OFF":"off", 1);
     $link = "cmd.$d=set $d " . ($state eq $on ? $off : $on) if(!defined($link));
     $cmdList = "$on:$off" if(!$cmdList);
 
@@ -3679,6 +3695,15 @@ FW_widgetOverride($$)
         </ul>
         Note: the special values input, detail and save cannot be specified
         with hiddenroomRegexp.
+        </li>
+        <br>
+
+    <a name="httpHeader"></a>
+    <li>httpHeader<br>
+        One or more HTTP header lines to be sent out with each answer. Example:
+        <ul><code>
+          attr WEB httpHeader X-Clacks-Overhead: GNU Terry Pratchett
+        </code></ul>
         </li>
         <br>
 
@@ -4391,6 +4416,16 @@ FW_widgetOverride($$)
         </ul>
         Achtung: die besonderen Werte input, detail und save m&uuml;ssen mit
         hiddenroom spezifiziert werden.
+        </li>
+        <br>
+
+    <a name="httpHeader"></a>
+    <li>httpHeader<br>
+        Eine oder mehrere HTTP-Header Zeile, die in jede Antwort eingebettet
+        wird. Beispiel:
+        <ul><code>
+          attr WEB httpHeader X-Clacks-Overhead: GNU Terry Pratchett
+        </code></ul>
         </li>
         <br>
 

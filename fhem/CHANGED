@@ -1,5 +1,46 @@
 # Add changes at the top of the list. Keep it in ASCII, and 80-char wide.
 # Do not insert empty lines here, update check depends on it.
+  - feature: 73_AutoShuttersControl: add support blockingAfterManual at
+             Brightness, Bugfixes
+  - feature: 49_SSCam: integrated Email shipping of snapshots, save recordings
+                       locally with get saveRecoring command
+  - new:     98_vitoconnect: initial release
+  - feature: 14_CUL_TCM97001: Add Ventus W155, bugfixing
+  - feature: 89_FULLY: Support for HTTPS added
+  - change:  DOIFtools: add DOIF's weekday 9 to next timer
+  - feature: 34_ESPEasy: improved deepsleep support
+  - feature: 73_AutoShuttersControl: add maxBrightness for morning open
+  - feature: 73_AutoShuttersControl: support for shading, fix bugs
+  - feature: 37_harmony: use websockets if xmpp is not available
+                         fixes issues with firmware 4.15.206
+  - bugfix:  97_TrashCal: changed to new format 
+  - bugfix:  42_AptToDate: fix state reading after getDistribution
+  - feature: 49_SSCam: tooltip hints in camera devices, commandref revised
+  - feature: 36_WMBUS: new attribute ignoreUnknownDataBlocks
+  - feature: 49_SSCam: V8.0.0, new type "hls" of streaming devices, hls 
+                       playback now available for all common browsers, 
+                       tooltip hints in streaming devices, minor fixes
+  - feature: 30_HUEBridge, 31_HUEDevice: added get startup command
+  - change:  55_DWD_OpenData: maintenance release (forum #83097 msg #869647)
+  - change:  mqtt2.template: change name convention + cleanup
+  - feature: 72_FB_CALLLIST: new readings/events "count-..." implemented to
+                             count different call types 
+  - change:  72_FB_CALLMONITOR: removed klicktel.de for reverse search, as 
+                                the service is not available anymore
+  - bugfix:  49_SSCam: fix in autocreateCams and take snapshot
+  - feature: 98_MediaList.pm: new readings: sortby and status for better 
+                integration in FTUI
+  - change:  49_SSCamSTRM: V2.1.0, change get popupStream to set popupStream
+  - feature: 49_SSCam: V7.7.0, autocreateCams command added to SVS device,
+                       SSCamSTRM devices have get popupStream command, pls.
+                       execute "get <SSCam> versionNotes" for further info
+  - bugfix:  51_MOBILEALERTS.pm: Offlimit for decodeHumidityDecimal added
+  - change:  98_MSwitch.pm, update V2.07
+  - change:  20_FRM_IN: only update on change (Forum #81815)
+  - bugfix: 73_AutoShuttersControl: fix absent Event and ModeDown absent bug
+  - bugfix:  73_AutoShuttersControl: fix gone then absent bug
+  - feature: 49_SSCam: V7.6.0, The PTZ panel is completed by "Preset" and 
+                       "Patrol" dropdown lists (for PTZ cams only)
   - feature: 49_SSCamSTRM: click on content in stream device or snap gallery
                            opens a popup window
   - new:     70_LaMetric2: add official module for LaMetric Smart Clock

@@ -1,5 +1,5 @@
 ##############################################
-# $Id: DevIo.pm 17702 2018-11-07 19:02:28Z rudolfkoenig $
+# $Id: DevIo.pm 17994 2018-12-17 14:32:10Z rudolfkoenig $
 package main;
 
 sub DevIo_CloseDev($@);
@@ -498,7 +498,11 @@ DevIo_CloseDev($@)
   return if(!$dev);
   
   if($hash->{TCPDev}) {
-    $hash->{TCPDev}->close();
+    if($isFork && $hash->{SSL}) { # Forum #94219
+      $hash->{TCPDev}->close(SSL_no_shutdown => 1);
+    } else {
+      $hash->{TCPDev}->close();
+    }
     delete($hash->{TCPDev});
 
   } elsif($hash->{USBDev}) {

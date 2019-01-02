@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 98_autocreate.pm 17684 2018-11-05 15:52:53Z rudolfkoenig $
+# $Id: 98_autocreate.pm 18091 2018-12-30 09:57:04Z rudolfkoenig $
 package main;
 
 use strict;
@@ -494,7 +494,7 @@ my @usbtable = (
 
     { NAME      => "ZWDongle",
       matchList => ["cu.PL2303-0000(.*)", "cu.usbmodem(.*)",
-                    "ttyUSB(.*)", "ttyACM(.*)", "ttyAMA(.*)" ],
+                    "ttyUSB(.+)", "ttyACM(.+)", "serial(.+)", "ttyAMA(.+)" ],
       DeviceName=> "DEVICE\@115200",
       request   => pack("H*", "01030020dc06"),   # GetStatus +ACK
       response  => "^\x06.*",

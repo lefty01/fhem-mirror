@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 53_GHoma.pm 17726 2018-11-10 23:11:47Z klausw $
+# $Id: 53_GHoma.pm 17961 2018-12-12 20:05:22Z klausw $
 #
 # 
 # modifikation fuer Energiemessung von martin-s
@@ -493,13 +493,6 @@ sub GHoma_udpsend{
     return "$ownIP ist not an correct IP or hostname" unless $ownIP =~ /^((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))|(([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*)+(\.([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*))*$)$/
   }
   Log3 $hash, 1, "$hash->{NAME}: setting server address for GHoma plugs to $ownIP:$hash->{PORT}";
-
-  my @sdata = (
-    "HF-A11ASSISTHREAD",
-	"+ok",
-	"AT+VER\r",
-	"AT+TCPTO\r"
-	);
 
 my @sdata = (
     "HF-A11ASSISTHREAD",

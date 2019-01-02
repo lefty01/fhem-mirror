@@ -225,7 +225,7 @@ OPENWEATHER_Define($$)
    $hash->{URL}   = $URL;
 
    $hash->{fhem}{LOCAL} = 0;
-   $hash->{fhem}{modulVersion} = '$Date: 2018-03-18 19:51:57 +0100 (So, 18 Mär 2018) $';
+   $hash->{fhem}{modulVersion} = '$Date: 2018-03-18 19:51:57 +0100 (Sun, 18 Mar 2018) $';
 
    RemoveInternalTimer($hash);
  # Get first data after 7 seconds

@@ -520,7 +520,7 @@ sub PROPLANTA_Define($$)
    $hash->{STATE}          = "Initializing";
    $hash->{fhem}{LOCAL}    = 0;
    $hash->{INTERVAL}       = 3600;
-   $hash->{fhem}{modulVersion} = '$Date: 2018-08-02 19:47:03 +0200 (Do, 02 Aug 2018) $';
+   $hash->{fhem}{modulVersion} = '$Date: 2018-08-02 19:47:03 +0200 (Thu, 02 Aug 2018) $';
    
    RemoveInternalTimer($hash);
    

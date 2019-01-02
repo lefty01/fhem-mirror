@@ -1,4 +1,4 @@
-# $Id: 11_FHT.pm 16293 2018-02-28 21:33:57Z rudolfkoenig $
+# $Id: 11_FHT.pm 18068 2018-12-27 17:08:46Z rudolfkoenig $
 ##############################################################################
 #
 #     11_FHT.pm
@@ -555,6 +555,7 @@ FHT_Parse($$)
 
     # set additional warnings and trigger notify
     readingsBulkUpdate($def, "battery", $valBattery);
+    readingsBulkUpdate($def, "batteryState", $valBattery);
     Log3 $name, 4, "FHT $name battery: $valBattery";
 
     readingsBulkUpdate($def, "lowtemp", $valLowTemp);

@@ -1,4 +1,4 @@
-# $Id: WMBus.pm 17777 2018-11-18 15:44:03Z kaihs $
+# $Id: WMBus.pm 18058 2018-12-26 11:45:15Z kaihs $
 
 package WMBus;
 
@@ -13,7 +13,7 @@ my $hasCTR = ($@)?0:1;
 
 require Exporter;
 my @ISA = qw(Exporter);
-my @EXPORT = qw(new parse parseLinkLayer parseApplicationLayer manId2ascii type2string);
+my @EXPORT = qw(new parse parseLinkLayer parseApplicationLayer manId2ascii type2string setFrameType getFrameType VIF_TYPE_MANUFACTURER_SPECIFIC);
 
 sub manId2ascii($$);
 
@@ -97,10 +97,13 @@ use constant {
   ERR_CIPHER_NOT_INSTALLED => 16,
   ERR_LINK_LAYER_INVALID => 17,
   
+  VIF_TYPE_MANUFACTURER_SPECIFIC => 'MANUFACTURER SPECIFIC',
+ 
   # TYPE C transmission uses two different frame types
   # see http://www.st.com/content/ccc/resource/technical/document/application_note/3f/fb/35/5a/25/4e/41/ba/DM00233038.pdf/files/DM00233038.pdf/jcr:content/translations/en.DM00233038.pdf
   FRAME_TYPE_A => 'A',
   FRAME_TYPE_B => 'B',
+  
 };
 
 sub valueCalcNumeric($$) {
@@ -1175,7 +1178,7 @@ sub decodeValueInformationBlock($$$) {
       } else {
         # manufacturer specific data, can't be interpreted
         
-        $dataBlockRef->{type} = "MANUFACTURER SPECIFIC";
+        $dataBlockRef->{type} = VIF_TYPE_MANUFACTURER_SPECIFIC;
         $dataBlockRef->{unit} = "";
         $analyzeVIF = 0;
       }
@@ -1450,12 +1453,14 @@ sub decrypt($) {
   for (1..8) {
     $initVector .= pack('C',$self->{access_no});
   }
+  
   if (length($encrypted)%16 == 0) {
     # no padding if data length is multiple of blocksize
     $padding = 0;
   } else {
     $padding = 2;
   }
+  #printf("length encrypted %d padding %d\n", length($encrypted), $padding);
   my $cipher = Crypt::Mode::CBC->new('AES', $padding);
   return $cipher->decrypt($encrypted, $self->{aeskey}, $initVector);
 }
@@ -1824,8 +1829,18 @@ sub decodeApplicationLayer($) {
 
     if ($self->{aeskey}) { 
       if ($hasCBC) {
-        #printf("encrypted payload %s\n", unpack("H*", substr($applicationlayer,$offset)));
-        $payload = $self->decrypt(substr($applicationlayer,$offset));
+        my $encrypted_length = $self->{cw_parts}{encrypted_blocks} * 16;
+        #printf("encrypted payload %s\n", unpack("H*", substr($applicationlayer,$offset, $encrypted_length)));
+        eval {
+          $payload = $self->decrypt(substr($applicationlayer, $offset, $encrypted_length)) 
+            . substr($applicationlayer, $offset+$encrypted_length);
+        };
+        if ($@) {
+          #fatal decryption error occurred
+          $self->{errormsg} = "fatal decryption error: $@";
+          $self->{errorcode} = ERR_DECRYPTION_FAILED;
+          return 0;
+        }
         #printf("decrypted payload %s\n", unpack("H*", $payload));
         if (unpack('n', $payload) == 0x2f2f) {
           $self->{decrypted} = 1;
@@ -1913,6 +1928,13 @@ sub decodeLinkLayer($$)
     # first contains the header (TL_BLOCK), L field and trailing crc
     # L field is included in crc calculation
     # each following block contains only data and trailing crc
+    if (length($self->{msg}) < $self->{lfield}) {
+      $self->{errormsg} = "message too short, expected " . $self->{lfield} . ", got " . length($self->{msg}) . " bytes";
+      $self->{errorcode} = ERR_MSG_TOO_SHORT;
+      return 0;
+    }    
+    
+    
     my $length = 129;
     if ($self->{lfield} < $length) {
       $length = $self->{lfield};
@@ -1961,10 +1983,16 @@ sub decodeLinkLayer($$)
   return 1;
 }
 
-sub setFrameType($)
+sub setFrameType($$)
 {
   my $self = shift;
   $self->{frame_type} = shift;
+}
+
+sub getFrameType($)
+{
+  my $self = shift;
+  return $self->{frame_type};
 }
 
 sub parse($$)

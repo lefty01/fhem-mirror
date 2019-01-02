@@ -26,7 +26,7 @@
 #  GNU General Public License for more details.
 #
 #
-# $Id: 42_AptToDate.pm 17813 2018-11-22 07:51:48Z CoolTux $
+# $Id: 42_AptToDate.pm 18012 2018-12-20 10:53:59Z CoolTux $
 #
 ###############################################################################
 
@@ -35,7 +35,7 @@ package main;
 use strict;
 use warnings;
 
-my $version = "1.4.1";
+my $version = "1.4.2";
 
 sub AptToDate_Initialize($) {
 
@@ -872,7 +872,8 @@ sub WriteReadings($$) {
         readingsBulkUpdate(
             $hash, 'state',
             (
-                scalar keys %{ $decode_json->{packages} } > 0
+                (scalar keys %{ $decode_json->{packages} } > 0
+                or scalar keys%{ $hash->{".fhem"}{aptget}{packages} } > 0)
                 ? 'system updates available'
                 : 'system is up to date'
             )

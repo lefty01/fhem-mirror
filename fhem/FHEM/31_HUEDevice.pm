@@ -1,5 +1,5 @@
 
-# $Id: 31_HUEDevice.pm 17671 2018-11-04 11:36:40Z justme1968 $
+# $Id: 31_HUEDevice.pm 18025 2018-12-21 19:19:55Z justme1968 $
 
 # "Hue Personal Wireless Lighting" is a trademark owned by Koninklijke Philips Electronics N.V.,
 # see www.meethue.com for more information.
@@ -38,6 +38,8 @@ my %hueModels = (
                                                  gamut => 'C', },
   LCT014 => {name => 'Hue Bulb V3'              ,type => 'Extended color light'    ,subType => 'extcolordimmer',
                                                  gamut => 'C',                      icon => 'hue_filled_white_and_color_e27_b22', },
+  LCT024 => {name => 'Hue Play'                 ,type => 'Extended color light'    ,subType => 'extcolordimmer',
+                                                 gamut => 'C',                      icon => 'hue_filled_play', },
   LLC001 => {name => 'Living Colors G2'         ,type => 'Color light'             ,subType => 'colordimmer',
                                                  gamut => 'A',                      icon => 'hue_filled_iris', },
   LLC005 => {name => 'Living Colors Bloom'      ,type => 'Color light'             ,subType => 'colordimmer',
@@ -988,11 +990,22 @@ HUEDevice_Get($@)
       ($r,$g,$b) = xyYtorgb($x,$y,$Y);
     }
     return sprintf( "%02x%02x%02x", $r+0.5, $g+0.5, $b+0.5 );
+  } elsif ( $cmd eq "startup" ) {
+    my $result = IOWrite($hash,undef,$hash->{NAME},$hash->{ID});
+    return $result->{error}{description} if( $result->{error} );
+    return "not supported" if( !$result->{config} || !$result->{config}{startup} );
+    return "$result->{config}{startup}{mode}\t$result->{config}{startup}{configured}";
+    return Dumper $result->{config}{startup};
+
   } elsif ( $cmd eq "devStateIcon" ) {
     return HUEDevice_devStateIcon($hash);
   }
 
-  return "Unknown argument $cmd, choose one of rgb:noArg RGB:noArg devStateIcon:noArg";
+  my $list = "rgb:noArg RGB:noArg devStateIcon:noArg";
+  if( $defs{$name}->{IODev}->{helper}{apiversion} && $defs{$name}->{IODev}->{helper}{apiversion} >= (1<<16) + (26<<8) ) {
+    $list .= " startup:noArg";
+  }
+  return "Unknown argument $cmd, choose one of $list";
 }
 
 
@@ -1498,6 +1511,8 @@ HUEDevice_Attr($$$;$)
 1;
 
 =pod
+=item cloudfree
+=item openapi
 =item summary    devices connected to a phillips hue bridge or a osram lightify gateway
 =item summary_DE Geräte an einer Philips HUE Bridge oder einem Osram LIGHTIFY Gateway
 =begin html
@@ -1629,6 +1644,8 @@ HUEDevice_Attr($$$;$)
     <ul>
       <li>rgb</li>
       <li>RGB</li>
+      <li>startup<br>
+        show startup behavior.</li>
       <li>devStateIcon<br>
       returns html code that can be used to create an icon that represents the device color in the room overview.</li>
     </ul><br>

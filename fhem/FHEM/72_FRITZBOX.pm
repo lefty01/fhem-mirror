@@ -227,7 +227,7 @@ sub FRITZBOX_Define($$)
 
    $hash->{STATE}              = "Initializing";
    $hash->{INTERVAL}           = 300; 
-   $hash->{fhem}{modulVersion} = '$Date: 2018-09-30 20:24:58 +0200 (So, 30 Sep 2018) $';
+   $hash->{fhem}{modulVersion} = '$Date: 2018-09-30 20:24:58 +0200 (Sun, 30 Sep 2018) $';
    $hash->{fhem}{lastHour}     = 0;
    $hash->{fhem}{LOCAL}        = 0;
 

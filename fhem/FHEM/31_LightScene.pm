@@ -1,5 +1,5 @@
 
-# $Id: 31_LightScene.pm 17044 2018-07-28 18:34:46Z justme1968 $
+# $Id: 31_LightScene.pm 17952 2018-12-11 09:50:16Z justme1968 $
 
 package main;
 
@@ -402,7 +402,7 @@ LightScene_Load($)
 
     my $decoded;
     if( $LightScene_hasJSON ) {
-      $decoded = decode_json( $encoded );
+      $decoded = eval { decode_json($encoded) };
     } elsif( $LightScene_hasDataDumper ) {
       $decoded = eval $encoded;
     }

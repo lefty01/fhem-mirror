@@ -1,4 +1,4 @@
-# $Id: 46_TRX_SECURITY.pm 16514 2018-03-29 22:09:17Z KernSani $
+# $Id: 46_TRX_SECURITY.pm 18096 2018-12-30 14:37:52Z KernSani $
 ##############################################################################
 #
 #     46_TRX_SECURITY.pm
@@ -32,6 +32,7 @@
 #
 #	CHANGELOG
 #	
+#	30.12.2018	Added standardized Reading batteryState	
 #	29.03.2018	Summary for Commandref
 #		
 #		
@@ -201,9 +202,10 @@ TRX_SECURITY_Set($@)
 		if ($sensor ne "none") { readingsBulkUpdate($hash, $sensor, $command); }
 
 		# Set battery
-	  	$sensor = "battery";
-		readingsBulkUpdate($hash, $sensor, "ok");
-
+	  	#$sensor = "battery";
+		readingsBulkUpdate($hash, "battery", "ok");
+		readingsBulkUpdate($hash, "batteryState", "ok");
+		
   		readingsEndUpdate($hash, 1);
 	}
 
@@ -507,7 +509,8 @@ sub TRX_SECURITY_parse_X10Sec($$) {
 	$current = "Error";
 	$current = "ok" if ($battery eq "batt_ok");
 	$current = "low" if ($battery eq "batt_low");
-	readingsBulkUpdate($def, $sensor, $current);
+	readingsBulkUpdate($def, "battery", $current);
+	readingsBulkUpdate($def, "batteryState", $current);
   }
 
   if ($rssi ne "") {
